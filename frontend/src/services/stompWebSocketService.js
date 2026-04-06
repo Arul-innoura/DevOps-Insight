@@ -55,11 +55,16 @@ class RealTimeService {
         this.reconnectTimer = null;
         this.pingInterval = null;
         this.shouldReconnect = true;
+        this.wsEnabled = process.env.REACT_APP_USE_WEBSOCKET !== 'false';
+        this.consecutiveAbnormalCloses = 0;
         this.wsCandidates = [];
         this.wsCandidateIndex = 0;
     }
 
     connect() {
+        if (!this.wsEnabled) {
+            return;
+        }
         if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
             return;
         }
@@ -78,6 +83,7 @@ class RealTimeService {
                 console.log('[WS] ✅ Connected');
                 this.isConnected = true;
                 this.reconnectAttempts = 0;
+                this.consecutiveAbnormalCloses = 0;
                 // Lock to the successful candidate after connect.
                 this.wsCandidateIndex = Math.min(this.wsCandidateIndex, this.wsCandidates.length - 1);
                 this.startPing();
@@ -101,6 +107,17 @@ class RealTimeService {
                 this.isConnected = false;
                 this.stopPing();
                 this.emit(WS_MESSAGE_TYPES.DISCONNECTED, { connected: false });
+                if (event.code === 1006) {
+                    this.consecutiveAbnormalCloses += 1;
+                } else {
+                    this.consecutiveAbnormalCloses = 0;
+                }
+                if (this.consecutiveAbnormalCloses >= 3) {
+                    this.wsEnabled = false;
+                    this.shouldReconnect = false;
+                    console.warn('[WS] Disabled after repeated abnormal disconnects. Falling back to non-WS refresh.');
+                    return;
+                }
                 if (!this.isConnected && this.wsCandidateIndex < this.wsCandidates.length - 1) {
                     this.wsCandidateIndex += 1;
                 }
@@ -117,7 +134,7 @@ class RealTimeService {
     }
 
     scheduleReconnect() {
-        if (!this.shouldReconnect || this.reconnectAttempts >= this.maxReconnectAttempts) {
+        if (!this.wsEnabled || !this.shouldReconnect || this.reconnectAttempts >= this.maxReconnectAttempts) {
             return;
         }
 
@@ -200,7 +217,9 @@ const realTimeService = new RealTimeService();
 
 // Auto-connect on load
 if (typeof window !== 'undefined') {
-    realTimeService.connect();
+    if (realTimeService.wsEnabled) {
+        realTimeService.connect();
+    }
 }
 
 export default realTimeService;

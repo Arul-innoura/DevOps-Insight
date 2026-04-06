@@ -50,7 +50,12 @@ export const useRealTimeSync = ({
     }, []);
     
     useEffect(() => {
-        if (!enableWebSocket) return;
+        if (!enableWebSocket) {
+            onRefreshRef.current?.();
+            const pollMs = pollingInterval || 8000;
+            const timer = setInterval(() => onRefreshRef.current?.(), pollMs);
+            return () => clearInterval(timer);
+        }
         
         // Handler for all ticket events
         const handleTicketEvent = (data) => {
