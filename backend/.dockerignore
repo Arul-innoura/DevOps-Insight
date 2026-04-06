@@ -1,0 +1,6 @@
+target
+.git
+.mvn
+build.log
+build.txt
+*.iml

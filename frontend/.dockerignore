@@ -1,0 +1,5 @@
+node_modules
+build
+.git
+src_temp1
+npm-debug.log

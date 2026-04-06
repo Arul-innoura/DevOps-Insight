@@ -1,0 +1,67 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: devops-backend
+
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  mongodb:
+    uri: ${MONGODB_URI:mongodb+srv://infraUser:3DVK5Rx5MFP2NkKT@ops-cluster.9tb2ted.mongodb.net}
+    database: ${MONGODB_DATABASE:devops_portal}
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://login.microsoftonline.com/cd775fb1-40c4-42dc-8ddf-2ca152bec472/v2.0
+          jwk-set-uri: https://login.microsoftonline.com/cd775fb1-40c4-42dc-8ddf-2ca152bec472/discovery/v2.0/keys
+
+  # RabbitMQ Configuration (async email queue)
+  rabbitmq:
+    host: ${RABBITMQ_HOST:localhost}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USERNAME:guest}
+    password: ${RABBITMQ_PASSWORD:guest}
+
+  # Email Configuration
+  mail:
+    host: ${MAIL_HOST:smtp.azurecomm.net}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:devopsteam@altermanager.encipherhealth.com}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+# Email settings
+app:
+  email:
+    from: ${MAIL_FROM:devopsteam@altermanager.encipherhealth.com}
+    devops-to: ${DEVOPS_EMAIL:devopsteam@encipherhealth.com}
+    enabled: ${EMAIL_ENABLED:true}
+  frontend:
+    url: ${FRONTEND_URL:http://localhost:3000}
+  trivy:
+    path: ${TRIVY_PATH:trivy}
+    timeout: ${TRIVY_TIMEOUT:120}
+
+logging:
+  level:
+    org:
+      springframework:
+        security: INFO
+    com:
+      devops:
+        backend: INFO
