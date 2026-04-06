@@ -5,8 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: devops-backend
     environment:
-      # Set MONGODB_URI in .env (Atlas/managed Mongo). If omitted, backend default is used.
-      MONGODB_URI: ${MONGODB_URI:-}
+      # Optional: provide MONGODB_URI in .env for managed Mongo.
+      # If omitted, backend falls back to its internal application.yml default.
       MONGODB_DATABASE: ${MONGODB_DATABASE:-devops_portal}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-true}
       MAIL_HOST: ${MAIL_HOST:-smtp.azurecomm.net}

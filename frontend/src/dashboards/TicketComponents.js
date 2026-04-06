@@ -1517,47 +1517,51 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                             <span style={{ fontSize: '0.85rem', color: '#5E6C84' }}>Loading configured flow…</span>
                                         )}
                                         {!workflowPreviewLoading && workflowPreview && (
-                                            <ul style={{ margin: 0, paddingLeft: '1.25rem', fontSize: '0.85rem', color: '#172B4D' }}>
-                                                {!!(workflowPreview.managers || []).length && (
-                                                    <li>
-                                                        Project manager:{' '}
-                                                        <strong>
-                                                            {(workflowPreview.managers || [])
-                                                                .map((m) => m?.name || m?.email)
-                                                                .filter(Boolean)
-                                                                .join(", ")}
-                                                        </strong>
-                                                    </li>
-                                                )}
-                                                <li>
-                                                        Total approval levels:{' '}
-                                                    <strong>{(workflowPreview.approvalLevels || []).length}</strong>
-                                                </li>
-                                                {(workflowPreview.approvalLevels || [])
-                                                    .slice()
-                                                    .sort((a, b) => (a.level || 0) - (b.level || 0))
-                                                    .map((lvl) => (
-                                                        <li key={`preview-level-${lvl.level}`}>
-                                                            Level {lvl.level}:{' '}
-                                                            <strong>
-                                                                {(lvl.approvers || [])
-                                                                    .map((a) => a?.name || a?.email)
-                                                                    .filter(Boolean)
-                                                                    .join(", ") || "No approver"}
-                                                            </strong>
-                                                        </li>
-                                                    ))}
-                                                <li>
-                                                    Cost approval:{' '}
-                                                    <strong>{workflowPreview.costApprovalRequired ? 'Yes' : 'No'}</strong>
-                                                </li>
-                                                <li>
-                                                    Email To (routing):{' '}
-                                                    <strong>
-                                                        {(workflowPreview.emailRouting?.to || []).join(', ') || '—'}
-                                                    </strong>
-                                                </li>
-                                            </ul>
+                                            <div style={{ width: '100%', fontSize: '0.85rem', color: '#172B4D' }}>
+                                                <div style={{ fontWeight: 600, marginBottom: 6 }}>Hierarchy</div>
+                                                <div style={{ paddingLeft: 6, borderLeft: '2px solid #dfe1e6', marginLeft: 6 }}>
+                                                    <div style={{ marginBottom: 4 }}>Product Request</div>
+                                                    {!!(workflowPreview.managers || []).length && (
+                                                        <div style={{ marginBottom: 4 }}>
+                                                            ├─ Configured Managers:
+                                                            <div style={{ paddingLeft: 18 }}>
+                                                                {(workflowPreview.managers || []).map((m, idx) => (
+                                                                    <div key={`mgr-${idx}`}>
+                                                                        • {m?.name || 'Manager'} {m?.email ? `(${m.email})` : ''}
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    <div style={{ marginBottom: 4 }}>
+                                                        ├─ Approval Levels ({(workflowPreview.approvalLevels || []).length})
+                                                    </div>
+                                                    <div style={{ paddingLeft: 18, marginBottom: 4 }}>
+                                                        {(workflowPreview.approvalLevels || [])
+                                                            .slice()
+                                                            .sort((a, b) => (a.level || 0) - (b.level || 0))
+                                                            .map((lvl) => (
+                                                                <div key={`preview-level-${lvl.level}`} style={{ marginBottom: 2 }}>
+                                                                    • Level {lvl.level}
+                                                                    <div style={{ paddingLeft: 16 }}>
+                                                                        {(lvl.approvers || []).length === 0 && <div>- No approver configured</div>}
+                                                                        {(lvl.approvers || []).map((a, i) => (
+                                                                            <div key={`lvl-${lvl.level}-ap-${i}`}>
+                                                                                - {a?.name || 'Approver'} {a?.email ? `(${a.email})` : ''}
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                    </div>
+                                                    <div style={{ marginBottom: 4 }}>
+                                                        ├─ Cost Approval: <strong>{workflowPreview.costApprovalRequired ? 'Required' : 'Not Required'}</strong>
+                                                    </div>
+                                                    <div>
+                                                        └─ Routing To: <strong>{(workflowPreview.emailRouting?.to || []).join(', ') || '—'}</strong>
+                                                    </div>
+                                                </div>
+                                            </div>
                                         )}
                                         {!workflowPreviewLoading && !workflowPreview && selectedProjectId && (
                                             <span style={{ fontSize: '0.85rem', color: '#5E6C84' }}>
