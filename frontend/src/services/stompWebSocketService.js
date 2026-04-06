@@ -6,13 +6,28 @@
  * - Auto-reconnect with exponential backoff
  */
 
-const resolveWsUrl = () => {
+const resolveWsCandidates = () => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // In development, the proxy only handles HTTP, not WebSocket
-    // Connect directly to backend for WebSocket
+    const host = window.location.host;
     const isDev = window.location.hostname === 'localhost' && window.location.port === '3000';
-    const host = isDev ? 'localhost:8080' : window.location.host;
-    return `${protocol}//${host}/ws/tickets`;
+    const explicit = (process.env.REACT_APP_WS_URL || "").trim();
+    const candidates = [];
+
+    if (explicit) {
+        candidates.push(explicit);
+    }
+
+    if (isDev) {
+        // Local dev direct backend websocket.
+        candidates.push(`${protocol}//localhost:8080/ws/tickets`);
+        candidates.push(`${protocol}//localhost:8080/api/ws/tickets`);
+    } else {
+        // Production first through nginx websocket proxy, then direct backend path.
+        candidates.push(`${protocol}//${host}/api/ws/tickets`);
+        candidates.push(`${protocol}//${host}/ws/tickets`);
+    }
+
+    return [...new Set(candidates)];
 };
 
 export const WS_MESSAGE_TYPES = {
@@ -40,6 +55,8 @@ class RealTimeService {
         this.reconnectTimer = null;
         this.pingInterval = null;
         this.shouldReconnect = true;
+        this.wsCandidates = [];
+        this.wsCandidateIndex = 0;
     }
 
     connect() {
@@ -47,7 +64,11 @@ class RealTimeService {
             return;
         }
 
-        const wsUrl = resolveWsUrl();
+        if (!this.wsCandidates.length) {
+            this.wsCandidates = resolveWsCandidates();
+            this.wsCandidateIndex = 0;
+        }
+        const wsUrl = this.wsCandidates[Math.min(this.wsCandidateIndex, this.wsCandidates.length - 1)];
         console.log('[WS] Connecting to:', wsUrl);
 
         try {
@@ -57,6 +78,8 @@ class RealTimeService {
                 console.log('[WS] ✅ Connected');
                 this.isConnected = true;
                 this.reconnectAttempts = 0;
+                // Lock to the successful candidate after connect.
+                this.wsCandidateIndex = Math.min(this.wsCandidateIndex, this.wsCandidates.length - 1);
                 this.startPing();
                 this.emit(WS_MESSAGE_TYPES.CONNECTED, { connected: true });
             };
@@ -78,6 +101,9 @@ class RealTimeService {
                 this.isConnected = false;
                 this.stopPing();
                 this.emit(WS_MESSAGE_TYPES.DISCONNECTED, { connected: false });
+                if (!this.isConnected && this.wsCandidateIndex < this.wsCandidates.length - 1) {
+                    this.wsCandidateIndex += 1;
+                }
                 this.scheduleReconnect();
             };
 
@@ -130,6 +156,8 @@ class RealTimeService {
             this.ws = null;
         }
         this.isConnected = false;
+        this.wsCandidates = [];
+        this.wsCandidateIndex = 0;
     }
 
     on(eventType, callback) {
