@@ -45,10 +45,9 @@ services:
     depends_on:
       backend:
         condition: service_healthy
-    # Explicit 0.0.0.0 + /tcp avoids some dual-stack (IPv4+IPv6) bind conflicts on Linux.
-    # If you still see "address already in use", set FRONTEND_PUBLISHED_PORT=3001 in .env
-    ports:
-      - "0.0.0.0:${FRONTEND_PUBLISHED_PORT:-3000}:80/tcp"
+    # No host ports here — avoids "address already in use" when using TLS proxy (Caddy) on 80/443.
+    # For http://SERVER_IP:3000 add: -f docker-compose.lan.yml
+    # See deploy/DEPLOY.md
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:80/"]

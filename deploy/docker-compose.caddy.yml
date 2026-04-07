@@ -1,17 +1,11 @@
-# Optional: Caddy on 80/443 with automatic HTTPS → frontend container.
-# Run from repo root:
-#   docker compose -f docker-compose.yml -f deploy/docker-compose.caddy.yml up -d
+# Caddy on 80/443 → frontend:80 (internal Docker network only; no host port on frontend).
 #
-# DNS must point opspilot.encipherhealth.com to this host before certificates will issue.
+#   docker-compose -f docker-compose.yml -f deploy/docker-compose.caddy.yml up -d --build
 #
-# If frontend fails with "address already in use" on 3000:
-#   docker rm -f devops-frontend && docker compose ... up -d
-#   Check for docker-compose.override.yml duplicating frontend ports (Compose merges lists).
-#   Try FRONTEND_PUBLISHED_PORT=3001 in .env (see root docker-compose.yml).
+# If `docker compose` fails with "unknown shorthand flag: 'f'", use `docker-compose` (hyphen).
+# See deploy/DEPLOY.md for LAN (port 3000), Azure, and troubleshooting.
 #
-# Do NOT redefine frontend.ports here: Docker Compose merges port lists from multiple files,
-# which would bind host port 3000 twice (base "3000:80" + override) and fail with
-# "address already in use". Caddy reaches the app on the internal Docker network (frontend:80).
+# Do not add frontend.ports here — Compose merges lists; duplicates break with "address already in use".
 
 services:
   caddy:
