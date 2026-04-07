@@ -11,6 +11,7 @@ import {
     Shield,
     Loader2
 } from 'lucide-react';
+import { resolveApiBaseUrl } from "../config/apiBaseUrl";
 import { TICKET_STATUS, toApiTicketStatus } from '../services/ticketService';
 
 /**
@@ -18,17 +19,6 @@ import { TICKET_STATUS, toApiTicketStatus } from '../services/ticketService';
  * Public page for managers to approve/reject tickets without logging in.
  * Manager is identified via secure token in the URL.
  */
-
-const resolveApiBaseUrl = () => {
-    const envUrl = (process.env.REACT_APP_API_URL || "").trim();
-    const origin = window.location.origin.replace(/\/$/, "");
-    const isProdHost = !/localhost|127\.0\.0\.1/i.test(window.location.hostname);
-    const envPointsLocal = /localhost|127\.0\.0\.1/i.test(envUrl);
-    if (isProdHost && envPointsLocal) {
-        return `${origin}/api`;
-    }
-    return envUrl || `${origin}/api`;
-};
 
 const API_BASE_URL = resolveApiBaseUrl();
 

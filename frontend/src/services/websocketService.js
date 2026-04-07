@@ -5,20 +5,12 @@
  */
 
 import { msalInstance, initializeMsal } from "../auth/msalInstance";
-
-const resolveApiBaseUrl = () => {
-    const envUrl = (process.env.REACT_APP_API_URL || "").trim();
-    const origin = window.location.origin.replace(/\/$/, "");
-    const isProdHost = !/localhost|127\.0\.0\.1/i.test(window.location.hostname);
-    const envPointsLocal = /localhost|127\.0\.0\.1/i.test(envUrl);
-    if (isProdHost && envPointsLocal) {
-        return `${origin}/api`;
-    }
-    return envUrl || `${origin}/api`;
-};
+import { resolveApiBaseUrl } from "../config/apiBaseUrl";
 
 const API_BASE_URL = resolveApiBaseUrl();
-const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
+const WS_BASE_URL = API_BASE_URL.replace(/^https?/i, (scheme) =>
+    scheme.toLowerCase() === "https" ? "wss" : "ws"
+);
 
 // WebSocket message types
 export const WS_MESSAGE_TYPES = {

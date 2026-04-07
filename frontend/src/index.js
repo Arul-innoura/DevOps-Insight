@@ -1,3 +1,5 @@
+import "./ensureTopLevelWindow";
+import { skipReactBootstrap } from "./ensureTopLevelWindow";
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './index.css';
@@ -23,21 +25,24 @@ msalInstance.addEventCallback((event) => {
     }
 });
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-const renderApp = async () => {
-    await initializeMsal();
-    root.render(
-        <React.StrictMode>
-            <MsalProvider instance={msalInstance}>
-                <App />
-            </MsalProvider>
-        </React.StrictMode>
-    );
-};
-
-renderApp().catch((error) => {
-    console.error("Failed to initialize MSAL", error);
-});
+if (skipReactBootstrap) {
+    // Cross-origin iframe: ensureTopLevelWindow rendered the fallback into #root; do not mount React.
+} else {
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    const renderApp = async () => {
+        await initializeMsal();
+        root.render(
+            <React.StrictMode>
+                <MsalProvider instance={msalInstance}>
+                    <App />
+                </MsalProvider>
+            </React.StrictMode>
+        );
+    };
+    renderApp().catch((error) => {
+        console.error("Failed to initialize MSAL", error);
+    });
+}
 
 // If you want to start measuring performance in your app, pass a function
 // to log results (for example: reportWebVitals(console.log))

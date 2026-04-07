@@ -4,17 +4,8 @@
 
 import { msalInstance, initializeMsal } from "../auth/msalInstance";
 import { loginRequest, oidcScopes } from "../auth/authConfig";
+import { resolveApiBaseUrl } from "../config/apiBaseUrl";
 
-const resolveApiBaseUrl = () => {
-    const envUrl = (process.env.REACT_APP_API_URL || "").trim();
-    const origin = window.location.origin.replace(/\/$/, "");
-    const isProdHost = !/localhost|127\.0\.0\.1/i.test(window.location.hostname);
-    const envPointsLocal = /localhost|127\.0\.0\.1/i.test(envUrl);
-    if (isProdHost && envPointsLocal) {
-        return `${origin}/api`;
-    }
-    return envUrl || `${origin}/api`;
-};
 const API_BASE_URL = resolveApiBaseUrl();
 
 const getAuthToken = async () => {
