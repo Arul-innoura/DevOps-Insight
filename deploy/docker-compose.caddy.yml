@@ -3,6 +3,10 @@
 #   docker compose -f docker-compose.yml -f deploy/docker-compose.caddy.yml up -d
 #
 # DNS must point opspilot.encipherhealth.com to this host before certificates will issue.
+#
+# Do NOT redefine frontend.ports here: Docker Compose merges port lists from multiple files,
+# which would bind host port 3000 twice (base "3000:80" + override) and fail with
+# "address already in use". Caddy reaches the app on the internal Docker network (frontend:80).
 
 services:
   caddy:
@@ -20,11 +24,6 @@ services:
     depends_on:
       frontend:
         condition: service_started
-
-  frontend:
-    # Keep LAN/debug access; Caddy is the public entry on 80/443
-    ports:
-      - "127.0.0.1:3000:80"
 
 volumes:
   caddy_data:
