@@ -4,6 +4,11 @@
 #
 # DNS must point opspilot.encipherhealth.com to this host before certificates will issue.
 #
+# If frontend fails with "address already in use" on 3000:
+#   docker rm -f devops-frontend && docker compose ... up -d
+#   Check for docker-compose.override.yml duplicating frontend ports (Compose merges lists).
+#   Try FRONTEND_PUBLISHED_PORT=3001 in .env (see root docker-compose.yml).
+#
 # Do NOT redefine frontend.ports here: Docker Compose merges port lists from multiple files,
 # which would bind host port 3000 twice (base "3000:80" + override) and fail with
 # "address already in use". Caddy reaches the app on the internal Docker network (frontend:80).
