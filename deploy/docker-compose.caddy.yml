@@ -1,0 +1,31 @@
+# Optional: Caddy on 80/443 with automatic HTTPS → frontend container.
+# Run from repo root:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.caddy.yml up -d
+#
+# DNS must point opspilot.encipherhealth.com to this host before certificates will issue.
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: devops-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile.docker:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      frontend:
+        condition: service_started
+
+  frontend:
+    # Keep LAN/debug access; Caddy is the public entry on 80/443
+    ports:
+      - "127.0.0.1:3000:80"
+
+volumes:
+  caddy_data:
+  caddy_config:

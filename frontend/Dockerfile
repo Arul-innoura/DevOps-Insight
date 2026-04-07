@@ -46,7 +46,8 @@ RUN rm -rf ./*
 # Copy built assets
 COPY --from=build /app/build .
 
-# Copy optimized nginx config
+# Forwarded headers map must load in http{} before server blocks reference variables
+COPY nginx-00-forwarded.conf /etc/nginx/conf.d/00-forwarded.conf
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 # Add gzip and cache control config

@@ -1,0 +1,41 @@
+# Example: nginx on the Linux host terminating HTTPS and proxying to Docker frontend on port 3000.
+# Copy/adapt, then: sudo certbot certonly --nginx -d opspilot.encipherhealth.com
+# HTTPS will not work in the browser until a real certificate is installed (Let's Encrypt or corp CA).
+
+upstream devops_frontend {
+    server 127.0.0.1:3000;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name opspilot.encipherhealth.com;
+    location /.well-known/acme-challenge/ { root /var/www/certbot; }
+    location / { return 301 https://$host$request_uri; }
+}
+
+server {
+    listen 443 ssl http2;
+    server_name opspilot.encipherhealth.com;
+
+    ssl_certificate     /etc/letsencrypt/live/opspilot.encipherhealth.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/opspilot.encipherhealth.com/privkey.pem;
+
+    location / {
+        proxy_pass http://devops_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+    }
+}
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}

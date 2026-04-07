@@ -1,0 +1,33 @@
+# Caddy — automatic HTTPS (Let's Encrypt) for Azure AD / MSAL.
+#
+# Prerequisites:
+#   1. DNS A (or AAAA) record: opspilot.encipherhealth.com → this server's public IP.
+#   2. Ports 80 and 443 reachable from the Internet (ACME http-01 challenge).
+#   3. Docker frontend published on this host, e.g. docker compose → 127.0.0.1:3000
+#
+# Install (Linux host, not inside the frontend container):
+#   sudo apt install caddy   # or see https://caddyserver.com/docs/install
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   sudo caddy validate --config /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# Azure Portal → App registration → Authentication → Single-page application:
+#   Add redirect URI: https://opspilot.encipherhealth.com
+#   (Remove or keep http:// only for lab; production should use https://)
+
+{
+	# Optional: ACME account email (Let's Encrypt expiry notices)
+	# email admin@encipherhealth.com
+}
+
+opspilot.encipherhealth.com {
+	encode gzip zstd
+
+	# Proxy to nginx+React in Docker (host maps 3000:80)
+	reverse_proxy 127.0.0.1:3000 {
+		# Caddy sets X-Forwarded-For / Proto correctly; explicit Host helps some stacks
+		header_up Host {host}
+		header_up X-Forwarded-Host {host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+}
