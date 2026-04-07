@@ -43,6 +43,9 @@ WORKDIR /usr/share/nginx/html
 # Remove default nginx static files
 RUN rm -rf ./*
 
+# Healthcheck dependency (nginx:alpine does not always ship wget)
+RUN apk add --no-cache curl
+
 # Copy built assets
 COPY --from=build /app/build .
 
@@ -63,7 +66,7 @@ EXPOSE 80
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget -q -O /dev/null http://localhost:80/index.html || exit 1
+  CMD curl -fsS http://localhost:80/index.html >/dev/null || exit 1
 
 # Start nginx
 CMD ["nginx", "-g", "daemon off;"]
