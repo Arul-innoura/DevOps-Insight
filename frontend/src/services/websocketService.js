@@ -4,13 +4,21 @@
  * and optimistic UI update support.
  */
 
-import { msalInstance, initializeMsal } from "../auth/msalInstance";
 import { resolveApiBaseUrl } from "../config/apiBaseUrl";
 
 const API_BASE_URL = resolveApiBaseUrl();
 const WS_BASE_URL = API_BASE_URL.replace(/^https?/i, (scheme) =>
     scheme.toLowerCase() === "https" ? "wss" : "ws"
 );
+
+const resolveWsCandidates = () => {
+    const base = API_BASE_URL.replace(/\/$/, "");
+    const originWs = base.replace(/\/api$/, "");
+    return [...new Set([
+        `${originWs}/api/ws/tickets`,
+        `${originWs}/ws/tickets`
+    ])];
+};
 
 // WebSocket message types
 export const WS_MESSAGE_TYPES = {
@@ -66,26 +74,6 @@ class WebSocketService {
     }
 
     /**
-     * Get authentication token
-     */
-    async getAuthToken() {
-        try {
-            await initializeMsal();
-            const accounts = msalInstance.getAllAccounts();
-            const active = msalInstance.getActiveAccount() || accounts[0];
-            if (!active) return null;
-            const tokenResponse = await msalInstance.acquireTokenSilent({
-                account: active,
-                scopes: ["openid", "profile", "email"]
-            });
-            return tokenResponse.idToken;
-        } catch (error) {
-            console.error("[WebSocketService] Auth token error:", error);
-            return null;
-        }
-    }
-
-    /**
      * Connect to WebSocket server
      */
     async connect() {
@@ -107,17 +95,12 @@ class WebSocketService {
         }
 
         this.setConnectionState(CONNECTION_STATES.CONNECTING);
-        const token = await this.getAuthToken();
-
-        if (!token) {
-            console.warn("[WebSocketService] No auth token available");
-            this.setConnectionState(CONNECTION_STATES.FAILED);
-            return false;
-        }
+        const candidates = resolveWsCandidates();
 
         return new Promise((resolve) => {
             try {
-                const wsUrl = `${WS_BASE_URL}/ws?token=${encodeURIComponent(token)}`;
+                const wsUrl = candidates[0];
+                console.log("[WebSocketService] Connecting to:", wsUrl);
                 this.ws = new WebSocket(wsUrl);
 
                 this.ws.onopen = () => {
