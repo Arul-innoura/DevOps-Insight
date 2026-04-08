@@ -1,13 +1,15 @@
 package com.devops.backend.service;
 
-import com.devops.backend.config.RabbitMQConfig;
+import com.azure.storage.queue.QueueClient;
+import com.azure.storage.queue.models.QueueMessageItem;
 import com.devops.backend.dto.EmailMessage;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import jakarta.mail.MessagingException;
@@ -15,7 +17,7 @@ import jakarta.mail.internet.MimeMessage;
 import org.springframework.util.StringUtils;
 
 /**
- * RabbitMQ consumer that processes email messages from the queue.
+ * Azure Storage Queue consumer that polls for email messages and sends them.
  * Supports email threading via Message-ID, References, and In-Reply-To headers.
  */
 @Slf4j
@@ -25,6 +27,8 @@ public class EmailConsumerService {
 
     private final JavaMailSender mailSender;
     private final EventPublisherService eventPublisher;
+    private final QueueClient queueClient;
+    private final ObjectMapper objectMapper;
 
     @Value("${app.email.from:noreply@encipherhealth.com}")
     private String fromEmail;
@@ -32,10 +36,32 @@ public class EmailConsumerService {
     @Value("${app.email.enabled:false}")
     private boolean emailEnabled;
 
-    @RabbitListener(queues = RabbitMQConfig.EMAIL_QUEUE)
-    public void processEmailMessage(EmailMessage message) {
+    @Scheduled(fixedDelay = 3000)
+    public void pollEmailQueue() {
+        try {
+            Iterable<QueueMessageItem> messages = queueClient.receiveMessages(10);
+            for (QueueMessageItem item : messages) {
+                processQueueMessage(item);
+            }
+        } catch (Exception e) {
+            log.error("Error polling Azure Storage Queue: {}", e.getMessage(), e);
+        }
+    }
+
+    private void processQueueMessage(QueueMessageItem item) {
+        EmailMessage message = null;
+        try {
+            String body = item.getBody().toString();
+            message = objectMapper.readValue(body, EmailMessage.class);
+        } catch (Exception e) {
+            log.error("Failed to deserialize queue message id={}: {}", item.getMessageId(), e.getMessage(), e);
+            deleteMessage(item);
+            return;
+        }
+
         if (!emailEnabled) {
             log.info("Email sending disabled. Skipping email to: {}", message.getTo());
+            deleteMessage(item);
             return;
         }
 
@@ -46,6 +72,16 @@ public class EmailConsumerService {
         } catch (Exception e) {
             log.error("Failed to send email to {}: {}", message.getTo(), e.getMessage(), e);
             eventPublisher.publishEmailEvent("FAILED", message);
+        } finally {
+            deleteMessage(item);
+        }
+    }
+
+    private void deleteMessage(QueueMessageItem item) {
+        try {
+            queueClient.deleteMessage(item.getMessageId(), item.getPopReceipt());
+        } catch (Exception e) {
+            log.warn("Failed to delete queue message id={}: {}", item.getMessageId(), e.getMessage());
         }
     }
 
@@ -61,7 +97,7 @@ public class EmailConsumerService {
 
         helper.setFrom(from);
         helper.setTo(message.getTo());
-        
+
         if (message.getCc() != null && !message.getCc().isEmpty()) {
             helper.setCc(message.getCc().toArray(new String[0]));
         }
@@ -69,9 +105,9 @@ public class EmailConsumerService {
         if (message.getBcc() != null && !message.getBcc().isEmpty()) {
             helper.setBcc(message.getBcc().toArray(new String[0]));
         }
-        
+
         helper.setSubject(message.getSubject());
-        
+
         if (message.getHtmlBody() != null && !message.getHtmlBody().isEmpty()) {
             helper.setText(message.getHtmlBody(), true);
         } else if (message.getBody() != null) {
@@ -79,7 +115,6 @@ public class EmailConsumerService {
         }
 
         // Set email threading headers (RFC 2822)
-        // These headers allow email clients to group related emails into conversations
         if (StringUtils.hasText(message.getMessageId())) {
             mimeMessage.setHeader("Message-ID", message.getMessageId());
         }

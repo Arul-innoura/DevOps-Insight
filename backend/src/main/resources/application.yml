@@ -21,13 +21,6 @@ spring:
           issuer-uri: https://login.microsoftonline.com/cd775fb1-40c4-42dc-8ddf-2ca152bec472/v2.0
           jwk-set-uri: https://login.microsoftonline.com/cd775fb1-40c4-42dc-8ddf-2ca152bec472/discovery/v2.0/keys
 
-  # RabbitMQ Configuration (async email queue)
-  rabbitmq:
-    host: ${RABBITMQ_HOST:localhost}
-    port: ${RABBITMQ_PORT:5672}
-    username: ${RABBITMQ_USERNAME:guest}
-    password: ${RABBITMQ_PASSWORD:guest}
-
   # Email Configuration
   mail:
     host: ${MAIL_HOST:smtp.azurecomm.net}
@@ -56,6 +49,12 @@ app:
   trivy:
     path: ${TRIVY_PATH:trivy}
     timeout: ${TRIVY_TIMEOUT:120}
+
+azure:
+  storage:
+    queue:
+      connection-string:
+      queue-name: "shipit-mail-queue"
 
 logging:
   level:

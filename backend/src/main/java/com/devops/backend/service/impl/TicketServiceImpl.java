@@ -8,6 +8,7 @@ import com.devops.backend.model.workflow.WorkflowConfiguration;
 import com.devops.backend.repository.ManagerApprovalTokenRepository;
 import com.devops.backend.repository.ProjectRepository;
 import com.devops.backend.repository.TicketRepository;
+import com.devops.backend.service.ActivityLogService;
 import com.devops.backend.service.EmailService;
 import com.devops.backend.service.EventPublisherService;
 import com.devops.backend.service.ProjectWorkflowService;
@@ -45,6 +46,7 @@ public class TicketServiceImpl implements TicketService {
     private final EventPublisherService eventPublisher;
     private final EmailService emailService;
     private final WebSocketEventService webSocketEventService;
+    private final ActivityLogService activityLogService;
     private static final Pattern EMAIL_IN_PAREN_PATTERN = Pattern.compile("\\(([^()\\s]+@[^()\\s]+)\\)");
     /** Designation: Role — Name · email@domain */
     private static final Pattern DESIGNATION_EMAIL_PATTERN = Pattern.compile(
@@ -120,7 +122,15 @@ public class TicketServiceImpl implements TicketService {
         
         Ticket savedTicket = ticketRepository.save(ticket);
         log.info("Ticket created successfully: {}", ticketId);
-        
+
+        activityLogService.logActivity(
+                "TICKET_CREATED", "TICKET", ticketId,
+                userName, userEmail,
+                "Ticket created: " + ticketId + " (" + request.getRequestType() + ")",
+                Map.of("requestType", String.valueOf(request.getRequestType()),
+                       "productName", request.getProductName() != null ? request.getProductName() : "",
+                       "environment", String.valueOf(request.getEnvironment())));
+
         TicketResponse response = mapToResponse(savedTicket);
         eventPublisher.publishTicketEvent("created", response);
         
@@ -209,7 +219,15 @@ public class TicketServiceImpl implements TicketService {
         
         Ticket savedTicket = ticketRepository.save(ticket);
         log.info("Ticket {} status updated successfully", ticketId);
-        
+
+        activityLogService.logActivity(
+                "STATUS_CHANGED", "TICKET", ticketId,
+                userName, userEmail,
+                "Status changed from " + previousStatus + " to " + request.getNewStatus(),
+                Map.of("previousStatus", String.valueOf(previousStatus),
+                       "newStatus", String.valueOf(request.getNewStatus()),
+                       "notes", request.getNotes() != null ? request.getNotes() : ""));
+
         TicketResponse response = mapToResponse(savedTicket);
         eventPublisher.publishTicketEvent("status-updated", response);
         
@@ -369,7 +387,14 @@ public class TicketServiceImpl implements TicketService {
         }
         
         TicketResponse response = mapToResponse(savedTicket);
-        
+
+        activityLogService.logActivity(
+                "COST_SUBMITTED", "TICKET", savedTicket.getId(),
+                userName, userEmail,
+                "Cost estimation submitted: " + request.getCurrency() + " " + request.getEstimatedCost(),
+                Map.of("currency", request.getCurrency() != null ? request.getCurrency() : "",
+                       "estimatedCost", request.getEstimatedCost()));
+
         // Broadcast real-time WebSocket event
         webSocketEventService.broadcastTicketStatusChanged(savedTicket);
         
@@ -414,7 +439,13 @@ public class TicketServiceImpl implements TicketService {
         
         Ticket savedTicket = ticketRepository.save(ticket);
         log.info("Note added to ticket {} successfully", ticketId);
-        
+
+        activityLogService.logActivity(
+                "NOTE_ADDED", "TICKET", ticketId,
+                userName, userEmail,
+                "Note added to ticket " + ticketId,
+                Map.of("note", request.getNotes() != null ? request.getNotes() : ""));
+
         emailService.sendNoteAddedEmail(savedTicket, userName, request.getNotes());
         
         TicketResponse response = mapToResponse(savedTicket);
@@ -439,7 +470,14 @@ public class TicketServiceImpl implements TicketService {
         
         Ticket savedTicket = ticketRepository.save(ticket);
         log.info("Ticket {} assigned successfully", ticketId);
-        
+
+        activityLogService.logActivity(
+                "TICKET_ASSIGNED", "TICKET", ticketId,
+                userName, userEmail,
+                "Ticket assigned to " + request.getAssigneeName(),
+                Map.of("assigneeName", request.getAssigneeName() != null ? request.getAssigneeName() : "",
+                       "assigneeEmail", request.getAssigneeEmail() != null ? request.getAssigneeEmail() : ""));
+
         emailService.sendTicketAssignedEmail(savedTicket, userName);
         
         TicketResponse response = mapToResponse(savedTicket);
@@ -461,7 +499,13 @@ public class TicketServiceImpl implements TicketService {
         
         ticketRepository.deleteById(ticketId);
         eventPublisher.publishTicketEvent("deleted", Map.of("ticketId", ticketId));
-        
+
+        activityLogService.logActivity(
+                "TICKET_DELETED", "TICKET", ticketId,
+                "system", "system",
+                "Ticket deleted: " + ticketId,
+                Map.of("ticketId", ticketId));
+
         // Broadcast real-time WebSocket event
         webSocketEventService.broadcastTicketDeleted(ticketId);
         

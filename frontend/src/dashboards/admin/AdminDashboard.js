@@ -75,7 +75,10 @@ import {
     getVolume
 } from "../../services/notificationService";
 import ProjectWorkflowEditor from "./ProjectWorkflowEditor";
+import ActivityLogsView from "./ActivityLogsView";
+import AnalyticsDashboard from "./AnalyticsDashboard";
 import MonitoringPanel from "../MonitoringPanel";
+import NameProductsView from "./NameProductsView";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 
@@ -651,74 +654,6 @@ const StatusTimelineView = ({ devOpsMembers, timelineStatusColors }) => {
     );
 };
 
-const AnalyticsView = ({ stats, tickets }) => (
-    <div className="analytics-view">
-        <div className="analytics-grid">
-            <div className="analytics-card">
-                <h3><BarChart3 size={18} /> Tickets by Status</h3>
-                <div className="analytics-chart">
-                    {Object.entries(stats.byStatus || {}).filter(([_, count]) => count > 0).map(([status, count]) => (
-                        <div key={status} className="chart-bar-row">
-                            <span className="chart-label">{status}</span>
-                            <div className="chart-bar-container">
-                                <div 
-                                    className="chart-bar"
-                                    style={{ 
-                                        width: `${(count / tickets.length) * 100}%`,
-                                        backgroundColor: stats.total > 0 ? '#2563eb' : '#e5e7eb'
-                                    }}
-                                />
-                            </div>
-                            <span className="chart-value">{count}</span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-            
-            <div className="analytics-card">
-                <h3><Activity size={18} /> Tickets by Request Type</h3>
-                <div className="analytics-chart">
-                    {Object.entries(stats.byRequestType || {}).filter(([_, count]) => count > 0).map(([type, count]) => (
-                        <div key={type} className="chart-bar-row">
-                            <span className="chart-label">{type}</span>
-                            <div className="chart-bar-container">
-                                <div 
-                                    className="chart-bar"
-                                    style={{ 
-                                        width: `${(count / tickets.length) * 100}%`,
-                                        backgroundColor: '#7c3aed'
-                                    }}
-                                />
-                            </div>
-                            <span className="chart-value">{count}</span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-            
-            <div className="analytics-card">
-                <h3><TrendingUp size={18} /> Tickets by Environment</h3>
-                <div className="analytics-chart">
-                    {Object.entries(stats.byEnvironment || {}).filter(([_, count]) => count > 0).map(([env, count]) => (
-                        <div key={env} className="chart-bar-row">
-                            <span className="chart-label">{env}</span>
-                            <div className="chart-bar-container">
-                                <div 
-                                    className="chart-bar"
-                                    style={{ 
-                                        width: `${(count / tickets.length) * 100}%`,
-                                        backgroundColor: '#16a34a'
-                                    }}
-                                />
-                            </div>
-                            <span className="chart-value">{count}</span>
-                        </div>
-                    ))}
-                </div>
-            </div>
-        </div>
-    </div>
-);
 
 export const AdminDashboard = () => {
     const { instance, accounts } = useMsal();
@@ -736,7 +671,7 @@ export const AdminDashboard = () => {
     const [selectedTicket, setSelectedTicket] = useState(null);
     const [activeTab, setActiveTab] = useState('all');
     const [stats, setStats] = useState({});
-    const [viewMode, setViewMode] = useState('tickets'); // 'tickets', 'analytics', 'team', 'projects', 'managers', 'rota', 'statusTimeline', 'profile', 'settings'
+    const [viewMode, setViewMode] = useState('tickets'); // 'tickets', 'analytics', 'team', 'projects', 'managers', 'rota', 'statusTimeline', 'activityLogs', 'profile', 'settings'
     const [devOpsMembers, setDevOpsMembers] = useState([]);
     const [newMember, setNewMember] = useState({ name: '', email: '' });
     const [projects, setProjects] = useState([]);
@@ -1157,6 +1092,13 @@ export const AdminDashboard = () => {
                                 >
                                     <Building size={18} /> Services
                                 </a>
+                                <a
+                                    href="#"
+                                    className={viewMode === 'nameProducts' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('nameProducts'); }}
+                                >
+                                    <Layers size={18} /> Name Products
+                                </a>
                                 <a 
                                     href="#" 
                                     className={viewMode === 'managers' ? 'active' : ''}
@@ -1177,6 +1119,13 @@ export const AdminDashboard = () => {
                                     onClick={(e) => { e.preventDefault(); setViewMode('statusTimeline'); }}
                                 >
                                     <Activity size={18} /> Activity Timeline
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={viewMode === 'activityLogs' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('activityLogs'); }}
+                                >
+                                    <Activity size={18} /> Activity Logs
                                 </a>
                             </>
                         )}
@@ -1234,9 +1183,11 @@ export const AdminDashboard = () => {
                                     {viewMode === 'monitoring' && 'Monitor'}
                                     {viewMode === 'team' && 'Engineering'}
                                     {viewMode === 'projects' && 'Services'}
+                                    {viewMode === 'nameProducts' && 'Name Products'}
                                     {viewMode === 'managers' && 'Approvers'}
                                     {viewMode === 'statusTimeline' && 'Timeline'}
                                     {viewMode === 'rota' && 'Schedule'}
+                                    {viewMode === 'activityLogs' && 'Audit Trail'}
                                     {viewMode === 'profile' && 'Account'}
                                     {viewMode === 'settings' && 'Preferences'}
                                 </span>
@@ -1247,9 +1198,11 @@ export const AdminDashboard = () => {
                                 {viewMode === 'monitoring' && 'Environment Monitoring'}
                                 {viewMode === 'team' && 'Engineering Team'}
                                 {viewMode === 'projects' && 'Configured Workflow Summary'}
+                                {viewMode === 'nameProducts' && 'Name Products'}
                                 {viewMode === 'managers' && 'Approval Contacts'}
                                 {viewMode === 'rota' && 'On-Call Schedule'}
                                 {viewMode === 'statusTimeline' && 'Team Activity Timeline'}
+                                {viewMode === 'activityLogs' && 'Activity Logs / Audit Trail'}
                                 {viewMode === 'profile' && 'My Account'}
                                 {viewMode === 'settings' && 'Preferences'}
                             </h1>
@@ -1264,12 +1217,16 @@ export const AdminDashboard = () => {
                                             ? 'Manage engineering team members and monitor current availability.'
                                             : viewMode === 'projects'
                                                 ? 'Configure services and workflows for request routing.'
+                                                : viewMode === 'nameProducts'
+                                                    ? 'Set per-environment contacts, cloud tags, resource utilization, and cost estimates.'
                                                 : viewMode === 'managers'
                                                     ? 'Manage approval contacts for workflow notifications.'
                                                     : viewMode === 'rota'
                                                         ? 'Configure on-call rotation and shift assignments.'
                                                         : viewMode === 'statusTimeline'
                                                             ? 'Track team member availability changes with visual timeline.'
+                                                            : viewMode === 'activityLogs'
+                                                                ? 'Full audit trail of all ticket and system actions.'
                                                             : viewMode === 'settings'
                                                                 ? 'Configure notifications and preferences.'
                                                             : 'Azure login details for your account.'}
@@ -1358,7 +1315,7 @@ export const AdminDashboard = () => {
                 ) : (
                 <>
                 {/* Professional Stats Cards */}
-                {!['profile', 'settings', 'monitoring'].includes(viewMode) && (
+                {!['profile', 'settings', 'monitoring', 'activityLogs'].includes(viewMode) && (
                 <div className="stats-grid">
                     <div className="stat-card jira-style">
                         <div className="stat-icon blue">
@@ -1394,9 +1351,11 @@ export const AdminDashboard = () => {
                 {viewMode === 'monitoring' ? (
                     <MonitoringPanel adminMode />
                 ) : viewMode === 'analytics' ? (
-                    <AnalyticsView 
-                        stats={stats} 
-                        tickets={tickets} 
+                    <AnalyticsDashboard
+                        tickets={tickets}
+                        stats={stats}
+                        devOpsMembers={devOpsMembers}
+                        projects={projects}
                     />
                 ) : viewMode === 'team' ? (
                     <TeamManagementView 
@@ -1432,6 +1391,8 @@ export const AdminDashboard = () => {
                         />
                     )}
                     </>
+                ) : viewMode === 'nameProducts' ? (
+                    <NameProductsView />
                 ) : viewMode === 'managers' ? (
                     <ManagerManagementView 
                         newManager={newManager}
@@ -1459,6 +1420,8 @@ export const AdminDashboard = () => {
                         devOpsMembers={devOpsMembers}
                         timelineStatusColors={TIMELINE_STATUS_COLORS}
                     />
+                ) : viewMode === 'activityLogs' ? (
+                    <ActivityLogsView />
                 ) : viewMode === 'profile' ? (
                     <div className="tickets-section">
                         <div className="tickets-header">

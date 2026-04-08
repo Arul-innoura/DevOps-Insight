@@ -1,6 +1,6 @@
 package com.devops.backend.service.impl;
 
-import com.devops.backend.config.RabbitMQConfig;
+import com.azure.storage.queue.QueueClient;
 import com.devops.backend.dto.EmailMessage;
 import com.devops.backend.model.Ticket;
 import com.devops.backend.model.TicketStatus;
@@ -12,9 +12,9 @@ import com.devops.backend.repository.UserNotificationPreferencesRepository;
 import com.devops.backend.service.EmailService;
 import com.devops.backend.service.EventPublisherService;
 import com.devops.backend.service.WorkflowSnapshotService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -32,7 +32,8 @@ import java.util.stream.Stream;
 @RequiredArgsConstructor
 public class EmailServiceImpl implements EmailService {
 
-    private final RabbitTemplate rabbitTemplate;
+    private final QueueClient queueClient;
+    private final ObjectMapper objectMapper;
     private final EventPublisherService eventPublisher;
     private final UserNotificationPreferencesRepository userNotificationPreferencesRepository;
     private final WorkflowSnapshotService workflowSnapshotService;
@@ -74,11 +75,8 @@ public class EmailServiceImpl implements EmailService {
         }
 
         try {
-            rabbitTemplate.convertAndSend(
-                    RabbitMQConfig.EMAIL_EXCHANGE,
-                    RabbitMQConfig.EMAIL_ROUTING_KEY,
-                    message
-            );
+            String json = objectMapper.writeValueAsString(message);
+            queueClient.sendMessage(json);
             log.info("Email queued - To: {}, Subject: {}", message.getTo(), message.getSubject());
             eventPublisher.publishEmailEvent("QUEUED", message);
         } catch (Exception e) {

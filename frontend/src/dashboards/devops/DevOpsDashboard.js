@@ -590,6 +590,18 @@ export const DevOpsDashboard = () => {
         }
     };
 
+    const handleAssignToSelf = async (ticketId) => {
+        try {
+            setActionLoading("Assigning ticket...");
+            const updated = await assignTicket(ticketId, userName, { name: userName, email: userEmail });
+            upsertTicketLocally(updated);
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        } finally {
+            setActionLoading("");
+        }
+    };
+
     const handleSubmitCostApproval = async (ticketId, estimatedCost, currency, notes) => {
         try {
             setActionLoading("Submitting cost approval...");
@@ -644,7 +656,23 @@ export const DevOpsDashboard = () => {
     const QuickActions = ({ ticket }) => {
         if (isReadOnly) return null; // No actions in read-only mode
         const requiresCostApproval = !!ticket.costApprovalRequired || !!ticket.workflowConfiguration?.costApprovalRequired;
-        
+
+        // Unassigned ticket in a non-new state — show a quick "Assign Me" badge
+        if (!ticket.assignedTo && ticket.status !== TICKET_STATUS.CREATED) {
+            return (
+                <div className="quick-actions" onClick={e => e.stopPropagation()}>
+                    <button
+                        className="quick-btn accept"
+                        style={{ background: '#f0f9ff', color: '#0369a1', borderColor: '#bae6fd' }}
+                        onClick={() => handleAssignToSelf(ticket.id)}
+                    >
+                        <UserPlus size={14} />
+                        Assign Me
+                    </button>
+                </div>
+            );
+        }
+
         // For unassigned tickets
         if (!ticket.assignedTo && ticket.status === TICKET_STATUS.CREATED) {
             return (

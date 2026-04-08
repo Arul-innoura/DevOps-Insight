@@ -66,10 +66,11 @@
 			<artifactId>spring-boot-starter-webmvc-test</artifactId>
 			<scope>test</scope>
 		</dependency>
-		<!-- RabbitMQ for async email queue -->
+		<!-- Azure Storage Queue for async email queue -->
 		<dependency>
-			<groupId>org.springframework.boot</groupId>
-			<artifactId>spring-boot-starter-amqp</artifactId>
+			<groupId>com.azure</groupId>
+			<artifactId>azure-storage-queue</artifactId>
+			<version>12.22.1</version>
 		</dependency>
 		<!-- Email sending -->
 		<dependency>

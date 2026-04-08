@@ -10,6 +10,7 @@ import {
     XCircle, 
     PlayCircle,
     UserCheck,
+    UserPlus,
     FileCheck,
     ChevronDown,
     ChevronUp,
@@ -46,6 +47,7 @@ import {
     createTicket,
     updateTicketStatus,
     addTicketNote,
+    assignTicket,
     getSavedCcEmails,
     saveCcEmail
 } from '../services/ticketService';
@@ -660,6 +662,121 @@ const DetailField = ({ icon: Icon, label, value, mono = false, pill = false, pil
     );
 };
 
+// ============ STATUS FLOW BAR COMPONENT ============
+const StatusFlowBar = ({ ticket }) => {
+    const statusSteps = [
+        { key: TICKET_STATUS.CREATED, label: 'Raised' },
+        { key: TICKET_STATUS.ACCEPTED, label: 'Accepted' },
+        { key: TICKET_STATUS.MANAGER_APPROVAL_PENDING, label: 'Mgr Approval', optional: !ticket.managerApprovalRequired },
+        { key: TICKET_STATUS.MANAGER_APPROVED, label: 'Approved', optional: !ticket.managerApprovalRequired },
+        { key: TICKET_STATUS.COST_APPROVAL_PENDING, label: 'Cost Review', optional: !ticket.costApprovalRequired },
+        { key: TICKET_STATUS.COST_APPROVED, label: 'Cost OK', optional: !ticket.costApprovalRequired },
+        { key: TICKET_STATUS.IN_PROGRESS, label: 'In Progress' },
+        { key: TICKET_STATUS.COMPLETED, label: 'Completed' },
+        { key: TICKET_STATUS.CLOSED, label: 'Closed' },
+    ];
+
+    const useDynamic = Array.isArray(ticket.workflowStages) && ticket.workflowStages.length > 0;
+
+    if (useDynamic) {
+        return (
+            <div style={{ overflowX: 'auto', background: '#fafafa', borderBottom: '1px solid #e5e7eb' }}>
+                <div style={{ display: 'flex', alignItems: 'center', height: 48, padding: '0 1.25rem', minWidth: 'max-content', gap: 0 }}>
+                    {ticket.workflowStages.map((stage, i) => {
+                        const isDone = stage.state === 'done';
+                        const isCurrent = stage.state === 'current';
+                        return (
+                            <React.Fragment key={stage.id || i}>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
+                                    <div style={{
+                                        width: isCurrent ? 14 : 10, height: isCurrent ? 14 : 10, borderRadius: '50%',
+                                        background: isDone ? '#16a34a' : isCurrent ? '#2563eb' : '#d1d5db',
+                                        boxShadow: isCurrent ? '0 0 0 3px #bfdbfe' : 'none',
+                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                        flexShrink: 0, transition: 'all 0.2s'
+                                    }}>
+                                        {isDone && <span style={{ fontSize: 7, color: '#fff', lineHeight: 1, fontWeight: 900 }}>✓</span>}
+                                    </div>
+                                    <span style={{
+                                        fontSize: '0.6rem', fontWeight: isCurrent ? 700 : 400,
+                                        color: isDone ? '#166534' : isCurrent ? '#1d4ed8' : '#9ca3af',
+                                        whiteSpace: 'nowrap', lineHeight: 1
+                                    }}>
+                                        {stage.label}
+                                    </span>
+                                </div>
+                                {i < ticket.workflowStages.length - 1 && (
+                                    <div style={{ width: 18, height: 1.5, background: isDone ? '#86efac' : '#e5e7eb', margin: '-7px 3px 0', flexShrink: 0 }} />
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    }
+
+    const getStepIdx = () => {
+        const idx = statusSteps.findIndex(s => s.key === ticket.status);
+        if (idx !== -1) return idx;
+        if (ticket.status === TICKET_STATUS.ACTION_REQUIRED || ticket.status === TICKET_STATUS.ON_HOLD) {
+            return statusSteps.findIndex(s => s.key === TICKET_STATUS.IN_PROGRESS);
+        }
+        return 0;
+    };
+    const currentIdx = getStepIdx();
+
+    return (
+        <div style={{ overflowX: 'auto', background: '#fafafa', borderBottom: '1px solid #e5e7eb' }}>
+            <div style={{ display: 'flex', alignItems: 'center', height: 48, padding: '0 1.25rem', minWidth: 'max-content', gap: 0 }}>
+                {statusSteps.map((step, i) => {
+                    const isDone = i < currentIdx;
+                    const isCurrent = i === currentIdx;
+                    const isOptionalFaded = step.optional && !isDone && !isCurrent;
+                    return (
+                        <React.Fragment key={step.key}>
+                            <div style={{
+                                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
+                                opacity: isOptionalFaded ? 0.3 : 1, transition: 'opacity 0.2s'
+                            }}>
+                                <div style={{
+                                    width: isCurrent ? 14 : 10, height: isCurrent ? 14 : 10, borderRadius: '50%',
+                                    background: isDone ? '#16a34a' : isCurrent ? '#2563eb' : '#d1d5db',
+                                    boxShadow: isCurrent ? '0 0 0 3px #bfdbfe' : 'none',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    flexShrink: 0, transition: 'all 0.2s'
+                                }}>
+                                    {isDone && <span style={{ fontSize: 7, color: '#fff', lineHeight: 1, fontWeight: 900 }}>✓</span>}
+                                </div>
+                                <span style={{
+                                    fontSize: '0.6rem', fontWeight: isCurrent ? 700 : 400,
+                                    color: isDone ? '#166534' : isCurrent ? '#1d4ed8' : '#9ca3af',
+                                    whiteSpace: 'nowrap', lineHeight: 1
+                                }}>
+                                    {step.label}
+                                </span>
+                            </div>
+                            {i < statusSteps.length - 1 && (
+                                <div style={{
+                                    width: 18, height: 1.5,
+                                    background: isDone ? '#86efac' : '#e5e7eb',
+                                    margin: '-7px 3px 0', flexShrink: 0,
+                                    opacity: isOptionalFaded ? 0.3 : 1
+                                }} />
+                            )}
+                        </React.Fragment>
+                    );
+                })}
+            </div>
+            {(ticket.status === TICKET_STATUS.ACTION_REQUIRED || ticket.status === TICKET_STATUS.ON_HOLD) && (
+                <div style={{ padding: '0 1.25rem 6px', display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <StatusBadge status={ticket.status} size="small" animated />
+                </div>
+            )}
+        </div>
+    );
+};
+
 // ============ TICKET DETAILS MODAL ============
 export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote, user, canManage = false, onToggleActiveStatus, onRequestCostApproval }) => {
     const [note, setNote] = useState('');
@@ -668,7 +785,12 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
     const [showApprovalEditor, setShowApprovalEditor] = useState(false);
     const [approvalEditorText, setApprovalEditorText] = useState('');
     const [approvalEditorHtml, setApprovalEditorHtml] = useState('');
-    
+    const [showApprovalPanel, setShowApprovalPanel] = useState(false);
+    const [approvalType, setApprovalType] = useState('Manager Approval');
+    const [approvalNote, setApprovalNote] = useState('');
+    const [closeNote, setCloseNote] = useState('');
+    const [modalActionLoading, setModalActionLoading] = useState(false);
+
     if (!ticket) return null;
 
     const accent = getTypeAccent(ticket.requestType);
@@ -770,7 +892,44 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
         }
         applySelectedAction(note);
     };
-    
+
+    const handleAssignMe = async () => {
+        if (!user) return;
+        setModalActionLoading(true);
+        try {
+            await assignTicket(ticket.id, user.name, user);
+        } catch (e) {
+            alert(e.message);
+        } finally {
+            setModalActionLoading(false);
+        }
+    };
+
+    const handleQuickStatus = (status, defaultNote) => {
+        if (onStatusChange) onStatusChange(ticket.id, status, defaultNote, {});
+    };
+
+    const handleSendApprovalRequest = () => {
+        if (!onStatusChange) return;
+        if (approvalType === 'Cost Approval') {
+            if (onRequestCostApproval) {
+                onRequestCostApproval(ticket);
+            } else {
+                onStatusChange(ticket.id, TICKET_STATUS.COST_APPROVAL_PENDING, approvalNote || 'Cost approval requested', {});
+            }
+        } else {
+            const typeNote = [approvalType, approvalNote ? `Purpose: ${approvalNote}` : null].filter(Boolean).join('. ');
+            onStatusChange(
+                ticket.id,
+                TICKET_STATUS.MANAGER_APPROVAL_PENDING,
+                typeNote,
+                ticket.managerEmail ? { approvalTargetEmail: ticket.managerEmail } : {}
+            );
+        }
+        setApprovalNote('');
+        setShowApprovalPanel(false);
+    };
+
     const handleAddNote = () => {
         if (note.trim() && onAddNote) {
             onAddNote(ticket.id, note, noteAttachments);
@@ -908,14 +1067,7 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                     </div>
                     <button className="modal-close" onClick={onClose}><X size={20} /></button>
                 </div>
-                <div style={{ padding: "0.5rem 1rem", borderBottom: "1px solid #e5e7eb", background: runtimeBarTone.bg }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ height: 6, borderRadius: 999, background: runtimeBarTone.color, flex: 1 }} />
-                        <span style={{ color: runtimeBarTone.color, fontWeight: 600, fontSize: "0.78rem" }}>
-                            {runtimeBarTone.label}
-                        </span>
-                    </div>
-                </div>
+                <StatusFlowBar ticket={ticket} />
 
                 {/* ── Two-panel body ── */}
                 <div className="jdm-body">
@@ -1019,7 +1171,54 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                         </div>
 
                         {/* Actions (manage) */}
-                        {selectableActions.length > 0 && (
+                        {ticket.status === TICKET_STATUS.ACTION_REQUIRED && canManage ? (
+                            <div className="jdm-section">
+                                <div className="jdm-section-title"><AlertCircle size={14} /> Action Required — What to do?</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                                    {user && ticket.assignedTo !== user.name && (
+                                        <button
+                                            className="jdm-btn-secondary"
+                                            onClick={handleAssignMe}
+                                            disabled={modalActionLoading}
+                                            title="Assign this ticket to yourself"
+                                        >
+                                            <UserPlus size={14} /> Assign Me
+                                        </button>
+                                    )}
+                                    <button
+                                        className="jdm-btn-primary"
+                                        onClick={() => handleQuickStatus(TICKET_STATUS.IN_PROGRESS, 'Resuming work on ticket')}
+                                        disabled={modalActionLoading}
+                                    >
+                                        <PlayCircle size={14} /> Work In Progress
+                                    </button>
+                                    <button
+                                        className="jdm-btn-ghost"
+                                        onClick={() => handleQuickStatus(TICKET_STATUS.ON_HOLD, 'Ticket put on hold')}
+                                        disabled={modalActionLoading}
+                                    >
+                                        <Pause size={14} /> On Hold
+                                    </button>
+                                </div>
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                                    <input
+                                        className="jdm-select"
+                                        style={{ flex: 1, padding: '5px 8px', height: 34 }}
+                                        placeholder="Close note (optional)..."
+                                        value={closeNote}
+                                        onChange={e => setCloseNote(e.target.value)}
+                                    />
+                                    <button
+                                        className="jdm-btn-ghost"
+                                        style={{ color: '#dc2626', borderColor: '#fca5a5', flexShrink: 0 }}
+                                        onClick={() => handleQuickStatus(TICKET_STATUS.CLOSED, closeNote || 'Ticket closed')}
+                                        disabled={modalActionLoading}
+                                    >
+                                        <XCircle size={14} /> Close Ticket
+                                    </button>
+                                </div>
+                            </div>
+                        ) : selectableActions.length > 0 && (
                             <div className="jdm-section">
                                 <div className="jdm-section-title"><PlayCircle size={14} /> Actions</div>
                                 <div className="jdm-action-row">
@@ -1074,6 +1273,54 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                                             <DollarSign size={14} /> Submit Cost Estimate
                                         </button>
                                     )}
+                            </div>
+                        )}
+
+                        {/* Request Approval — collapsible panel for DevOps/Admin */}
+                        {canManage && ![TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(ticket.status) && (
+                            <div className="jdm-section">
+                                <button
+                                    style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#374151', fontWeight: 600, fontSize: '0.82rem' }}
+                                    onClick={() => setShowApprovalPanel(!showApprovalPanel)}
+                                >
+                                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <ShieldCheck size={14} /> Send for Approval
+                                    </span>
+                                    {showApprovalPanel ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                </button>
+                                {showApprovalPanel && (
+                                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                            <label style={{ fontSize: '0.78rem', color: '#6b7280', whiteSpace: 'nowrap', minWidth: 90 }}>Approval type</label>
+                                            <select
+                                                value={approvalType}
+                                                onChange={e => setApprovalType(e.target.value)}
+                                                className="jdm-select"
+                                                style={{ flex: 1 }}
+                                            >
+                                                <option>Manager Approval</option>
+                                                <option>Lead Approval</option>
+                                                <option>CEO Approval</option>
+                                                <option>Cost Approval</option>
+                                            </select>
+                                        </div>
+                                        <textarea
+                                            className="jdm-textarea"
+                                            value={approvalNote}
+                                            onChange={e => setApprovalNote(e.target.value)}
+                                            placeholder="Note / context for approver (optional)"
+                                            rows={2}
+                                        />
+                                        <button
+                                            className="jdm-btn-primary"
+                                            style={{ alignSelf: 'flex-start' }}
+                                            onClick={handleSendApprovalRequest}
+                                            disabled={modalActionLoading}
+                                        >
+                                            <Send size={14} /> Send Approval Request
+                                        </button>
+                                    </div>
+                                )}
                             </div>
                         )}
                         {canManage && ticket.status === TICKET_STATUS.MANAGER_APPROVAL_PENDING && (
