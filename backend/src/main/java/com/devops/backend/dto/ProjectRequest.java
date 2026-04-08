@@ -17,4 +17,7 @@ public class ProjectRequest {
 
     /** Optional short alias/business tag. */
     private String tag;
+
+    /** Optional supported environment names for this project. */
+    private java.util.List<String> environments;
 }

@@ -48,8 +48,9 @@ public interface EmailService {
      * Send manager approval request email with Approve/Reject buttons.
      * @param ticket The ticket requiring approval
      * @param approvalToken Secure token for the approval link
+     * @param requesterContextNote Optional note from the person triggering approval (shown in email body)
      */
-    void sendManagerApprovalRequestEmail(Ticket ticket, String approvalToken);
+    void sendManagerApprovalRequestEmail(Ticket ticket, String approvalToken, String requesterContextNote);
     
     /**
      * Send manager approval response notification (approved/rejected).

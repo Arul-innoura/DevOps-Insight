@@ -79,7 +79,11 @@ import {
     setVolume,
     getVolume
 } from "../../services/notificationService";
-import { useActivityTracker } from "../../services/useActivityTracker";
+import MonitoringPanel from "../MonitoringPanel";
+import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
+import { NavSectionToggle } from "../../components/NavSectionToggle";
+
+const DEVOPS_SIDEBAR_NAV_DEFAULTS = { queue: true, archive: true, team: true, account: true };
 
 // Status visual configuration
 const STATUS_CONFIG = {
@@ -287,6 +291,7 @@ export const DevOpsDashboard = () => {
         enabled: getSoundEnabled(),
         volume: getVolume()
     });
+    const [navGroups, setNavGroups] = usePersistedSidebarNav("devops", DEVOPS_SIDEBAR_NAV_DEFAULTS);
     const isLoadingRef = useRef(false);
     const activeSectionRef = useRef(activeSection);
     const didUpsertSelfRef = useRef(false);
@@ -294,34 +299,10 @@ export const DevOpsDashboard = () => {
     // Real-time connection status
     const { isConnected, syncMethod } = useConnectionStatus();
     
-    // Inactivity warning state
-    const [inactivityWarning, setInactivityWarning] = useState(false);
     const [showStatusSelector, setShowStatusSelector] = useState(false);
-    
-    // Activity tracker - sends heartbeats and detects inactivity
-    useActivityTracker({
-        userEmail: userEmail,
-        userName: userName,
-        currentStatus: myAvailability,
-        onStatusChange: (newStatus) => {
-            setMyAvailability(newStatus);
-        },
-        onInactivityWarning: (minutesLeft) => {
-            setInactivityWarning(true);
-            addToast(`⏰ You'll be marked Offline in ${minutesLeft} minutes due to inactivity. Move your mouse to stay active.`, 'warning');
-            // Auto-dismiss warning after 30 seconds
-            setTimeout(() => setInactivityWarning(false), 30000);
-        },
-        onAutoOffline: () => {
-            setInactivityWarning(false);
-            addToast('🔴 You have been automatically set to Offline due to inactivity.', 'error');
-        },
-        enabled: userEmail && userEmail !== 'devops@company.com'
-    });
-    
+
     // Derived permission state
     const isReadOnly = myAvailability === DEVOPS_AVAILABILITY_STATUS.AWAY || myAvailability === DEVOPS_AVAILABILITY_STATUS.BUSY;
-    const isOffline = myAvailability === DEVOPS_AVAILABILITY_STATUS.OFFLINE;
     
     // Section counts
     const [sectionCounts, setSectionCounts] = useState({
@@ -548,7 +529,7 @@ export const DevOpsDashboard = () => {
         }
     };
     
-    const handleStatusChange = async (ticketId, newStatus, notes) => {
+    const handleStatusChange = async (ticketId, newStatus, notes, meta = {}) => {
         setTickets((prev) => prev.map((ticket) => (
             ticket.id === ticketId ? { ...ticket, status: newStatus } : ticket
         )));
@@ -557,13 +538,26 @@ export const DevOpsDashboard = () => {
         )));
         try {
             setActionLoading("Updating ticket status...");
-            const updated = await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes);
+            const updated = await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes, meta);
             upsertTicketLocally(updated);
         } catch (error) {
             alert(`Error: ${error.message}`);
         } finally {
             setActionLoading("");
         }
+    };
+
+
+    const handleApprovalTrigger = (ticket) => {
+        const note = window.prompt("Enter approval purpose / note:", "Approval required for implementation");
+        if (note === null) return;
+        const trimmed = (note || "").trim();
+        handleStatusChange(
+            ticket.id,
+            TICKET_STATUS.MANAGER_APPROVAL_PENDING,
+            trimmed || "Approval requested",
+            ticket.managerEmail ? { approvalTargetEmail: ticket.managerEmail } : {}
+        );
     };
     
     const handleAddNote = async (ticketId, notes, attachments = []) => {
@@ -646,9 +640,9 @@ export const DevOpsDashboard = () => {
         }
     };
     
-    // Quick action buttons for ticket management - disabled when read-only or offline
+    // Quick action buttons for ticket management - disabled when read-only
     const QuickActions = ({ ticket }) => {
-        if (isReadOnly || isOffline) return null; // No actions in read-only or offline mode
+        if (isReadOnly) return null; // No actions in read-only mode
         const requiresCostApproval = !!ticket.costApprovalRequired || !!ticket.workflowConfiguration?.costApprovalRequired;
         
         // For unassigned tickets
@@ -672,7 +666,7 @@ export const DevOpsDashboard = () => {
                     {ticket.managerApprovalRequired && (
                         <button 
                             className="quick-btn"
-                            onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.MANAGER_APPROVAL_PENDING, 'Sent for manager approval')}
+                            onClick={() => handleApprovalTrigger(ticket)}
                         >
                             Request Approval
                         </button>
@@ -702,10 +696,7 @@ export const DevOpsDashboard = () => {
                 <div className="quick-actions" onClick={e => e.stopPropagation()}>
                     <button className="quick-btn" disabled>
                         <Clock size={14} />
-                        Waiting Approval
-                        {ticket.currentApprovalLevel && ticket.totalApprovalLevels
-                            ? ` L${ticket.currentApprovalLevel}/${ticket.totalApprovalLevels}`
-                            : ""}
+                        Waiting approval
                     </button>
                     <button 
                         className="quick-btn forward"
@@ -878,7 +869,7 @@ export const DevOpsDashboard = () => {
     );
 
     return (
-        <div className={`dashboard-layout devops-dashboard ${isOffline ? 'is-offline' : ''} ${isReadOnly ? 'is-readonly' : ''}`}>
+        <div className={`dashboard-layout devops-dashboard ${isReadOnly ? 'is-readonly' : ''}`}>
 
 
             <aside className="sidebar jira-style">
@@ -900,104 +891,142 @@ export const DevOpsDashboard = () => {
                         />
                     </div>
                     <div className="brand-text">
-                        <h2>DevOps Hub</h2>
+                        <h2>CloudOps Hub</h2>
                         <span className="brand-subtitle">Engineering Console</span>
                     </div>
                 </div>
                 <nav className="sidebar-nav">
                     <div className="nav-section">
-                        <span className="nav-section-title">Work Queue</span>
-                        <a 
-                            href="#" 
-                            className={activeSection === 'unassigned' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); handleSectionChange('unassigned'); }}
-                        >
-                            <Inbox size={18} /> 
-                            Unassigned
-                            {sectionCounts.unassigned > 0 && (
-                                <span className="nav-badge urgent">{sectionCounts.unassigned}</span>
-                            )}
-                        </a>
-                        <a 
-                            href="#" 
-                            className={activeSection === 'myTickets' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); handleSectionChange('myTickets'); }}
-                        >
-                            <Ticket size={18} /> 
-                            My Tickets
-                            {sectionCounts.myTickets > 0 && (
-                                <span className="nav-badge">{sectionCounts.myTickets}</span>
-                            )}
-                        </a>
-                        <a 
-                            href="#" 
-                            className={activeSection === 'active' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); handleSectionChange('active'); }}
-                        >
-                            <Activity size={18} /> 
-                            Active Requests
-                            {sectionCounts.active > 0 && (
-                                <span className="nav-badge">{sectionCounts.active}</span>
-                            )}
-                        </a>
+                        <NavSectionToggle
+                            label="Service Queue"
+                            open={navGroups.queue}
+                            onToggle={() => setNavGroups((p) => ({ ...p, queue: !p.queue }))}
+                        />
+                        {navGroups.queue && (
+                            <>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'unassigned' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); handleSectionChange('unassigned'); }}
+                                >
+                                    <Inbox size={18} /> 
+                                    New Requests
+                                    {sectionCounts.unassigned > 0 && (
+                                        <span className="nav-badge urgent">{sectionCounts.unassigned}</span>
+                                    )}
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'myTickets' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); handleSectionChange('myTickets'); }}
+                                >
+                                    <Ticket size={18} /> 
+                                    Assigned to Me
+                                    {sectionCounts.myTickets > 0 && (
+                                        <span className="nav-badge">{sectionCounts.myTickets}</span>
+                                    )}
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'active' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); handleSectionChange('active'); }}
+                                >
+                                    <Activity size={18} /> 
+                                    In Progress
+                                    {sectionCounts.active > 0 && (
+                                        <span className="nav-badge">{sectionCounts.active}</span>
+                                    )}
+                                </a>
+                            </>
+                        )}
                     </div>
                     <div className="nav-section">
-                        <span className="nav-section-title">Archive</span>
-                        <a 
-                            href="#" 
-                            className={activeSection === 'history' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); handleSectionChange('history'); }}
-                        >
-                            <History size={18} /> 
-                            History
-                        </a>
-                        <a 
-                            href="#" 
-                            className={activeSection === 'closed' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); handleSectionChange('closed'); }}
-                        >
-                            <CheckCircle size={18} /> 
-                            Closed Tickets
-                        </a>
+                        <NavSectionToggle
+                            label="Archive"
+                            open={navGroups.archive}
+                            onToggle={() => setNavGroups((p) => ({ ...p, archive: !p.archive }))}
+                        />
+                        {navGroups.archive && (
+                            <>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'history' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); handleSectionChange('history'); }}
+                                >
+                                    <History size={18} /> 
+                                    Completed
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'closed' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); handleSectionChange('closed'); }}
+                                >
+                                    <CheckCircle size={18} /> 
+                                    Closed
+                                </a>
+                            </>
+                        )}
                     </div>
                     <div className="nav-section">
-                        <span className="nav-section-title">Team</span>
-                        <a 
-                            href="#" 
-                            className={activeSection === 'standup' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); handleSectionChange('standup'); }}
-                        >
-                            <StickyNote size={18} /> 
-                            Standup
-                        </a>
-                        <a 
-                            href="#" 
-                            className={activeSection === 'rota' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); handleSectionChange('rota'); }}
-                        >
-                            <RotateCcw size={18} /> 
-                            Rota
-                        </a>
-                        <a href="#"><BarChart3 size={18} /> Reports</a>
+                        <NavSectionToggle
+                            label="Team"
+                            open={navGroups.team}
+                            onToggle={() => setNavGroups((p) => ({ ...p, team: !p.team }))}
+                        />
+                        {navGroups.team && (
+                            <>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'standup' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); handleSectionChange('standup'); }}
+                                >
+                                    <StickyNote size={18} /> 
+                                    Daily Sync
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'rota' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); handleSectionChange('rota'); }}
+                                >
+                                    <RotateCcw size={18} /> 
+                                    On-Call Schedule
+                                </a>
+                                <a 
+                                    href="#"
+                                    className={activeSection === 'monitoring' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); handleSectionChange('monitoring'); }}
+                                >
+                                    <BarChart3 size={18} /> Analytics
+                                </a>
+                            </>
+                        )}
                     </div>
                     <div className="nav-section">
-                        <span className="nav-section-title">Account</span>
-                        <a 
-                            href="#" 
-                            className={activeSection === 'settings' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); handleSectionChange('settings'); }}
-                        >
-                            <Settings size={18} />
-                            Settings
-                        </a>
-                        <a 
-                            href="#" 
-                            className={`nav-profile-link ${activeSection === 'profile' ? 'active' : ''}`}
-                            onClick={(e) => { e.preventDefault(); handleSectionChange('profile'); }}
-                        >
-                            <ProfileIcon size={18} />
-                            Profile
-                        </a>
+                        <NavSectionToggle
+                            label="Account"
+                            open={navGroups.account}
+                            onToggle={() => setNavGroups((p) => ({ ...p, account: !p.account }))}
+                        />
+                        {navGroups.account && (
+                            <>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'settings' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); handleSectionChange('settings'); }}
+                                >
+                                    <Settings size={18} />
+                                    Preferences
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={`nav-profile-link ${activeSection === 'profile' ? 'active' : ''}`}
+                                    onClick={(e) => { e.preventDefault(); handleSectionChange('profile'); }}
+                                >
+                                    <ProfileIcon size={18} />
+                                    My Account
+                                </a>
+                            </>
+                        )}
                     </div>
                 </nav>
                 <div className="sidebar-footer">
@@ -1031,23 +1060,10 @@ export const DevOpsDashboard = () => {
                 </div>
             </aside>
             
-            <main className={`dashboard-content ${isOffline ? 'offline-blur' : ''}`}>
-                {/* Offline Overlay */}
-                {isOffline && (
-                    <div className="offline-overlay">
-                        <div className="offline-card">
-                            <div className="offline-icon">
-                                <Moon size={48} />
-                            </div>
-                            <h2>You are currently Offline</h2>
-                            <p>Your dashboard is locked. Change your status to resume work.</p>
-                            <StatusSelector />
-                        </div>
-                    </div>
-                )}
+            <main className="dashboard-content">
 
                 {/* Read-Only Banner */}
-                {isReadOnly && !isOffline && (
+                {isReadOnly && (
                     <div className={`readonly-banner ${myAvailability === DEVOPS_AVAILABILITY_STATUS.AWAY ? 'away' : 'busy'}`}>
                         <div className="readonly-banner-content">
                             {myAvailability === DEVOPS_AVAILABILITY_STATUS.AWAY ? (
@@ -1062,13 +1078,6 @@ export const DevOpsDashboard = () => {
                     </div>
                 )}
 
-                {/* Inactivity Warning */}
-                {inactivityWarning && (
-                    <div className="inactivity-warning-bar">
-                        <Clock size={16} />
-                        <span>⏰ You will be marked <strong>Offline</strong> in 3 minutes due to inactivity. Move your mouse to stay active.</span>
-                    </div>
-                )}
                 <header className="content-header jira-style">
                     <div className="header-top">
                         <div className="header-title-section">
@@ -1081,6 +1090,7 @@ export const DevOpsDashboard = () => {
                                     {activeSection === 'active' && 'Active'}
                                     {activeSection === 'history' && 'History'}
                                     {activeSection === 'closed' && 'Closed'}
+                                    {activeSection === 'monitoring' && 'Monitoring'}
                                     {activeSection === 'profile' && 'Profile'}
                                     {activeSection === 'standup' && 'Standup'}
                                     {activeSection === 'rota' && 'Rota'}
@@ -1093,6 +1103,7 @@ export const DevOpsDashboard = () => {
                                 {activeSection === 'active' && 'Active Requests'}
                                 {activeSection === 'history' && 'Completed History'}
                                 {activeSection === 'closed' && 'Closed Tickets'}
+                                {activeSection === 'monitoring' && 'Environment Monitoring'}
                                 {activeSection === 'profile' && 'My Profile'}
                                 {activeSection === 'standup' && 'Daily Standup Notes'}
                                 {activeSection === 'rota' && 'Night Shift Rota'}
@@ -1104,6 +1115,7 @@ export const DevOpsDashboard = () => {
                                 {activeSection === 'active' && 'All tickets currently being worked on by the team.'}
                                 {activeSection === 'history' && 'Completed and closed tickets.'}
                                 {activeSection === 'closed' && 'Tickets with closed status only.'}
+                                {activeSection === 'monitoring' && 'Track product environment up/down activity and utilization metrics.'}
                                 {activeSection === 'profile' && 'Azure login details for your account.'}
                                 {activeSection === 'standup' && 'Date-wise sticky notes for daily standup updates by each DevOps member.'}
                                 {activeSection === 'rota' && 'Auto-assigned night shift rota in alphabetical order.'}
@@ -1192,7 +1204,7 @@ export const DevOpsDashboard = () => {
                 ) : (
                 <>
                 {/* Professional Stats Cards */}
-                {!['profile', 'standup', 'rota', 'settings'].includes(activeSection) && (
+                {!['profile', 'standup', 'rota', 'settings', 'monitoring'].includes(activeSection) && (
                 <div className="stats-grid">
                     <div className={`stat-card jira-style ${activeSection === 'unassigned' ? 'highlight' : ''}`}
                          onClick={() => handleSectionChange('unassigned')}>
@@ -1236,7 +1248,9 @@ export const DevOpsDashboard = () => {
                 )}
                  
                 {/* Content Sections */}
-                {activeSection === 'profile' ? (
+                {activeSection === 'monitoring' ? (
+                    <MonitoringPanel />
+                ) : activeSection === 'profile' ? (
                     <div className="tickets-section">
                         <div className="tickets-header">
                             <h3>Profile</h3>

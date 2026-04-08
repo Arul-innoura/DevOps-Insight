@@ -1,6 +1,10 @@
 package com.devops.backend.controller;
 
 import com.devops.backend.dto.*;
+import com.devops.backend.exception.ResourceNotFoundException;
+import com.devops.backend.model.Ticket;
+import com.devops.backend.model.TicketStatus;
+import com.devops.backend.repository.TicketRepository;
 import com.devops.backend.service.TicketService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +31,7 @@ import java.util.Map;
 public class TicketController {
     
     private final TicketService ticketService;
+    private final TicketRepository ticketRepository;
     
     // ==================== User Endpoints ====================
     
@@ -138,7 +143,21 @@ public class TicketController {
         
         String userName = extractUserName(jwt);
         String userEmail = extractUserEmail(jwt);
-        
+        boolean isUserOnly = hasRole(jwt, "APPROLE_User")
+                && !hasRole(jwt, "APPROLE_DevOps")
+                && !hasRole(jwt, "APPROLE_Admin");
+        if (isUserOnly && request.getNewStatus() != TicketStatus.MANAGER_APPROVAL_PENDING) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        if (isUserOnly && request.getNewStatus() == TicketStatus.MANAGER_APPROVAL_PENDING) {
+            Ticket existing = ticketRepository.findById(ticketId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
+            if (existing.getStatus() != TicketStatus.ACCEPTED) {
+                log.warn("User {} blocked from requesting approval: ticket {} status is {}", userEmail, ticketId, existing.getStatus());
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+            }
+        }
+
         log.info("Updating ticket {} status to {} by {}", ticketId, request.getNewStatus(), userName);
         
         TicketResponse ticket = ticketService.updateTicketStatus(ticketId, request, userName, userEmail);
@@ -316,5 +335,11 @@ public class TicketController {
             email = jwt.getClaimAsString("upn");
         }
         return email != null ? email : "unknown@unknown.com";
+    }
+
+    private boolean hasRole(Jwt jwt, String role) {
+        java.util.List<String> roles = jwt.getClaimAsStringList("roles");
+        if (roles == null) return false;
+        return roles.stream().anyMatch(r -> role.equalsIgnoreCase(r));
     }
 }

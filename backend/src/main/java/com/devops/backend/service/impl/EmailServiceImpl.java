@@ -389,7 +389,7 @@ public class EmailServiceImpl implements EmailService {
     private String frontendUrl;
 
     @Override
-    public void sendManagerApprovalRequestEmail(Ticket ticket, String approvalToken) {
+    public void sendManagerApprovalRequestEmail(Ticket ticket, String approvalToken, String requesterContextNote) {
         if (ticket.getManagerEmail() == null || ticket.getManagerEmail().isEmpty()) {
             log.warn("Cannot send manager approval email - no manager email for ticket {}", ticket.getId());
             return;
@@ -400,7 +400,7 @@ public class EmailServiceImpl implements EmailService {
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
                 .to(ticket.getManagerEmail())
                 .subject(buildSubject(ticket, "🔔 Approval Required"))
-                .htmlBody(buildManagerApprovalEmailBody(ticket, approvalUrl))
+                .htmlBody(buildManagerApprovalEmailBody(ticket, approvalUrl, requesterContextNote))
                 .type(EmailMessage.EmailType.MANAGER_APPROVAL_REQUEST)
                 .ticketId(ticket.getId())
                 .requesterEmail(ticket.getRequesterEmail())
@@ -413,9 +413,12 @@ public class EmailServiceImpl implements EmailService {
 
     @Override
     public void sendManagerApprovalResponseEmail(Ticket ticket, boolean approved, String note) {
-        String action = approved ? "✅ Manager Approved" : "❌ Manager Rejected";
-        String message = approved 
-            ? "The manager has approved this request. It will now proceed to the next stage."
+        String action = approved ? "✅ Approver confirmed" : "❌ Manager Rejected";
+        boolean awaitingDevOps = approved && ticket.getStatus() == TicketStatus.MANAGER_APPROVAL_PENDING;
+        String message = approved
+            ? (awaitingDevOps
+                ? "The approver has confirmed this request. The DevOps team will review and update the ticket to proceed when ready."
+                : "The manager has approved this request. It will now proceed to the next stage.")
             : "The manager has rejected this request." + (note != null && !note.isEmpty() ? " Reason: " + note : "");
         
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
@@ -438,83 +441,37 @@ public class EmailServiceImpl implements EmailService {
     /**
      * Build manager approval email with Approve/Reject buttons
      */
-    private String buildManagerApprovalEmailBody(Ticket ticket, String approvalUrl) {
-        StringBuilder html = new StringBuilder();
-        
-        html.append("<!DOCTYPE html>");
-        html.append("<html lang='en'><head>");
-        html.append("<meta charset='UTF-8'>");
-        html.append("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
-        html.append("<title>Manager Approval Required</title>");
-        html.append(getEmailStyles());
-        html.append("</head><body>");
-        
-        html.append("<div class='email-wrapper'>");
-        html.append("<div class='email-container'>");
-        
-        // Header
-        html.append("<div class='email-header'>");
-        html.append("<div class='header-brand'>");
-        html.append("<div class='header-logo'>D</div>");
-        html.append("<div class='header-title'>DevOps Portal</div>");
-        html.append("</div>");
-        html.append("<span class='ticket-id-badge'>").append(ticket.getId()).append("</span>");
-        html.append("<h1 class='header-subject'>Approval Required</h1>");
-        html.append("<p class='header-meta'>A team member has requested your approval</p>");
-        html.append("</div>");
-        
-        // Alert banner
-        html.append("<div class='alert-banner warning'>");
-        html.append("<div class='alert-icon'>⏳</div>");
-        html.append("<div class='alert-text'><strong>Action Required:</strong> Please review and approve or reject this request.</div>");
-        html.append("</div>");
-        
-        // Main content
-        html.append("<div class='email-body'>");
-        html.append("<p style='margin-bottom:14px'>Dear ")
-                .append(escapeHtml(ticket.getManagerName() != null && !ticket.getManagerName().isBlank()
-                        ? ticket.getManagerName() : "Manager"))
-                .append(",</p>");
-        html.append("<p style='margin-bottom:14px'>Please review the following request and provide your approval decision.</p>");
-        
-        // Request info card
-        html.append(buildTicketSummaryCard(ticket));
-        
-        // Requester info
-        html.append("<div class='summary-card' style='margin-bottom: 24px;'>");
-        html.append("<div class='summary-title'>Requester Information</div>");
-        html.append("<div class='summary-row'><span>Requested By:</span><strong>").append(escapeHtml(ticket.getRequestedBy())).append("</strong></div>");
-        html.append("<div class='summary-row'><span>Email:</span><strong>").append(escapeHtml(ticket.getRequesterEmail())).append("</strong></div>");
-        html.append("<div class='summary-row'><span>Request Type:</span><strong>").append(ticket.getRequestType().name().replace("_", " ")).append("</strong></div>");
-        html.append("<div class='summary-row'><span>Environment:</span><strong>").append(ticket.getEnvironment()).append("</strong></div>");
-        if (ticket.getDescription() != null && !ticket.getDescription().isEmpty()) {
-            html.append("<div class='summary-row' style='margin-top: 12px;'><span>Description:</span></div>");
-            html.append("<p style='margin: 8px 0; padding: 12px; background: #f8fafc; border-radius: 6px;'>").append(escapeHtml(ticket.getDescription())).append("</p>");
+    private String buildManagerApprovalEmailBody(Ticket ticket, String approvalUrl, String requesterContextNote) {
+        String managerName = ticket.getManagerName() != null && !ticket.getManagerName().isBlank()
+                ? ticket.getManagerName()
+                : "Approver";
+        String approvalNotePlain = toPlainTextForEmail(requesterContextNote);
+
+        String approveLink = approvalUrl + "&action=approve";
+        String rejectLink = approvalUrl + "&action=reject";
+
+        StringBuilder body = new StringBuilder();
+        body.append("<p>Dear ").append(escapeHtml(managerName)).append(",</p>");
+        body.append("<p>Please review the request below and choose <strong>Approve</strong> or <strong>Reject</strong>.</p>");
+        body.append(buildSimpleTicketKvpTable(ticket));
+        if (!approvalNotePlain.isEmpty()) {
+            body.append("<p><strong>Approval request note</strong></p>");
+            body.append("<pre style='margin:0 0 14px 0;font-family:inherit;font-size:14px;white-space:pre-wrap'>")
+                    .append(escapeHtml(approvalNotePlain))
+                    .append("</pre>");
         }
-        html.append("</div>");
-        
-        // Approval buttons
-        html.append("<div style='text-align: center; margin: 32px 0;'>");
-        html.append("<p style='margin-bottom: 20px; color: #64748b;'>Click a button below to approve or reject this request:</p>");
-        html.append("<a href='").append(approvalUrl).append("&action=approve' ");
-        html.append("style='display: inline-block; padding: 14px 32px; margin: 0 10px; background: #111111; color: white; ");
-        html.append("text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;'>✓ Approve</a>");
-        html.append("<a href='").append(approvalUrl).append("&action=reject' ");
-        html.append("style='display: inline-block; padding: 14px 32px; margin: 0 10px; background: #444444; color: white; ");
-        html.append("text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;'>✗ Reject</a>");
-        html.append("</div>");
-        
-        html.append("<p style='text-align: center; color: #94a3b8; font-size: 13px;'>");
-        html.append("You will be asked to add a note before confirming your decision.</p>");
-        
-        html.append("</div>"); // email-body
-        
-        html.append(buildEmailFooter());
-        
-        html.append("</div></div>");
-        html.append("</body></html>");
-        
-        return html.toString();
+
+        body.append("<p style='margin-top:16px'>")
+                .append("<a href='").append(approveLink).append("'>Approve</a>")
+                .append(" | ")
+                .append("<a href='").append(rejectLink).append("'>Reject</a>")
+                .append("</p>");
+
+        body.append("<p style='color:#555;font-size:12px'>")
+                .append("You may be asked to add a note before confirming your decision.")
+                .append("</p>");
+
+        return wrapAsSimpleEmail("Approval required", body.toString(), ticket.getId());
     }
 
     @Override
@@ -578,97 +535,39 @@ public class EmailServiceImpl implements EmailService {
      * Build cost approval email with Approve/Reject buttons
      */
     private String buildCostApprovalEmailBody(Ticket ticket, String approvalUrl) {
-        StringBuilder html = new StringBuilder();
-        
-        html.append("<!DOCTYPE html>");
-        html.append("<html lang='en'><head>");
-        html.append("<meta charset='UTF-8'>");
-        html.append("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
-        html.append("<title>Cost Approval Required</title>");
-        html.append(getEmailStyles());
-        html.append("</head><body>");
-        
-        html.append("<div class='email-wrapper'>");
-        html.append("<div class='email-container'>");
-        
-        // Header
-        html.append("<div class='email-header'>");
-        html.append("<div class='header-brand'>");
-        html.append("<div class='header-logo'>D</div>");
-        html.append("<div class='header-title'>DevOps Portal</div>");
-        html.append("</div>");
-        html.append("<span class='ticket-id-badge'>").append(ticket.getId()).append("</span>");
-        html.append("<h1 class='header-subject'>Cost Approval Required</h1>");
-        html.append("<p class='header-meta'>DevOps has submitted a cost estimation for your approval</p>");
-        html.append("</div>");
-        
-        // Alert banner
-        html.append("<div class='alert-banner warning'>");
-        html.append("<div class='alert-icon'>💵</div>");
-        html.append("<div class='alert-text'><strong>Action Required:</strong> Please review and approve or reject the cost estimation.</div>");
-        html.append("</div>");
-        
-        // Main content
-        html.append("<div class='email-body'>");
-        html.append("<p style='margin-bottom:14px'>Dear ")
-                .append(escapeHtml(ticket.getManagerName() != null && !ticket.getManagerName().isBlank()
-                        ? ticket.getManagerName() : "Manager"))
-                .append(",</p>");
-        html.append("<p style='margin-bottom:14px'>Please review the submitted cost estimation and confirm your decision.</p>");
-        
-        // Cost estimation card
-        html.append("<div class='summary-card' style='margin-bottom: 24px; background: #f9f9f9; border: 2px solid #999;'>");
-        html.append("<div class='summary-title' style='color: #111;'>Cost Estimation</div>");
-        html.append("<div style='text-align: center; padding: 20px;'>");
-        html.append("<div style='font-size: 42px; font-weight: 700; color: #111;'>");
+        String managerName = ticket.getManagerName() != null && !ticket.getManagerName().isBlank()
+                ? ticket.getManagerName()
+                : "Approver";
         String currency = ticket.getCostCurrency() != null ? ticket.getCostCurrency() : "USD";
-        String currencySymbol = getCurrencySymbol(currency);
-        html.append(currencySymbol).append(String.format("%,.2f", ticket.getEstimatedCost()));
-        html.append("</div>");
-        html.append("<div style='font-size: 14px; color: #64748b; margin-top: 4px;'>").append(currency).append("</div>");
-        html.append("</div>");
-        if (ticket.getCostSubmittedBy() != null) {
-            html.append("<div class='summary-row'><span>Submitted By:</span><strong>").append(escapeHtml(ticket.getCostSubmittedBy())).append("</strong></div>");
+        String amount = ticket.getEstimatedCost() != null ? String.format("%,.2f", ticket.getEstimatedCost()) : "0.00";
+
+        String approveLink = approvalUrl + "&action=approve";
+        String rejectLink = approvalUrl + "&action=reject";
+
+        StringBuilder body = new StringBuilder();
+        body.append("<p>Dear ").append(escapeHtml(managerName)).append(",</p>");
+        body.append("<p>Please review the cost estimate below and choose <strong>Approve</strong> or <strong>Reject</strong>.</p>");
+
+        body.append("<p><strong>Cost estimate</strong>: ")
+                .append(escapeHtml(currency)).append(" ").append(escapeHtml(amount))
+                .append("</p>");
+        if (ticket.getCostSubmittedBy() != null && !ticket.getCostSubmittedBy().isBlank()) {
+            body.append("<p><strong>Submitted by</strong>: ").append(escapeHtml(ticket.getCostSubmittedBy())).append("</p>");
         }
-        html.append("</div>");
-        
-        // Request info card
-        html.append(buildTicketSummaryCard(ticket));
-        
-        // Requester info
-        html.append("<div class='summary-card' style='margin-bottom: 24px;'>");
-        html.append("<div class='summary-title'>Request Information</div>");
-        html.append("<div class='summary-row'><span>Requested By:</span><strong>").append(escapeHtml(ticket.getRequestedBy())).append("</strong></div>");
-        html.append("<div class='summary-row'><span>Request Type:</span><strong>").append(ticket.getRequestType().name().replace("_", " ")).append("</strong></div>");
-        html.append("<div class='summary-row'><span>Environment:</span><strong>").append(ticket.getEnvironment()).append("</strong></div>");
-        if (ticket.getDescription() != null && !ticket.getDescription().isEmpty()) {
-            html.append("<div class='summary-row' style='margin-top: 12px;'><span>Description:</span></div>");
-            html.append("<p style='margin: 8px 0; padding: 12px; background: #f8fafc; border-radius: 6px;'>").append(escapeHtml(ticket.getDescription())).append("</p>");
-        }
-        html.append("</div>");
-        
-        // Approval buttons
-        html.append("<div style='text-align: center; margin: 32px 0;'>");
-        html.append("<p style='margin-bottom: 20px; color: #64748b;'>Click a button below to approve or reject this cost estimation:</p>");
-        html.append("<a href='").append(approvalUrl).append("&action=approve' ");
-        html.append("style='display: inline-block; padding: 14px 32px; margin: 0 10px; background: #111111; color: white; ");
-        html.append("text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;'>✓ Approve Cost</a>");
-        html.append("<a href='").append(approvalUrl).append("&action=reject' ");
-        html.append("style='display: inline-block; padding: 14px 32px; margin: 0 10px; background: #444444; color: white; ");
-        html.append("text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px;'>✗ Reject Cost</a>");
-        html.append("</div>");
-        
-        html.append("<p style='text-align: center; color: #94a3b8; font-size: 13px;'>");
-        html.append("You will be asked to add a note before confirming your decision.</p>");
-        
-        html.append("</div>"); // email-body
-        
-        html.append(buildEmailFooter());
-        
-        html.append("</div></div>");
-        html.append("</body></html>");
-        
-        return html.toString();
+
+        body.append(buildSimpleTicketKvpTable(ticket));
+
+        body.append("<p style='margin-top:16px'>")
+                .append("<a href='").append(approveLink).append("'>Approve cost</a>")
+                .append(" | ")
+                .append("<a href='").append(rejectLink).append("'>Reject cost</a>")
+                .append("</p>");
+
+        body.append("<p style='color:#555;font-size:12px'>")
+                .append("You may be asked to add a note before confirming your decision.")
+                .append("</p>");
+
+        return wrapAsSimpleEmail("Cost approval required", body.toString(), ticket.getId());
     }
 
     /**
@@ -723,243 +622,134 @@ public class EmailServiceImpl implements EmailService {
      * Build professional Jira-like email body with all ticket details
      */
     private String buildProfessionalEmailBody(Ticket ticket, EmailAction action, String additionalInfo) {
-        StringBuilder html = new StringBuilder();
-        
-        // HTML Start with comprehensive styles
-        html.append("<!DOCTYPE html>");
-        html.append("<html lang='en'><head>");
-        html.append("<meta charset='UTF-8'>");
-        html.append("<meta name='viewport' content='width=device-width, initial-scale=1.0'>");
-        html.append("<title>DevOps Portal Notification</title>");
-        html.append(getEmailStyles());
-        html.append("</head><body>");
-        
-        // Main container
-        html.append("<div class='email-wrapper'>");
-        html.append("<div class='email-container'>");
-        
-        // Header with logo area
-        html.append(buildEmailHeader(ticket, action));
-        
-        // Alert/Info banner
-        if (additionalInfo != null && !additionalInfo.isEmpty()) {
-            html.append(buildAlertBanner(action, additionalInfo));
+        String greetingName = ticket.getRequestedBy() != null && !ticket.getRequestedBy().isBlank()
+                ? ticket.getRequestedBy()
+                : "Team";
+
+        StringBuilder body = new StringBuilder();
+        body.append("<p>Dear ").append(escapeHtml(greetingName)).append(",</p>");
+
+        if (additionalInfo != null && !additionalInfo.isBlank()) {
+            body.append("<p>").append(escapeHtml(additionalInfo)).append("</p>");
         }
-        
-        // Main content
-        html.append("<div class='email-body'>");
-        html.append("<p style='margin-bottom:14px'>Dear ")
-                .append(escapeHtml(ticket.getRequestedBy() != null && !ticket.getRequestedBy().isBlank()
-                        ? ticket.getRequestedBy() : "Team"))
-                .append(",</p>");
-        html.append("<p style='margin-bottom:14px'>Please find the formal update for your request below.</p>");
-        
-        // Ticket summary card
-        html.append(buildTicketSummaryCard(ticket));
-        
-        // Request details section based on request type
-        html.append(buildRequestDetailsSection(ticket));
-        
-        // Assignment info
-        if (ticket.getAssignedTo() != null) {
-            html.append(buildAssignmentSection(ticket));
+
+        body.append(buildSimpleTicketKvpTable(ticket));
+
+        if (ticket.getDescription() != null && !ticket.getDescription().isBlank()) {
+            body.append("<p><strong>Description</strong></p>");
+            body.append("<pre style='margin:0 0 14px 0;font-family:inherit;font-size:14px;white-space:pre-wrap'>")
+                    .append(escapeHtml(ticket.getDescription()))
+                    .append("</pre>");
         }
-        
-        // Timeline/Activity section (last 5 entries)
-        if (ticket.getTimeline() != null && !ticket.getTimeline().isEmpty()) {
-            html.append(buildTimelineSection(ticket));
-        }
-        
-        // Action button
-        html.append(buildActionButton(ticket));
-        
-        html.append("</div>"); // email-body
-        
-        // Footer
-        html.append(buildEmailFooter());
-        
-        html.append("</div>"); // email-container
-        html.append("</div>"); // email-wrapper
-        html.append("</body></html>");
-        
-        return html.toString();
+
+        body.append("<p>")
+                .append("Open in portal: ")
+                .append("<a href='").append(buildTicketPortalUrl(ticket)).append("'>")
+                .append(escapeHtml(ticket.getId()))
+                .append("</a>")
+                .append("</p>");
+
+        return wrapAsSimpleEmail(getActionTitle(action), body.toString(), ticket.getId());
     }
 
     /**
      * Build email for note added
      */
     private String buildNoteAddedEmailBody(Ticket ticket, String noteAuthor, String noteContent) {
-        StringBuilder html = new StringBuilder();
-        
-        html.append("<!DOCTYPE html>");
-        html.append("<html lang='en'><head>");
-        html.append("<meta charset='UTF-8'>");
-        html.append(getEmailStyles());
-        html.append("</head><body>");
-        
-        html.append("<div class='email-wrapper'>");
-        html.append("<div class='email-container'>");
-        
-        html.append(buildEmailHeader(ticket, EmailAction.NOTE_ADDED));
-        
-        // Comment card
-        html.append("<div class='email-body'>");
-        html.append("<div class='comment-card'>");
-        html.append("<div class='comment-header'>");
-        html.append("<div class='comment-avatar'>").append(getInitials(noteAuthor)).append("</div>");
-        html.append("<div class='comment-meta'>");
-        html.append("<strong>").append(escapeHtml(noteAuthor)).append("</strong>");
-        html.append("<span class='comment-time'>added a comment</span>");
-        html.append("</div></div>");
-        html.append("<div class='comment-body'>");
-        html.append("<p>").append(escapeHtml(noteContent)).append("</p>");
-        html.append("</div></div>");
-        
-        // Ticket reference
-        html.append(buildTicketSummaryCard(ticket));
-        html.append(buildActionButton(ticket));
-        
-        html.append("</div>");
-        html.append(buildEmailFooter());
-        html.append("</div></div>");
-        html.append("</body></html>");
-        
-        return html.toString();
+        StringBuilder body = new StringBuilder();
+        body.append("<p>A new comment was added to ticket <strong>")
+                .append(escapeHtml(ticket.getId()))
+                .append("</strong>.</p>");
+        body.append("<p><strong>Author</strong>: ").append(escapeHtml(noteAuthor)).append("</p>");
+        body.append("<p><strong>Comment</strong></p>");
+        body.append("<pre style='margin:0 0 14px 0;font-family:inherit;font-size:14px;white-space:pre-wrap'>")
+                .append(escapeHtml(noteContent))
+                .append("</pre>");
+        body.append(buildSimpleTicketKvpTable(ticket));
+        body.append("<p>")
+                .append("Open in portal: ")
+                .append("<a href='").append(buildTicketPortalUrl(ticket)).append("'>")
+                .append(escapeHtml(ticket.getId()))
+                .append("</a>")
+                .append("</p>");
+        return wrapAsSimpleEmail("New comment added", body.toString(), ticket.getId());
     }
 
     /**
-     * Email styles - Jira-inspired professional design
+     * Minimal styles (keep emails "normal" like Gmail/Outlook).
      */
     private String getEmailStyles() {
         return "<style>" +
-                "* { margin: 0; padding: 0; box-sizing: border-box; }" +
-                "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; " +
-                "       line-height: 1.5; color: " + DARK_BLUE + "; background-color: #f4f5f7; }" +
-                ".email-wrapper { padding: 40px 20px; background-color: #f4f5f7; }" +
-                ".email-container { max-width: 680px; margin: 0 auto; background: #ffffff; border-radius: 8px; " +
-                "                   box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow: hidden; }" +
-                
-                // Header styles
-                ".email-header { background: #ffffff; border-bottom: 2px solid " + BORDER_COLOR + "; " +
-                "                padding: 24px 32px; color: " + DARK_BLUE + "; }" +
-                ".header-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }" +
-                ".header-logo { width: 40px; height: 40px; background: #f0f0f0; border-radius: 8px; " +
-                "               display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 18px; }" +
-                ".header-title { font-size: 14px; font-weight: 500; opacity: 0.9; }" +
-                ".ticket-id-badge { display: inline-block; background: #f2f2f2; padding: 6px 14px; " +
-                "                   border-radius: 4px; font-family: monospace; font-size: 14px; font-weight: 600; }" +
-                ".header-subject { font-size: 24px; font-weight: 600; margin: 16px 0 8px 0; }" +
-                ".header-meta { font-size: 14px; opacity: 0.85; }" +
-                
-                // Alert banner
-                ".alert-banner { padding: 16px 24px; display: flex; align-items: flex-start; gap: 12px; }" +
-                ".alert-banner.success { background: #f8f8f8; border-left: 4px solid " + GREEN + "; }" +
-                ".alert-banner.info { background: " + LIGHT_BLUE + "; border-left: 4px solid " + PRIMARY_BLUE + "; }" +
-                ".alert-banner.warning { background: #f8f8f8; border-left: 4px solid " + YELLOW + "; }" +
-                ".alert-banner.error { background: #f8f8f8; border-left: 4px solid " + RED + "; }" +
-                ".alert-icon { width: 24px; height: 24px; border-radius: 50%; display: flex; " +
-                "              align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px; }" +
-                ".alert-banner.success .alert-icon { background: #222; color: white; }" +
-                ".alert-banner.info .alert-icon { background: #222; color: white; }" +
-                ".alert-text { flex: 1; font-size: 14px; color: " + DARK_BLUE + "; }" +
-                
-                // Body
-                ".email-body { padding: 24px 32px; }" +
-                
-                // Summary card
-                ".summary-card { background: " + LIGHT_GRAY + "; border-radius: 8px; padding: 20px; margin-bottom: 24px; }" +
-                ".summary-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }" +
-                ".summary-title { font-size: 16px; font-weight: 600; color: " + DARK_BLUE + "; }" +
-                ".status-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; " +
-                "                border-radius: 4px; font-size: 12px; font-weight: 600; text-transform: uppercase; }" +
-                ".status-created { background: #DEEBFF; color: #0052CC; }" +
-                ".status-accepted { background: #EAE6FF; color: #6554C0; }" +
-                ".status-in-progress { background: #FFF0B3; color: #FF8B00; }" +
-                ".status-completed { background: #E3FCEF; color: #006644; }" +
-                ".status-closed { background: #DFE1E6; color: #42526E; }" +
-                ".status-action-required { background: #FFEBE6; color: #BF2600; }" +
-                ".status-on-hold { background: #FFFAE6; color: #FF8B00; }" +
-                ".status-rejected { background: #FFEBE6; color: #DE350B; }" +
-                
-                // Detail rows
-                ".detail-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }" +
-                ".detail-item { }" +
-                ".detail-label { font-size: 11px; font-weight: 600; color: " + GRAY + "; " +
-                "                text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }" +
-                ".detail-value { font-size: 14px; color: " + DARK_BLUE + "; }" +
-                ".detail-value.highlight { font-weight: 600; }" +
-                
-                // Section styles
-                ".section { margin-bottom: 24px; }" +
-                ".section-title { font-size: 13px; font-weight: 600; color: " + GRAY + "; " +
-                "                 text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px; " +
-                "                 padding-bottom: 8px; border-bottom: 1px solid " + BORDER_COLOR + "; }" +
-                ".section-content { background: #ffffff; border: 1px solid " + BORDER_COLOR + "; " +
-                "                   border-radius: 4px; padding: 16px; }" +
-                
-                // Description box
-                ".description-box { background: #ffffff; border: 1px solid " + BORDER_COLOR + "; " +
-                "                   border-radius: 4px; padding: 16px; margin-top: 12px; }" +
-                ".description-box p { margin: 0; white-space: pre-wrap; font-size: 14px; }" +
-                
-                // Assignment section
-                ".assignee-card { display: flex; align-items: center; gap: 12px; padding: 12px; " +
-                "                 background: " + LIGHT_GRAY + "; border-radius: 6px; }" +
-                ".assignee-avatar { width: 40px; height: 40px; border-radius: 50%; " +
-                "                   background: linear-gradient(135deg, " + PRIMARY_BLUE + ", " + PURPLE + "); " +
-                "                   color: white; display: flex; align-items: center; justify-content: center; " +
-                "                   font-weight: 600; font-size: 14px; }" +
-                ".assignee-info { flex: 1; }" +
-                ".assignee-name { font-weight: 600; color: " + DARK_BLUE + "; }" +
-                ".assignee-label { font-size: 12px; color: " + GRAY + "; }" +
-                
-                // Timeline
-                ".timeline { }" +
-                ".timeline-item { display: flex; gap: 12px; padding: 12px 0; " +
-                "                 border-bottom: 1px solid " + BORDER_COLOR + "; }" +
-                ".timeline-item:last-child { border-bottom: none; }" +
-                ".timeline-dot { width: 8px; height: 8px; border-radius: 50%; background: " + PRIMARY_BLUE + "; " +
-                "                margin-top: 6px; flex-shrink: 0; }" +
-                ".timeline-content { flex: 1; }" +
-                ".timeline-text { font-size: 14px; color: " + DARK_BLUE + "; }" +
-                ".timeline-time { font-size: 12px; color: " + GRAY + "; margin-top: 2px; }" +
-                
-                // Comment card
-                ".comment-card { background: " + LIGHT_GRAY + "; border-radius: 8px; padding: 16px; margin-bottom: 24px; }" +
-                ".comment-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }" +
-                ".comment-avatar { width: 36px; height: 36px; border-radius: 50%; " +
-                "                  background: " + PURPLE + "; color: white; display: flex; " +
-                "                  align-items: center; justify-content: center; font-weight: 600; font-size: 14px; }" +
-                ".comment-meta { flex: 1; }" +
-                ".comment-time { font-size: 12px; color: " + GRAY + "; margin-left: 8px; }" +
-                ".comment-body { background: white; border-radius: 6px; padding: 12px; " +
-                "                border: 1px solid " + BORDER_COLOR + "; }" +
-                ".comment-body p { margin: 0; font-size: 14px; }" +
-                
-                // Action button
-                ".action-section { text-align: center; padding: 24px 0; }" +
-                ".action-btn { display: inline-block; padding: 12px 32px; background: " + PRIMARY_BLUE + "; " +
-                "              color: white; text-decoration: none; border-radius: 4px; font-weight: 600; " +
-                "              font-size: 14px; transition: background 0.2s; }" +
-                ".action-btn:hover { background: #0747A6; }" +
-                
-                // Footer
-                ".email-footer { background: " + LIGHT_GRAY + "; padding: 24px 32px; text-align: center; " +
-                "                border-top: 1px solid " + BORDER_COLOR + "; }" +
-                ".footer-logo { font-size: 18px; font-weight: 700; color: " + PRIMARY_BLUE + "; margin-bottom: 8px; }" +
-                ".footer-text { font-size: 12px; color: " + GRAY + "; margin-bottom: 4px; }" +
-                ".footer-links { margin-top: 16px; }" +
-                ".footer-links a { color: " + PRIMARY_BLUE + "; text-decoration: none; margin: 0 12px; font-size: 12px; }" +
-                
-                // Responsive
-                "@media only screen and (max-width: 600px) {" +
-                "  .email-wrapper { padding: 16px 12px; }" +
-                "  .email-header { padding: 24px 20px; }" +
-                "  .header-subject { font-size: 20px; }" +
-                "  .email-body { padding: 20px; }" +
-                "  .detail-grid { grid-template-columns: 1fr; }" +
-                "}" +
+                "body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;" +
+                "font-size:14px;line-height:1.45;color:#111;margin:0;padding:0;}" +
+                "a{color:#0b57d0;text-decoration:underline;}" +
                 "</style>";
+    }
+
+    private String wrapAsSimpleEmail(String title, String innerHtml, String ticketId) {
+        String safeTitle = escapeHtml(title != null ? title : "Notification");
+        String safeTicket = escapeHtml(ticketId != null ? ticketId : "");
+        return "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>" +
+                "<meta name='viewport' content='width=device-width, initial-scale=1.0'>" +
+                "<title>" + safeTitle + "</title>" +
+                getEmailStyles() +
+                "</head><body>" +
+                "<div style='padding:16px'>" +
+                "<p style='margin:0 0 10px 0'><strong>DevOps Portal</strong></p>" +
+                (safeTicket.isEmpty() ? "" : "<p style='margin:0 0 14px 0;color:#444'>Ticket: <strong>" + safeTicket + "</strong></p>") +
+                "<hr style='border:none;border-top:1px solid #e0e0e0;margin:12px 0'/>" +
+                innerHtml +
+                "<hr style='border:none;border-top:1px solid #e0e0e0;margin:12px 0'/>" +
+                "<p style='margin:0;color:#666;font-size:12px'>This is an automated email. Please do not reply.</p>" +
+                "</div></body></html>";
+    }
+
+    private String buildSimpleTicketKvpTable(Ticket ticket) {
+        String reqType = ticket.getRequestType() != null ? ticket.getRequestType().name().replace("_", " ") : "—";
+        String env = ticket.getEnvironment() != null ? String.valueOf(ticket.getEnvironment()) : "—";
+        String status = ticket.getStatus() != null ? formatStatus(ticket.getStatus()) : "—";
+        String created = ticket.getCreatedAt() != null ? formatDate(ticket.getCreatedAt()) : "—";
+        String updated = ticket.getUpdatedAt() != null ? formatDate(ticket.getUpdatedAt()) : "—";
+
+        return "<table role='presentation' cellpadding='0' cellspacing='0' style='border-collapse:collapse;margin:10px 0 14px 0'>" +
+                row("Ticket ID", ticket.getId()) +
+                row("Status", status) +
+                row("Request type", reqType) +
+                row("Product", ticket.getProductName()) +
+                row("Environment", env) +
+                row("Requested by", ticket.getRequestedBy()) +
+                row("Requester email", ticket.getRequesterEmail()) +
+                row("Created", created) +
+                row("Last updated", updated) +
+                (ticket.getAssignedTo() != null && !ticket.getAssignedTo().isBlank()
+                        ? row("Assigned to", ticket.getAssignedTo() + (ticket.getAssignedToEmail() != null ? " (" + ticket.getAssignedToEmail() + ")" : ""))
+                        : "") +
+                "</table>";
+    }
+
+    private String row(String label, String value) {
+        String v = value == null || value.isBlank() ? "—" : value;
+        return "<tr>" +
+                "<td style='padding:4px 12px 4px 0;color:#555;vertical-align:top;white-space:nowrap'><strong>" + escapeHtml(label) + "</strong></td>" +
+                "<td style='padding:4px 0;color:#111;vertical-align:top'>" + escapeHtml(v) + "</td>" +
+                "</tr>";
+    }
+
+    private String buildTicketPortalUrl(Ticket ticket) {
+        String id = ticket != null ? ticket.getId() : null;
+        if (id == null || id.isBlank()) {
+            return frontendUrl;
+        }
+        // Frontend route may vary; this still provides a stable deep-link candidate.
+        return frontendUrl + "/?ticketId=" + urlEncode(id);
+    }
+
+    private String urlEncode(String value) {
+        try {
+            return java.net.URLEncoder.encode(value, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return value;
+        }
     }
 
     /**
@@ -1390,6 +1180,18 @@ public class EmailServiceImpl implements EmailService {
             return (parts[0].charAt(0) + "" + parts[parts.length - 1].charAt(0)).toUpperCase();
         }
         return name.substring(0, Math.min(2, name.length())).toUpperCase();
+    }
+
+    /**
+     * Strip HTML tags and normalize whitespace for safe plain-text blocks in email.
+     */
+    private String toPlainTextForEmail(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String s = raw.replaceAll("(?s)<[^>]+>", " ");
+        s = s.replace("&nbsp;", " ");
+        return s.replaceAll("\\s+", " ").trim();
     }
 
     private String escapeHtml(String text) {

@@ -16,6 +16,7 @@ import {
     Search,
     Settings,
     TrendingUp,
+    BarChart3,
     Clock,
     CheckCircle,
     AlertCircle,
@@ -29,6 +30,7 @@ import {
 } from "../TicketComponents";
 import { 
     getTicketsByUser,
+    updateTicketStatus,
     toggleTicketActiveStatus,
     addTicketNote,
     TICKET_STATUS,
@@ -45,6 +47,11 @@ import {
     getMyNotificationPreferences,
     saveMyNotificationPreferences
 } from "../../services/userNotificationService";
+import MonitoringPanel from "../MonitoringPanel";
+import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
+import { NavSectionToggle } from "../../components/NavSectionToggle";
+
+const USER_SIDEBAR_NAV_DEFAULTS = { workspace: true, system: true, account: true };
 
 export const UserDashboard = () => {
     const { instance, accounts } = useMsal();
@@ -73,6 +80,7 @@ export const UserDashboard = () => {
     const [emailNotifPrefs, setEmailNotifPrefs] = useState(null);
     const [emailNotifLoading, setEmailNotifLoading] = useState(false);
     const [emailNotifSaving, setEmailNotifSaving] = useState(false);
+    const [navGroups, setNavGroups] = usePersistedSidebarNav("user", USER_SIDEBAR_NAV_DEFAULTS);
     
     const isLoadingRef = useRef(false);
     const filtersRef = useRef(filters);
@@ -271,6 +279,19 @@ export const UserDashboard = () => {
             setActionLoading("");
         }
     };
+
+    const handleStatusChange = async (ticketId, newStatus, notes, meta = {}) => {
+        try {
+            setActionLoading("Sending approval request...");
+            await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes, meta);
+            await loadTickets();
+            toast.success("Approval Triggered", "Approval request has been sent.");
+        } catch (error) {
+            toast.error("Error", error.message || "Could not trigger approval");
+        } finally {
+            setActionLoading("");
+        }
+    };
     
     const handleLogout = () => {
         instance.logoutRedirect({
@@ -308,75 +329,100 @@ export const UserDashboard = () => {
 
     return (
         <div className="dashboard-layout">
-            {/* Professional Jira-Style Sidebar */}
-            <aside className="sidebar jira-style">
+            {/* Enhanced Professional Sidebar */}
+            <aside className="sidebar">
                 <div className="sidebar-brand">
-                    <div style={{ 
-                        position: 'relative',
-                        width: 40, 
-                        height: 40, 
-                        background: 'linear-gradient(135deg, #fff 0%, #e8f0fe 100%)', 
-                        borderRadius: 8, 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'center'
-                    }}>
-                        <Zap size={24} style={{ color: '#0052CC' }} />
-                        <div 
-                            title={isConnected ? 'Connected' : 'Disconnected'}
-                            style={{
-                                position: 'absolute',
-                                top: -2,
-                                right: -2,
-                                width: 12,
-                                height: 12,
-                                borderRadius: '50%',
-                                backgroundColor: isConnected ? '#36B37E' : '#FF5630',
-                                border: '2px solid #fff'
-                            }} 
-                        />
+                    <div className="brand-icon">
+                        <Zap size={24} />
                     </div>
-                    <h2 style={{ marginTop: '0.75rem', fontSize: '1.1rem', letterSpacing: '-0.5px' }}>DevOps Portal</h2>
-                    <span style={{ fontSize: '0.7rem', opacity: 0.7, marginTop: '2px' }}>Service Requests</span>
+                    <div>
+                        <h2>CloudOps Hub</h2>
+                        <span>Service Portal</span>
+                    </div>
+                    <div 
+                        className={`sync-indicator ${isConnected ? 'connected' : 'disconnected'}`}
+                        style={{ marginLeft: 'auto', padding: '4px 8px', fontSize: '0.65rem' }}
+                        title={isConnected ? 'Live Connection' : 'Reconnecting...'}
+                    >
+                        {isConnected ? <Wifi size={12} /> : <WifiOff size={12} />}
+                    </div>
                 </div>
                 <nav className="sidebar-nav">
-                    <a 
-                        href="#" 
-                        className={activeSection === 'dashboard' ? 'active' : ''}
-                        onClick={(e) => { e.preventDefault(); setActiveSection('dashboard'); }}
-                    >
-                        <LayoutDashboard size={18} /> Dashboard
-                        {stats.pending > 0 && <span className="nav-badge">{stats.pending}</span>}
-                    </a>
-                    <a 
-                        href="#" 
-                        className={activeSection === 'requests' ? 'active' : ''}
-                        onClick={(e) => { e.preventDefault(); setActiveSection('requests'); }}
-                    >
-                        <FileText size={18} /> My Requests
-                        {stats.active > 0 && <span className="nav-badge">{stats.active}</span>}
-                    </a>
-                    <a 
-                        href="#" 
-                        className={activeSection === 'settings' ? 'active' : ''}
-                        onClick={(e) => { e.preventDefault(); setActiveSection('settings'); }}
-                    >
-                        <Settings size={18} /> Settings
-                    </a>
-                    <a 
-                        href="#" 
-                        className={`nav-profile-link ${activeSection === 'profile' ? 'active' : ''}`}
-                        onClick={(e) => { e.preventDefault(); setActiveSection('profile'); }}
-                    >
-                        <UserCircle size={18} /> Profile
-                    </a>
+                    <div className="nav-section">
+                        <NavSectionToggle
+                            label="Workspace"
+                            open={navGroups.workspace}
+                            onToggle={() => setNavGroups((p) => ({ ...p, workspace: !p.workspace }))}
+                        />
+                        {navGroups.workspace && (
+                            <>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'dashboard' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setActiveSection('dashboard'); }}
+                                >
+                                    <LayoutDashboard size={18} /> Overview
+                                    {stats.pending > 0 && <span className="nav-badge">{stats.pending}</span>}
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'requests' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setActiveSection('requests'); }}
+                                >
+                                    <FileText size={18} /> Service Requests
+                                    {stats.active > 0 && <span className="nav-badge">{stats.active}</span>}
+                                </a>
+                            </>
+                        )}
+                    </div>
+                    <div className="nav-section">
+                        <NavSectionToggle
+                            label="System"
+                            open={navGroups.system}
+                            onToggle={() => setNavGroups((p) => ({ ...p, system: !p.system }))}
+                        />
+                        {navGroups.system && (
+                            <>
+                                <a 
+                                    href="#" 
+                                    className={activeSection === 'settings' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setActiveSection('settings'); }}
+                                >
+                                    <Settings size={18} /> Preferences
+                                </a>
+                                <a
+                                    href="#"
+                                    className={activeSection === 'monitoring' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setActiveSection('monitoring'); }}
+                                >
+                                    <BarChart3 size={18} /> Analytics
+                                </a>
+                            </>
+                        )}
+                    </div>
+                    <div className="nav-section">
+                        <NavSectionToggle
+                            label="Account"
+                            open={navGroups.account}
+                            onToggle={() => setNavGroups((p) => ({ ...p, account: !p.account }))}
+                        />
+                        {navGroups.account && (
+                            <a 
+                                href="#" 
+                                className={`nav-profile-link ${activeSection === 'profile' ? 'active' : ''}`}
+                                onClick={(e) => { e.preventDefault(); setActiveSection('profile'); }}
+                            >
+                                <UserCircle size={18} /> My Account
+                            </a>
+                        )}
+                    </div>
                 </nav>
                 <div className="sidebar-footer">
                     <div className="user-info">
                         <span className="user-name">{userName}</span>
                         <span className="user-email">{userEmail}</span>
-                        <span className="user-role badge-user" style={{ background: 'rgba(255,255,255,0.2)', color: 'white' }}>
-                            Personal Access
+                        <span className="user-role badge-user">
+                            Standard Access
                         </span>
                     </div>
                     <button className="logout-btn" onClick={handleLogout}>
@@ -559,6 +605,8 @@ export const UserDashboard = () => {
                             </div>
                         </div>
                     </div>
+                ) : activeSection === 'monitoring' ? (
+                    <MonitoringPanel />
                 ) : activeSection === 'profile' ? (
                     <div className="tickets-section">
                         <div className="tickets-header">
@@ -627,7 +675,7 @@ export const UserDashboard = () => {
                 </>
                 )}
 
-                {activeSection !== 'settings' && activeSection !== 'profile' && (
+                {activeSection !== 'settings' && activeSection !== 'profile' && activeSection !== 'monitoring' && (
                 <>
                 <div className="tickets-section">
                     <div className="tickets-header">
@@ -757,6 +805,7 @@ export const UserDashboard = () => {
                     ticket={selectedTicket}
                     onClose={() => setSelectedTicket(null)}
                     user={{ name: userName, email: userEmail }}
+                    onStatusChange={handleStatusChange}
                     canManage={false}
                     onAddNote={handleAddNote}
                     onToggleActiveStatus={handleToggleActiveStatus}

@@ -9,6 +9,8 @@ import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @Builder
@@ -25,6 +27,9 @@ public class Project {
 
     /** Optional business alias/tag used in UI display. */
     private String tag;
+
+    @Builder.Default
+    private List<String> environments = new ArrayList<>();
 
     private Instant createdAt;
     private String createdBy;

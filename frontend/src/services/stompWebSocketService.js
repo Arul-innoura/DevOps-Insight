@@ -54,11 +54,15 @@ class RealTimeService {
         this.listeners = new Map();
         this.reconnectTimer = null;
         this.pingInterval = null;
+        this.pongTimeout = null;
         this.shouldReconnect = true;
         this.wsEnabled = process.env.REACT_APP_USE_WEBSOCKET !== 'false';
         this.consecutiveAbnormalCloses = 0;
         this.wsCandidates = [];
         this.wsCandidateIndex = 0;
+        this.lastPongAt = 0;
+        this.lastPingAt = 0;
+        this.abnormalCloseTimestamps = [];
     }
 
     connect() {
@@ -67,6 +71,11 @@ class RealTimeService {
         }
         if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
             return;
+        }
+        // Clear any scheduled reconnect once we actively try to connect.
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
         }
 
         if (!this.wsCandidates.length) {
@@ -84,6 +93,7 @@ class RealTimeService {
                 this.isConnected = true;
                 this.reconnectAttempts = 0;
                 this.consecutiveAbnormalCloses = 0;
+                this.abnormalCloseTimestamps = [];
                 // Lock to the successful candidate after connect.
                 this.wsCandidateIndex = Math.min(this.wsCandidateIndex, this.wsCandidates.length - 1);
                 this.startPing();
@@ -93,6 +103,11 @@ class RealTimeService {
             this.ws.onmessage = (event) => {
                 try {
                     const message = JSON.parse(event.data);
+                    if (message.type === 'pong') {
+                        this.lastPongAt = Date.now();
+                        this.clearPongTimeout();
+                        return;
+                    }
                     if (message.type && message.type !== 'pong') {
                         console.log('[WS] 📨', message.type);
                         this.emit(message.type, message.data);
@@ -106,18 +121,18 @@ class RealTimeService {
                 console.log('[WS] Disconnected:', event.code);
                 this.isConnected = false;
                 this.stopPing();
+                this.clearPongTimeout();
                 this.emit(WS_MESSAGE_TYPES.DISCONNECTED, { connected: false });
                 if (event.code === 1006) {
                     this.consecutiveAbnormalCloses += 1;
+                    this.abnormalCloseTimestamps.push(Date.now());
+                    // Keep only recent abnormal closes (rolling window).
+                    this.abnormalCloseTimestamps = this.abnormalCloseTimestamps.filter(ts => Date.now() - ts < 60000);
                 } else {
                     this.consecutiveAbnormalCloses = 0;
+                    this.abnormalCloseTimestamps = [];
                 }
-                if (this.consecutiveAbnormalCloses >= 3) {
-                    this.wsEnabled = false;
-                    this.shouldReconnect = false;
-                    console.warn('[WS] Disabled after repeated abnormal disconnects. Falling back to non-WS refresh.');
-                    return;
-                }
+                // Do not permanently disable WS on flaky networks; just back off.
                 if (!this.isConnected && this.wsCandidateIndex < this.wsCandidates.length - 1) {
                     this.wsCandidateIndex += 1;
                 }
@@ -138,7 +153,10 @@ class RealTimeService {
             return;
         }
 
-        const delay = Math.min(this.baseDelay * Math.pow(1.5, this.reconnectAttempts), this.maxDelay);
+        const base = Math.min(this.baseDelay * Math.pow(1.6, this.reconnectAttempts), this.maxDelay);
+        // Add jitter to avoid reconnect storms when many clients drop together.
+        const jitter = Math.floor(Math.random() * 400);
+        const delay = base + jitter;
         this.reconnectAttempts++;
 
         this.reconnectTimer = setTimeout(() => {
@@ -148,9 +166,18 @@ class RealTimeService {
 
     startPing() {
         this.stopPing();
+        this.clearPongTimeout();
         this.pingInterval = setInterval(() => {
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({ type: 'ping' }));
+                this.lastPingAt = Date.now();
+                try {
+                    this.ws.send(JSON.stringify({ type: 'ping' }));
+                } catch (_e) {
+                    // If send fails, close and let reconnect handle it.
+                    try { this.ws.close(); } catch {}
+                    return;
+                }
+                this.setPongTimeout();
             }
         }, 25000);
     }
@@ -162,9 +189,27 @@ class RealTimeService {
         }
     }
 
+    setPongTimeout() {
+        this.clearPongTimeout();
+        // If server/proxy drops the connection silently, force a reconnect quickly.
+        this.pongTimeout = setTimeout(() => {
+            if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+            console.warn('[WS] Pong timeout, closing socket to reconnect.');
+            try { this.ws.close(); } catch {}
+        }, 7000);
+    }
+
+    clearPongTimeout() {
+        if (this.pongTimeout) {
+            clearTimeout(this.pongTimeout);
+            this.pongTimeout = null;
+        }
+    }
+
     disconnect() {
         this.shouldReconnect = false;
         this.stopPing();
+        this.clearPongTimeout();
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
         }
@@ -220,6 +265,22 @@ if (typeof window !== 'undefined') {
     if (realTimeService.wsEnabled) {
         realTimeService.connect();
     }
+
+    // Reconnect quickly when the browser comes back online.
+    window.addEventListener('online', () => {
+        if (realTimeService.wsEnabled) {
+            realTimeService.shouldReconnect = true;
+            realTimeService.reconnectAttempts = 0;
+            realTimeService.connect();
+        }
+    });
+
+    // When tab becomes visible again, refresh connection if needed.
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && realTimeService.wsEnabled) {
+            realTimeService.connect();
+        }
+    });
 }
 
 export default realTimeService;

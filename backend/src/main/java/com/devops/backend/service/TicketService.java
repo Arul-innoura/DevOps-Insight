@@ -108,7 +108,7 @@ public interface TicketService {
     List<TicketResponse> searchTickets(String searchTerm);
 
     /**
-     * Queue manager approval email for current ticket state (multi-level chain).
+     * Queue manager approval email for current ticket state.
      */
     void dispatchManagerApprovalEmail(String ticketId);
 }

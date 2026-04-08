@@ -20,4 +20,9 @@ public class UpdateStatusRequest {
     private TicketStatus newStatus;
     
     private String notes;
+
+    /**
+     * When moving to MANAGER_APPROVAL_PENDING, the approver who should receive the email (must match UI selection).
+     */
+    private String approvalTargetEmail;
 }

@@ -41,6 +41,7 @@ public class TicketResponse {
     private String managerEmail;
     private boolean managerApprovalRequired;
     private String ccEmail;
+    private String managerDesignation;
     
     // Manager approval tracking
     private String managerApprovalStatus;

@@ -52,7 +52,7 @@ app:
     devops-to: ${DEVOPS_EMAIL:devopsteam@encipherhealth.com}
     enabled: ${EMAIL_ENABLED:true}
   frontend:
-    url: ${FRONTEND_URL:http://localhost:3000}
+    url: ${FRONTEND_URL:https://opspilot.encipherhealth.com}
   trivy:
     path: ${TRIVY_PATH:trivy}
     timeout: ${TRIVY_TIMEOUT:120}

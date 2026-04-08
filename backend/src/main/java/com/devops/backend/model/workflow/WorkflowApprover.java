@@ -10,6 +10,8 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class WorkflowApprover {
+    /** Optional role/level label like Lead, Manager, Director. */
+    private String role;
     private String name;
     private String email;
 }

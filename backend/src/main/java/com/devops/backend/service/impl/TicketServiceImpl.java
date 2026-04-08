@@ -25,6 +25,8 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -43,6 +45,11 @@ public class TicketServiceImpl implements TicketService {
     private final EventPublisherService eventPublisher;
     private final EmailService emailService;
     private final WebSocketEventService webSocketEventService;
+    private static final Pattern EMAIL_IN_PAREN_PATTERN = Pattern.compile("\\(([^()\\s]+@[^()\\s]+)\\)");
+    /** Designation: Role — Name · email@domain */
+    private static final Pattern DESIGNATION_EMAIL_PATTERN = Pattern.compile(
+            "Designation:\\s*[\\s\\S]*?·\\s*([\\w.!#$%&'*+/=?^`{|}~-]+@[\\w.-]+\\.[A-Za-z]{2,})",
+            Pattern.CASE_INSENSITIVE);
     
     // Valid status transitions
     private static final Map<TicketStatus, Set<TicketStatus>> STATUS_TRANSITIONS = new HashMap<>();
@@ -51,7 +58,7 @@ public class TicketServiceImpl implements TicketService {
         STATUS_TRANSITIONS.put(TicketStatus.CREATED, Set.of(TicketStatus.ACCEPTED, TicketStatus.REJECTED));
         STATUS_TRANSITIONS.put(TicketStatus.ACCEPTED, Set.of(TicketStatus.MANAGER_APPROVAL_PENDING, TicketStatus.IN_PROGRESS, TicketStatus.REJECTED));
         STATUS_TRANSITIONS.put(TicketStatus.MANAGER_APPROVAL_PENDING, Set.of(TicketStatus.MANAGER_APPROVED, TicketStatus.REJECTED, TicketStatus.ACTION_REQUIRED));
-        STATUS_TRANSITIONS.put(TicketStatus.MANAGER_APPROVED, Set.of(TicketStatus.COST_APPROVAL_PENDING, TicketStatus.IN_PROGRESS, TicketStatus.REJECTED));
+        STATUS_TRANSITIONS.put(TicketStatus.MANAGER_APPROVED, Set.of(TicketStatus.MANAGER_APPROVAL_PENDING, TicketStatus.COST_APPROVAL_PENDING, TicketStatus.IN_PROGRESS, TicketStatus.REJECTED));
         STATUS_TRANSITIONS.put(TicketStatus.COST_APPROVAL_PENDING, Set.of(TicketStatus.COST_APPROVED, TicketStatus.REJECTED));
         STATUS_TRANSITIONS.put(TicketStatus.COST_APPROVED, Set.of(TicketStatus.IN_PROGRESS));
         STATUS_TRANSITIONS.put(TicketStatus.IN_PROGRESS, Set.of(TicketStatus.ACTION_REQUIRED, TicketStatus.ON_HOLD, TicketStatus.COMPLETED));
@@ -187,53 +194,15 @@ public class TicketServiceImpl implements TicketService {
         Ticket ticket = ticketRepository.findById(ticketId)
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
         
-        // Validate status transition
-        Set<TicketStatus> allowedTransitions = STATUS_TRANSITIONS.get(ticket.getStatus());
-        if (allowedTransitions == null || !allowedTransitions.contains(request.getNewStatus())) {
-            throw new IllegalStateException(
-                    "Invalid status transition from " + ticket.getStatus() + " to " + request.getNewStatus());
-        }
-
-        // Enforce workflow gates
-        if (request.getNewStatus() == TicketStatus.IN_PROGRESS) {
-            if (ticket.isManagerApprovalRequired() && !"APPROVED".equalsIgnoreCase(ticket.getManagerApprovalStatus())) {
-                throw new IllegalStateException("Cannot start work before manager approval");
-            }
-            if ("PENDING".equalsIgnoreCase(ticket.getCostApprovalStatus())) {
-                throw new IllegalStateException("Cannot start work while cost approval is pending");
-            }
-            if (ticket.isCostApprovalRequired() && !"APPROVED".equalsIgnoreCase(ticket.getCostApprovalStatus())) {
-                throw new IllegalStateException("Cannot start work before cost approval");
-            }
-        }
-
-        // Cost approval pending must be triggered from cost submission endpoint
-        if (request.getNewStatus() == TicketStatus.COST_APPROVAL_PENDING) {
-            throw new IllegalStateException("Use cost submission flow to request cost approval");
-        }
-
-        // Manager/cost approvals are confirmed only through secure email links
-        if (request.getNewStatus() == TicketStatus.MANAGER_APPROVED) {
-            throw new IllegalStateException("Manager approval must be completed from the manager email link");
-        }
-        if (request.getNewStatus() == TicketStatus.COST_APPROVED) {
-            throw new IllegalStateException("Cost approval must be completed from the manager email link");
-        }
+        // Manual workflow mode: allow status transition to any state.
         
         TicketStatus previousStatus = ticket.getStatus();
         ticket.setStatus(request.getNewStatus());
         ticket.setUpdatedAt(Instant.now());
         if (request.getNewStatus() == TicketStatus.MANAGER_APPROVAL_PENDING) {
             ticket.setManagerApprovalStatus("PENDING");
-            int total = ticket.getTotalApprovalLevels() != null ? ticket.getTotalApprovalLevels() : 0;
-            if (total > 0) {
-                ticket.setCurrentApprovalLevel(1);
-                WorkflowConfiguration wf = workflowSnapshotService.parse(ticket.getWorkflowSnapshotJson());
-                workflowSnapshotService.firstApproverAtLevel(wf, 1).ifPresent(a -> {
-                    ticket.setManagerEmail(a.getEmail());
-                    ticket.setManagerName(a.getName() != null && !a.getName().isBlank() ? a.getName() : a.getEmail());
-                });
-            }
+            ticket.setCurrentApprovalLevel(null);
+            applyManagerApprovalRecipient(ticket, request);
         }
         ticket.addTimelineEntry(request.getNewStatus(), userName, userEmail, 
                 request.getNotes() != null ? request.getNotes() : "Status changed to " + request.getNewStatus());
@@ -250,8 +219,8 @@ public class TicketServiceImpl implements TicketService {
         // Send email notifications based on status
         try {
             if (request.getNewStatus() == TicketStatus.MANAGER_APPROVAL_PENDING) {
-                // Trigger manager approval workflow
-                sendManagerApprovalEmail(savedTicket);
+                // Trigger manager approval workflow (include trigger note / purpose in email body)
+                sendManagerApprovalEmail(savedTicket, request.getNotes());
             } else if (request.getNewStatus() == TicketStatus.MANAGER_APPROVED
                     || request.getNewStatus() == TicketStatus.COST_APPROVAL_PENDING
                     || request.getNewStatus() == TicketStatus.COST_APPROVED) {
@@ -273,7 +242,10 @@ public class TicketServiceImpl implements TicketService {
     /**
      * Create approval token and send manager approval email
      */
-    private void sendManagerApprovalEmail(Ticket ticket) {
+    /**
+     * @param requesterNotes timeline note from the approval trigger (shown in approver email); may be null
+     */
+    private void sendManagerApprovalEmail(Ticket ticket, String requesterNotes) {
         if (ticket.getManagerEmail() == null || ticket.getManagerEmail().isEmpty()) {
             log.warn("Cannot send manager approval email - no manager email for ticket {}", ticket.getId());
             return;
@@ -283,17 +255,14 @@ public class TicketServiceImpl implements TicketService {
         String token = UUID.randomUUID().toString().replace("-", "") + 
                        UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         
-        // Create and save approval token (expires in 7 days)
-        Integer level = ticket.getCurrentApprovalLevel() != null ? ticket.getCurrentApprovalLevel() : 1;
-        Integer totalLv = ticket.getTotalApprovalLevels() != null ? ticket.getTotalApprovalLevels() : 1;
-
+        // Manual approval only — token is not tied to a level chain
         ManagerApprovalToken approvalToken = ManagerApprovalToken.builder()
                 .token(token)
                 .ticketId(ticket.getId())
                 .managerName(ticket.getManagerName())
                 .managerEmail(ticket.getManagerEmail())
-                .approvalLevel(level)
-                .totalApprovalLevels(totalLv)
+                .approvalLevel(1)
+                .totalApprovalLevels(1)
                 .createdAt(Instant.now())
                 .expiresAt(Instant.now().plus(7, ChronoUnit.DAYS))
                 .used(false)
@@ -303,8 +272,22 @@ public class TicketServiceImpl implements TicketService {
         approvalTokenRepository.save(approvalToken);
         log.info("Created manager approval token for ticket {}", ticket.getId());
         
-        // Send manager approval email
-        emailService.sendManagerApprovalRequestEmail(ticket, token);
+        String noteForEmail = requesterNotes != null && !requesterNotes.isBlank()
+                ? requesterNotes
+                : latestManagerApprovalPendingNotes(ticket);
+        emailService.sendManagerApprovalRequestEmail(ticket, token, noteForEmail);
+    }
+
+    private String latestManagerApprovalPendingNotes(Ticket ticket) {
+        if (ticket.getTimeline() == null || ticket.getTimeline().isEmpty()) {
+            return null;
+        }
+        return ticket.getTimeline().stream()
+                .filter(e -> !e.isNote() && e.getStatus() == TicketStatus.MANAGER_APPROVAL_PENDING)
+                .reduce((a, b) -> b)
+                .map(TimelineEntry::getNotes)
+                .filter(n -> n != null && !n.isBlank())
+                .orElse(null);
     }
     
     /**
@@ -607,7 +590,103 @@ public class TicketServiceImpl implements TicketService {
         }
         return "GENERAL";
     }
-    
+
+    private void applyManagerApprovalRecipient(Ticket ticket, UpdateStatusRequest request) {
+        String explicit = request.getApprovalTargetEmail() != null ? request.getApprovalTargetEmail().trim() : "";
+        String fromNotes = extractApprovalTargetEmail(request.getNotes()).orElse("");
+        String chosen = !explicit.isBlank() ? explicit : fromNotes;
+        if (chosen.isBlank()) {
+            return;
+        }
+        String normalized = chosen.trim();
+        WorkflowConfiguration wf = workflowSnapshotService.parse(ticket.getWorkflowSnapshotJson());
+        findApproverByEmail(wf, normalized).ifPresentOrElse(
+                a -> {
+                    ticket.setManagerEmail(a.getEmail() != null ? a.getEmail().trim() : normalized);
+                    String nm = a.getName();
+                    ticket.setManagerName(nm != null && !nm.isBlank() ? nm.trim()
+                            : (a.getEmail() != null ? a.getEmail() : normalized));
+                    String role = a.getRole();
+                    ticket.setManagerDesignation(role != null && !role.isBlank() ? role.trim() : null);
+                },
+                () -> {
+                    ticket.setManagerEmail(normalized);
+                    ticket.setManagerName(parseNameFromDesignationNotes(request.getNotes())
+                            .orElseGet(() -> localPartOfEmail(normalized)));
+                    ticket.setManagerDesignation(parseRoleFromDesignationNotes(request.getNotes()).orElse(null));
+                }
+        );
+    }
+
+    private static String localPartOfEmail(String email) {
+        if (email == null || !email.contains("@")) {
+            return email != null ? email : "Approver";
+        }
+        return email.substring(0, email.indexOf('@'));
+    }
+
+    private static Optional<String> parseNameFromDesignationNotes(String notes) {
+        if (notes == null || notes.isBlank()) {
+            return Optional.empty();
+        }
+        Matcher m = Pattern.compile("Designation:\\s*[^—]*—\\s*([^·]+)\\s*·", Pattern.CASE_INSENSITIVE).matcher(notes);
+        if (m.find()) {
+            String name = m.group(1).trim();
+            if (!name.isBlank()) {
+                return Optional.of(name);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private static Optional<String> parseRoleFromDesignationNotes(String notes) {
+        if (notes == null || notes.isBlank()) {
+            return Optional.empty();
+        }
+        Matcher m = Pattern.compile("Designation:\\s*([^—]+)\\s*—", Pattern.CASE_INSENSITIVE).matcher(notes);
+        if (m.find()) {
+            String role = m.group(1).trim();
+            if (!role.isBlank()) {
+                return Optional.of(role);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private Optional<String> extractApprovalTargetEmail(String notes) {
+        if (notes == null || notes.isBlank()) {
+            return Optional.empty();
+        }
+        Matcher matcher = EMAIL_IN_PAREN_PATTERN.matcher(notes);
+        String lastParen = null;
+        while (matcher.find()) {
+            String email = matcher.group(1);
+            if (email != null && !email.isBlank()) {
+                lastParen = email.trim();
+            }
+        }
+        if (lastParen != null) {
+            return Optional.of(lastParen.toLowerCase());
+        }
+        Matcher des = DESIGNATION_EMAIL_PATTERN.matcher(notes);
+        if (des.find()) {
+            return Optional.of(des.group(1).trim().toLowerCase());
+        }
+        return Optional.empty();
+    }
+
+    private Optional<com.devops.backend.model.workflow.WorkflowApprover> findApproverByEmail(WorkflowConfiguration wf, String email) {
+        if (wf == null || wf.getApprovalLevels() == null || email == null) {
+            return Optional.empty();
+        }
+        return wf.getApprovalLevels().stream()
+                .filter(Objects::nonNull)
+                .flatMap(level -> (level.getApprovers() == null ? List.<com.devops.backend.model.workflow.WorkflowApprover>of() : level.getApprovers()).stream())
+                .filter(Objects::nonNull)
+                .filter(a -> a.getEmail() != null && a.getEmail().trim().equalsIgnoreCase(email))
+                .findFirst();
+    }
+
     @Override
     public TicketResponse forwardTicket(String ticketId, ForwardTicketRequest request, 
                                         String userName, String userEmail) {
@@ -701,9 +780,10 @@ public class TicketServiceImpl implements TicketService {
                 ticket.setWorkflowEmailCc(copyEmailList(wf.getEmailRouting().getCc()));
                 ticket.setWorkflowEmailBcc(copyEmailList(wf.getEmailRouting().getBcc()));
             }
-            int levels = countConfiguredApprovalLevels(wf);
-            ticket.setTotalApprovalLevels(levels);
-            if (levels > 0) {
+            ticket.setTotalApprovalLevels(null);
+            ticket.setCurrentApprovalLevel(null);
+            int approverSlots = countConfiguredApproverSlots(wf);
+            if (approverSlots > 0) {
                 ticket.setManagerApprovalRequired(true);
             }
             if ((ticket.getManagerEmail() == null || ticket.getManagerEmail().isBlank())
@@ -732,11 +812,20 @@ public class TicketServiceImpl implements TicketService {
         return out.isEmpty() ? null : out;
     }
 
-    private static int countConfiguredApprovalLevels(WorkflowConfiguration wf) {
-        if (wf.getApprovalLevels() == null || wf.getApprovalLevels().isEmpty()) {
+    /**
+     * Rows in workflow with at least one approver email — used only to know if approval is configured (fully manual; no level chain).
+     */
+    private static int countConfiguredApproverSlots(WorkflowConfiguration wf) {
+        if (wf == null || wf.getApprovalLevels() == null || wf.getApprovalLevels().isEmpty()) {
             return 0;
         }
-        return wf.getApprovalLevels().stream().mapToInt(ApprovalLevelConfig::getLevel).max().orElse(0);
+        return (int) wf.getApprovalLevels().stream()
+                .filter(Objects::nonNull)
+                .filter(lvl -> lvl.getApprovers() != null
+                        && lvl.getApprovers().stream()
+                        .filter(Objects::nonNull)
+                        .anyMatch(a -> a.getEmail() != null && !a.getEmail().isBlank()))
+                .count();
     }
 
     private static void mergeWorkflowCcIntoTicket(Ticket ticket, WorkflowConfiguration wf) {
@@ -762,19 +851,23 @@ public class TicketServiceImpl implements TicketService {
 
     private List<WorkflowStageView> buildWorkflowStages(Ticket ticket, WorkflowConfiguration wf) {
         TicketStatus st = ticket.getStatus();
-        int totalLevels = ticket.getTotalApprovalLevels() != null ? ticket.getTotalApprovalLevels() : 0;
-        if (wf != null) {
-            totalLevels = Math.max(totalLevels, countConfiguredApprovalLevels(wf));
-        }
+        int approverSlots = wf != null ? countConfiguredApproverSlots(wf) : 0;
+        boolean showManagerApprovalStage = approverSlots > 0
+                || ticket.isManagerApprovalRequired()
+                || st == TicketStatus.MANAGER_APPROVAL_PENDING
+                || st == TicketStatus.MANAGER_APPROVED;
         boolean showCost = ticket.isCostApprovalRequired()
                 || st == TicketStatus.COST_APPROVAL_PENDING
                 || st == TicketStatus.COST_APPROVED
                 || (wf != null && wf.isCostApprovalRequired());
         List<WorkflowStageView> stages = new ArrayList<>();
         stages.add(stageState("raised", "Ticket raised", st == TicketStatus.CREATED ? "current" : "done"));
-        for (int i = 1; i <= totalLevels; i++) {
-            String state = resolveApprovalStageState(st, ticket.getCurrentApprovalLevel(), i, totalLevels);
-            stages.add(WorkflowStageView.builder().id("approval-" + i).label("Approval level " + i).state(state).build());
+        if (showManagerApprovalStage) {
+            stages.add(WorkflowStageView.builder()
+                    .id("approval")
+                    .label("Manager approval")
+                    .state(resolveManualManagerApprovalStageState(st))
+                    .build());
         }
         if (showCost) {
             stages.add(stageState("cost", "Cost approval", resolveCostStageState(st)));
@@ -790,20 +883,12 @@ public class TicketServiceImpl implements TicketService {
         return WorkflowStageView.builder().id(id).label(label).state(state).build();
     }
 
-    private static String resolveApprovalStageState(TicketStatus st, Integer curLevel, int levelIndex, int totalLevels) {
-        if (totalLevels <= 0) {
-            return "pending";
+    private static String resolveManualManagerApprovalStageState(TicketStatus st) {
+        if (st == TicketStatus.MANAGER_APPROVAL_PENDING) {
+            return "current";
         }
         if (st == TicketStatus.MANAGER_APPROVED || pastManagerApproval(st)) {
             return "done";
-        }
-        if (st == TicketStatus.MANAGER_APPROVAL_PENDING && curLevel != null) {
-            if (levelIndex < curLevel) {
-                return "done";
-            }
-            if (levelIndex == curLevel) {
-                return "current";
-            }
         }
         return "pending";
     }
@@ -874,6 +959,7 @@ public class TicketServiceImpl implements TicketService {
                 .managerEmail(ticket.getManagerEmail())
                 .managerApprovalRequired(ticket.isManagerApprovalRequired())
                 .ccEmail(ticket.getCcEmail())
+                .managerDesignation(ticket.getManagerDesignation())
                 .managerApprovalStatus(ticket.getManagerApprovalStatus())
                 .managerApprovalNote(ticket.getManagerApprovalNote())
                 .managerApprovalDate(ticket.getManagerApprovalDate())
@@ -917,6 +1003,7 @@ public class TicketServiceImpl implements TicketService {
     public void dispatchManagerApprovalEmail(String ticketId) {
         Ticket ticket = ticketRepository.findById(ticketId)
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
-        sendManagerApprovalEmail(ticket);
+        sendManagerApprovalEmail(ticket, latestManagerApprovalPendingNotes(ticket));
     }
+
 }

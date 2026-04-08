@@ -160,16 +160,6 @@ public class ManagerApprovalController {
     private ResponseEntity<Map<String, Object>> processManagerApproval(
             ManagerApprovalToken approvalToken, Ticket ticket, boolean isApproved, String note) {
 
-        WorkflowConfiguration cfg = workflowSnapshotService.parse(ticket.getWorkflowSnapshotJson());
-        int level = approvalToken.getApprovalLevel() != null ? approvalToken.getApprovalLevel() : 1;
-        int total = approvalToken.getTotalApprovalLevels() != null ? approvalToken.getTotalApprovalLevels() : 1;
-
-        if (!workflowSnapshotService.isApproverAtLevel(cfg, level, approvalToken.getManagerEmail())) {
-            return ResponseEntity.badRequest().body(Map.of(
-                    "success", false,
-                    "message", "This link is not valid for the configured approvers at this level."));
-        }
-
         ticket.setManagerApprovalNote(note);
         ticket.setManagerApprovalDate(Instant.now());
         ticket.setUpdatedAt(Instant.now());
@@ -196,40 +186,14 @@ public class ManagerApprovalController {
             ));
         }
 
-        // Approved — multi-level chain
-        if (level < total) {
-            ticket.setManagerApprovalStatus("PENDING");
-            ticket.addTimelineEntry(TicketStatus.MANAGER_APPROVAL_PENDING, approvalToken.getManagerName(),
-                    approvalToken.getManagerEmail(),
-                    "Approval level " + level + " of " + total + " completed."
-                            + (note != null ? " Note: " + note : ""));
-            ticket.setCurrentApprovalLevel(level + 1);
-            workflowSnapshotService.firstApproverAtLevel(cfg, level + 1).ifPresent(a -> {
-                ticket.setManagerEmail(a.getEmail());
-                ticket.setManagerName(a.getName() != null && !a.getName().isBlank() ? a.getName() : a.getEmail());
-            });
-            ticketRepository.save(ticket);
-            markTokenUsed(approvalToken, true, note);
-            try {
-                ticketService.dispatchManagerApprovalEmail(ticket.getId());
-            } catch (Exception e) {
-                log.error("Failed to dispatch next approval email: {}", e.getMessage());
-            }
-            webSocketEventService.broadcastTicketStatusChanged(ticket);
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", "Level " + level + " approved. Next approver has been notified.",
-                    "ticketId", ticket.getId(),
-                    "newStatus", ticket.getStatus().name()
-            ));
-        }
-
         ticket.setManagerApprovalStatus("APPROVED");
+        // Auto-advance to Manager Approved when approver confirms via email
         ticket.setStatus(TicketStatus.MANAGER_APPROVED);
         ticket.setCurrentApprovalLevel(null);
         ticket.addTimelineEntry(TicketStatus.MANAGER_APPROVED, approvalToken.getManagerName(),
                 approvalToken.getManagerEmail(),
-                "All approval levels completed." + (note != null ? " Note: " + note : ""));
+                "Approver confirmed via email."
+                        + (note != null && !note.isBlank() ? " Note: " + note : ""));
 
         Ticket savedTicket = ticketRepository.save(ticket);
         markTokenUsed(approvalToken, true, note);
@@ -242,7 +206,7 @@ public class ManagerApprovalController {
 
         webSocketEventService.broadcastTicketStatusChanged(savedTicket);
 
-        log.info("Manager approval processed for ticket {}: APPROVED (final level)", ticket.getId());
+        log.info("Manager approval processed for ticket {}: APPROVED (manual mode)", ticket.getId());
 
         return ResponseEntity.ok(Map.of(
                 "success", true,

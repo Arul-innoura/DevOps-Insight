@@ -63,6 +63,11 @@ public class Ticket {
     private String managerName;
     private boolean managerApprovalRequired;
     private String ccEmail;
+    /**
+     * Human-friendly designation/role for the selected approver (e.g. Lead/Manager).
+     * Derived from workflow approver role or the approval trigger notes.
+     */
+    private String managerDesignation;
     
     // Email threading fields for maintaining conversation threads
     private String emailMessageId;  // RFC 2822 Message-ID header for the initial email

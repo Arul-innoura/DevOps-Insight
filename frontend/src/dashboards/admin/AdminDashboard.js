@@ -32,7 +32,9 @@ import {
     Moon,
     GitBranch,
     ChevronLeft,
-    ChevronRight
+    ChevronRight,
+    Plus,
+    Layers
 } from "lucide-react";
 import { 
     StatusBadge, 
@@ -58,7 +60,8 @@ import {
     getRotaSchedule,
     getManagers,
     addManager,
-    deleteManager
+    deleteManager,
+    ENVIRONMENTS
 } from "../../services/ticketService";
 import { getStatusTimeline } from "../../services/devopsStatusService";
 import { useRealTimeSync, useConnectionStatus } from "../../services/useRealTimeSync";
@@ -72,6 +75,11 @@ import {
     getVolume
 } from "../../services/notificationService";
 import ProjectWorkflowEditor from "./ProjectWorkflowEditor";
+import MonitoringPanel from "../MonitoringPanel";
+import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
+import { NavSectionToggle } from "../../components/NavSectionToggle";
+
+const ADMIN_SIDEBAR_NAV_DEFAULTS = { operations: true, configuration: true, account: true };
 
 // Status color mapping for timeline visualization
 const TIMELINE_STATUS_COLORS = {
@@ -130,56 +138,128 @@ const ProjectManagementView = ({
     setNewProductName,
     newProductTag,
     setNewProductTag,
+    environmentCatalog,
+    selectedProductEnvironments,
+    onToggleProductEnvironment,
     handleAddProject,
     projects,
     onConfigureWorkflow
 }) => (
-    <div className="team-management-view">
-        <div className="analytics-card">
-            <h3><Building size={18} /> Add Product</h3>
-            <form className="team-form" onSubmit={handleAddProject}>
-                <input
-                    type="text"
-                    placeholder="Product name"
-                    value={newProductName}
-                    onChange={(e) => setNewProductName(e.target.value)}
-                    required
-                />
-                <input
-                    type="text"
-                    placeholder="Product tag / alias (optional)"
-                    value={newProductTag}
-                    onChange={(e) => setNewProductTag(e.target.value)}
-                />
-                <button type="submit" className="btn-primary">Add Product</button>
+    <div className="workflow-management-view">
+        {/* Register Service Card */}
+        <div className="workflow-card workflow-card-register">
+            <div className="workflow-card-header">
+                <div className="workflow-card-icon">
+                    <Building size={20} />
+                </div>
+                <div>
+                    <h3>Register Service</h3>
+                    <p>Add a new service to enable request tracking and workflow automation</p>
+                </div>
+            </div>
+            <form className="workflow-form" onSubmit={handleAddProject}>
+                <div className="workflow-form-grid">
+                    <div className="workflow-form-group">
+                        <label>Service Name</label>
+                        <input
+                            type="text"
+                            placeholder="Enter service name"
+                            value={newProductName}
+                            onChange={(e) => setNewProductName(e.target.value)}
+                            required
+                        />
+                    </div>
+                    <div className="workflow-form-group">
+                        <label>Service ID <span className="optional-tag">Optional</span></label>
+                        <input
+                            type="text"
+                            placeholder="Unique identifier"
+                            value={newProductTag}
+                            onChange={(e) => setNewProductTag(e.target.value)}
+                        />
+                    </div>
+                </div>
+                <div className="workflow-form-group">
+                    <label>Deployment Environments</label>
+                    <div className="environment-selector">
+                        {environmentCatalog.map((env) => (
+                            <label 
+                                key={env} 
+                                className={`env-checkbox ${selectedProductEnvironments.includes(env) ? 'selected' : ''}`}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedProductEnvironments.includes(env)}
+                                    onChange={() => onToggleProductEnvironment(env)}
+                                />
+                                <span className="env-name">{env}</span>
+                                <span className="env-check">✓</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+                <button type="submit" className="btn-primary workflow-submit">
+                    <Plus size={16} /> Register Service
+                </button>
             </form>
         </div>
 
-        <div className="analytics-card">
-            <h3><Building size={18} /> Products &amp; workflow</h3>
-            <p style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '1rem' }}>
-                Configure email routing (To/CC/BCC), multi-level approvals, cost approvers, and per–request-type overrides.
-            </p>
-            <div className="team-members-grid">
-                {projects.map(project => (
-                    <div className="team-member-card" key={project.id || project.name}>
-                        <div className="team-member-head">
-                            <strong>{project.name}</strong>
-                        </div>
-                        {!!project.tag && (
-                            <div className="team-member-email">Tag: {project.tag}</div>
-                        )}
-                        <button
-                            type="button"
-                            className="btn-secondary"
-                            style={{ marginTop: '0.75rem', width: '100%' }}
-                            onClick={() => onConfigureWorkflow?.(project)}
-                        >
-                            Configure workflow
-                        </button>
-                    </div>
-                ))}
+        {/* Configured Workflow Summary */}
+        <div className="workflow-card workflow-card-summary">
+            <div className="workflow-card-header">
+                <div className="workflow-card-icon gradient">
+                    <Layers size={20} />
+                </div>
+                <div>
+                    <h3>Configured Workflow Summary</h3>
+                    <p>Manage approval workflows, notifications, and cost authorization settings</p>
+                </div>
             </div>
+            
+            {projects.length === 0 ? (
+                <div className="workflow-empty-state">
+                    <div className="empty-icon">
+                        <Building size={48} />
+                    </div>
+                    <h4>No Services Configured</h4>
+                    <p>Register your first service above to begin configuring workflows</p>
+                </div>
+            ) : (
+                <div className="workflow-services-grid">
+                    {projects.map(project => (
+                        <div className="workflow-service-card" key={project.id || project.name}>
+                            <div className="service-card-header">
+                                <div className="service-avatar">
+                                    {(project.name || 'S').charAt(0).toUpperCase()}
+                                </div>
+                                <div className="service-info">
+                                    <h4>{project.name}</h4>
+                                    {project.tag && <span className="service-tag">{project.tag}</span>}
+                                </div>
+                            </div>
+                            <div className="service-card-meta">
+                                {project.environments && project.environments.length > 0 && (
+                                    <div className="service-envs">
+                                        {project.environments.slice(0, 3).map(env => (
+                                            <span key={env} className="env-badge">{env}</span>
+                                        ))}
+                                        {project.environments.length > 3 && (
+                                            <span className="env-badge more">+{project.environments.length - 3}</span>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                            <button
+                                type="button"
+                                className="btn-workflow-edit"
+                                onClick={() => onConfigureWorkflow?.(project)}
+                            >
+                                <Settings size={14} /> Configure Workflow
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     </div>
 );
@@ -187,9 +267,9 @@ const ProjectManagementView = ({
 const ManagerManagementView = ({ newManager, setNewManager, handleAddManager, managers, handleDeleteManager }) => (
     <div className="team-management-view">
         <div className="analytics-card">
-            <h3><UserCog size={18} /> Add Manager</h3>
+            <h3><UserCog size={18} /> Add Approver</h3>
             <p style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '1rem' }}>
-                Managers can be selected when creating tickets. Their email is auto-added to CC.
+                Approvers authorize service requests and are automatically notified when approval is needed.
             </p>
             <form className="team-form" onSubmit={handleAddManager}>
                 <input
@@ -662,6 +742,7 @@ export const AdminDashboard = () => {
     const [projects, setProjects] = useState([]);
     const [newProjectName, setNewProjectName] = useState('');
     const [newProjectTag, setNewProjectTag] = useState('');
+    const [newProjectSelectedEnvironments, setNewProjectSelectedEnvironments] = useState([]);
     const [workflowProject, setWorkflowProject] = useState(null);
     const [managers, setManagers] = useState([]);
     const [newManager, setNewManager] = useState({ name: '', email: '' });
@@ -677,6 +758,7 @@ export const AdminDashboard = () => {
         enabled: getSoundEnabled(),
         volume: getVolume()
     });
+    const [navGroups, setNavGroups] = usePersistedSidebarNav("admin", ADMIN_SIDEBAR_NAV_DEFAULTS);
     const isLoadingRef = useRef(false);
     const filtersRef = useRef(filters);
     const activeTabRef = useRef(activeTab);
@@ -811,7 +893,7 @@ export const AdminDashboard = () => {
         applyFilters(tickets, filters, tab);
     };
     
-    const handleStatusChange = async (ticketId, newStatus, notes) => {
+    const handleStatusChange = async (ticketId, newStatus, notes, meta = {}) => {
         setTickets((prev) => prev.map((ticket) => (
             ticket.id === ticketId ? { ...ticket, status: newStatus } : ticket
         )));
@@ -820,7 +902,7 @@ export const AdminDashboard = () => {
         )));
         try {
             setActionLoading("Updating ticket status...");
-            await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes);
+            await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes, meta);
             await loadTickets();
             
             if (selectedTicket && selectedTicket.id === ticketId) {
@@ -893,9 +975,15 @@ export const AdminDashboard = () => {
         e.preventDefault();
         try {
             setActionLoading("Creating product...");
-            await addProject(newProjectName, newProjectTag);
+            if (!newProjectSelectedEnvironments.length) {
+                alert("Select at least one environment for this product.");
+                return;
+            }
+            const environments = ENVIRONMENTS.filter((e) => newProjectSelectedEnvironments.includes(e));
+            await addProject(newProjectName, newProjectTag, environments);
             setNewProjectName('');
             setNewProjectTag('');
+            setNewProjectSelectedEnvironments([]);
             setProjects(await getProjects({ force: true }));
         } catch (error) {
             alert(`Error: ${error.message}`);
@@ -1009,83 +1097,114 @@ export const AdminDashboard = () => {
                         />
                     </div>
                     <div className="brand-text">
-                        <h2>Admin Portal</h2>
-                        <span className="brand-subtitle">System Control</span>
+                        <h2>CloudOps Hub</h2>
+                        <span className="brand-subtitle">Admin Console</span>
                     </div>
                 </div>
                 <nav className="sidebar-nav">
                     <div className="nav-section">
-                        <span className="nav-section-title">Operations</span>
-                        <a 
-                            href="#" 
-                            className={viewMode === 'tickets' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); setViewMode('tickets'); }}
-                        >
-                            <Ticket size={18} /> All Tickets
-                            {tabCounts.pending > 0 && <span className="nav-badge urgent">{tabCounts.pending}</span>}
-                        </a>
-                        <a 
-                            href="#" 
-                            className={viewMode === 'analytics' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); setViewMode('analytics'); }}
-                        >
-                            <BarChart3 size={18} /> Analytics
-                        </a>
+                        <NavSectionToggle
+                            label="Operations"
+                            open={navGroups.operations}
+                            onToggle={() => setNavGroups((p) => ({ ...p, operations: !p.operations }))}
+                        />
+                        {navGroups.operations && (
+                            <>
+                                <a 
+                                    href="#" 
+                                    className={viewMode === 'tickets' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('tickets'); }}
+                                >
+                                    <Ticket size={18} /> All Requests
+                                    {tabCounts.pending > 0 && <span className="nav-badge urgent">{tabCounts.pending}</span>}
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={viewMode === 'analytics' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('analytics'); }}
+                                >
+                                    <BarChart3 size={18} /> Analytics
+                                </a>
+                                <a
+                                    href="#"
+                                    className={viewMode === 'monitoring' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('monitoring'); }}
+                                >
+                                    <Activity size={18} /> System Monitor
+                                </a>
+                            </>
+                        )}
                     </div>
                     <div className="nav-section">
-                        <span className="nav-section-title">Configuration</span>
-                        <a 
-                            href="#" 
-                            className={viewMode === 'team' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); setViewMode('team'); }}
-                        >
-                            <Users size={18} /> DevOps Team
-                        </a>
-                        <a 
-                            href="#" 
-                            className={viewMode === 'projects' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); setViewMode('projects'); }}
-                        >
-                            <Building size={18} /> Products
-                        </a>
-                        <a 
-                            href="#" 
-                            className={viewMode === 'managers' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); setViewMode('managers'); }}
-                        >
-                            <UserCog size={18} /> Managers
-                        </a>
-                        <a 
-                            href="#" 
-                            className={viewMode === 'rota' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); setViewMode('rota'); }}
-                        >
-                            <RotateCcw size={18} /> Rota Management
-                        </a>
-                        <a 
-                            href="#" 
-                            className={viewMode === 'statusTimeline' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); setViewMode('statusTimeline'); }}
-                        >
-                            <Activity size={18} /> Status Timeline
-                        </a>
+                        <NavSectionToggle
+                            label="Configuration"
+                            open={navGroups.configuration}
+                            onToggle={() => setNavGroups((p) => ({ ...p, configuration: !p.configuration }))}
+                        />
+                        {navGroups.configuration && (
+                            <>
+                                <a 
+                                    href="#" 
+                                    className={viewMode === 'team' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('team'); }}
+                                >
+                                    <Users size={18} /> Engineering Team
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={viewMode === 'projects' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('projects'); }}
+                                >
+                                    <Building size={18} /> Services
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={viewMode === 'managers' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('managers'); }}
+                                >
+                                    <UserCog size={18} /> Approvers
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={viewMode === 'rota' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('rota'); }}
+                                >
+                                    <RotateCcw size={18} /> On-Call Schedule
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={viewMode === 'statusTimeline' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('statusTimeline'); }}
+                                >
+                                    <Activity size={18} /> Activity Timeline
+                                </a>
+                            </>
+                        )}
                     </div>
                     <div className="nav-section">
-                        <span className="nav-section-title">Account</span>
-                        <a 
-                            href="#" 
-                            className={viewMode === 'settings' ? 'active' : ''}
-                            onClick={(e) => { e.preventDefault(); setViewMode('settings'); }}
-                        >
-                            <Settings size={18} /> Settings
-                        </a>
-                        <a 
-                            href="#" 
-                            className={`nav-profile-link ${viewMode === 'profile' ? 'active' : ''}`}
-                            onClick={(e) => { e.preventDefault(); setViewMode('profile'); }}
-                        >
-                            <ProfileIcon size={18} /> Profile
-                        </a>
+                        <NavSectionToggle
+                            label="Account"
+                            open={navGroups.account}
+                            onToggle={() => setNavGroups((p) => ({ ...p, account: !p.account }))}
+                        />
+                        {navGroups.account && (
+                            <>
+                                <a 
+                                    href="#" 
+                                    className={viewMode === 'settings' ? 'active' : ''}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('settings'); }}
+                                >
+                                    <Settings size={18} /> Preferences
+                                </a>
+                                <a 
+                                    href="#" 
+                                    className={`nav-profile-link ${viewMode === 'profile' ? 'active' : ''}`}
+                                    onClick={(e) => { e.preventDefault(); setViewMode('profile'); }}
+                                >
+                                    <ProfileIcon size={18} /> My Account
+                                </a>
+                            </>
+                        )}
                     </div>
                 </nav>
                 <div className="sidebar-footer">
@@ -1107,46 +1226,50 @@ export const AdminDashboard = () => {
                     <div className="header-top">
                         <div className="header-title-section">
                             <div className="breadcrumb">
-                                <span>Admin Portal</span>
+                                <span>Admin Console</span>
                                 <span className="breadcrumb-separator">/</span>
                                 <span>
-                                    {viewMode === 'tickets' && 'Tickets'}
+                                    {viewMode === 'tickets' && 'Requests'}
                                     {viewMode === 'analytics' && 'Analytics'}
-                                    {viewMode === 'team' && 'Team'}
-                                    {viewMode === 'projects' && 'Products'}
-                                    {viewMode === 'managers' && 'Managers'}
-                                    {viewMode === 'statusTimeline' && 'Status Timeline'}
-                                    {viewMode === 'rota' && 'Rota'}
-                                    {viewMode === 'profile' && 'Profile'}
-                                    {viewMode === 'settings' && 'Settings'}
+                                    {viewMode === 'monitoring' && 'Monitor'}
+                                    {viewMode === 'team' && 'Engineering'}
+                                    {viewMode === 'projects' && 'Services'}
+                                    {viewMode === 'managers' && 'Approvers'}
+                                    {viewMode === 'statusTimeline' && 'Timeline'}
+                                    {viewMode === 'rota' && 'Schedule'}
+                                    {viewMode === 'profile' && 'Account'}
+                                    {viewMode === 'settings' && 'Preferences'}
                                 </span>
                             </div>
                             <h1>
-                                {viewMode === 'tickets' && 'All Tickets'}
+                                {viewMode === 'tickets' && 'All Service Requests'}
                                 {viewMode === 'analytics' && 'System Analytics'}
-                                {viewMode === 'team' && 'DevOps Team Management'}
-                                {viewMode === 'projects' && 'Project Management'}
-                                {viewMode === 'managers' && 'Manager Management'}
-                                {viewMode === 'rota' && 'Rota Management'}
-                                {viewMode === 'statusTimeline' && 'DevOps Team Status Timeline'}
-                                {viewMode === 'profile' && 'My Profile'}
-                                {viewMode === 'settings' && 'Settings'}
+                                {viewMode === 'monitoring' && 'Environment Monitoring'}
+                                {viewMode === 'team' && 'Engineering Team'}
+                                {viewMode === 'projects' && 'Configured Workflow Summary'}
+                                {viewMode === 'managers' && 'Approval Contacts'}
+                                {viewMode === 'rota' && 'On-Call Schedule'}
+                                {viewMode === 'statusTimeline' && 'Team Activity Timeline'}
+                                {viewMode === 'profile' && 'My Account'}
+                                {viewMode === 'settings' && 'Preferences'}
                             </h1>
                             <p className="header-subtitle">
                                 {viewMode === 'tickets' 
-                                    ? 'Monitor and manage all system tickets with full administrative access.'
+                                    ? 'Monitor and manage all service requests with full administrative access.'
                                     : viewMode === 'analytics'
-                                        ? 'View system-wide ticket analytics and metrics.'
+                                        ? 'View system-wide analytics and performance metrics.'
+                                        : viewMode === 'monitoring'
+                                            ? 'Track monthly service environment availability and utilization.'
                                         : viewMode === 'team'
-                                            ? 'Add DevOps users and monitor current team availability.'
+                                            ? 'Manage engineering team members and monitor current availability.'
                                             : viewMode === 'projects'
-                                                ? 'Create projects for user ticket dropdown.'
+                                                ? 'Configure services and workflows for request routing.'
                                                 : viewMode === 'managers'
-                                                    ? 'Add managers that users can select when creating tickets for CC notifications.'
+                                                    ? 'Manage approval contacts for workflow notifications.'
                                                     : viewMode === 'rota'
-                                                        ? 'Manage night shift rota and manual assignments.'
+                                                        ? 'Configure on-call rotation and shift assignments.'
                                                         : viewMode === 'statusTimeline'
-                                                            ? 'Track DevOps engineer availability changes day-by-day with a visual timeline.'
+                                                            ? 'Track team member availability changes with visual timeline.'
                                                             : viewMode === 'settings'
                                                                 ? 'Configure notifications and preferences.'
                                                             : 'Azure login details for your account.'}
@@ -1234,9 +1357,8 @@ export const AdminDashboard = () => {
                     </div>
                 ) : (
                 <>
-
                 {/* Professional Stats Cards */}
-                {!['profile', 'settings'].includes(viewMode) && (
+                {!['profile', 'settings', 'monitoring'].includes(viewMode) && (
                 <div className="stats-grid">
                     <div className="stat-card jira-style">
                         <div className="stat-icon blue">
@@ -1269,7 +1391,9 @@ export const AdminDashboard = () => {
                 </div>
                 )}
                 
-                {viewMode === 'analytics' ? (
+                {viewMode === 'monitoring' ? (
+                    <MonitoringPanel adminMode />
+                ) : viewMode === 'analytics' ? (
                     <AnalyticsView 
                         stats={stats} 
                         tickets={tickets} 
@@ -1289,6 +1413,13 @@ export const AdminDashboard = () => {
                         setNewProductName={setNewProjectName}
                         newProductTag={newProjectTag}
                         setNewProductTag={setNewProjectTag}
+                        environmentCatalog={ENVIRONMENTS}
+                        selectedProductEnvironments={newProjectSelectedEnvironments}
+                        onToggleProductEnvironment={(env) =>
+                            setNewProjectSelectedEnvironments((prev) =>
+                                prev.includes(env) ? prev.filter((e) => e !== env) : [...prev, env]
+                            )
+                        }
                         handleAddProject={handleAddProject}
                         projects={projects}
                         onConfigureWorkflow={(p) => setWorkflowProject(p)}

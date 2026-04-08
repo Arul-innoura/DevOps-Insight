@@ -156,6 +156,11 @@ const ManagerApprovalPage = () => {
                                 Current status: <strong>{result.newStatus}</strong>
                             </p>
                         )}
+                        {isApproved && result.newStatus === TICKET_STATUS.MANAGER_APPROVAL_PENDING && (
+                            <p style={{ marginTop: 12, color: '#475569', fontSize: '0.9rem' }}>
+                                DevOps will set the ticket to <strong>Manager Approved</strong> when they finalize this step in the portal.
+                            </p>
+                        )}
                         <p style={{ marginTop: 24, color: '#94a3b8', fontSize: '0.875rem' }}>
                             A confirmation email has been sent to the requester.
                         </p>
@@ -250,14 +255,6 @@ const ManagerApprovalPage = () => {
                                 <span style={styles.infoLabel}>Environment</span>
                                 <span style={styles.infoValue}>{tokenInfo.environment}</span>
                             </div>
-                            {!isCostApproval && tokenInfo.totalApprovalLevels > 1 && tokenInfo.approvalLevel != null && (
-                                <div style={styles.infoItem}>
-                                    <span style={styles.infoLabel}>Approval step</span>
-                                    <span style={styles.infoValue}>
-                                        Level {tokenInfo.approvalLevel} of {tokenInfo.totalApprovalLevels}
-                                    </span>
-                                </div>
-                            )}
                             {isCostApproval && (
                                 <div style={styles.infoItem}>
                                     <span style={styles.infoLabel}>Estimated Cost</span>

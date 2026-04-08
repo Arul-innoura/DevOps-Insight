@@ -96,9 +96,7 @@ export const getDynamicAllowedTransitions = (ticket) => {
     if (!ticket || !ticket.status) return [];
 
     const status = ticket.status;
-    const managerRequired =
-        !!ticket.managerApprovalRequired ||
-        Number(ticket.totalApprovalLevels || 0) > 0;
+    const managerRequired = !!ticket.managerApprovalRequired;
     const managerApproved = String(ticket.managerApprovalStatus || "").toUpperCase() === "APPROVED";
     const costRequired = !!ticket.costApprovalRequired;
     const costStatus = String(ticket.costApprovalStatus || "").toUpperCase();
@@ -442,10 +440,14 @@ export const getActiveTicketsForDevOps = async () => {
     return all.filter((ticket) => ticket.isActive !== false);
 };
 
-export const updateTicketStatus = async (ticketId, newStatus, _user, notes = "") => {
+export const updateTicketStatus = async (ticketId, newStatus, _user, notes = "", options = {}) => {
+    const body = { newStatus: toApiStatus(newStatus), notes: notes ?? "" };
+    if (options.approvalTargetEmail && String(options.approvalTargetEmail).trim()) {
+        body.approvalTargetEmail = String(options.approvalTargetEmail).trim();
+    }
     const updated = await apiRequest(`/tickets/${ticketId}/status`, {
         method: "PUT",
-        body: JSON.stringify({ newStatus: toApiStatus(newStatus), notes })
+        body: JSON.stringify(body)
     });
     emitDataChange("tickets", "status-update");
     return mapTicket(updated);
@@ -707,18 +709,20 @@ export const getProjects = async ({ force = false } = {}) => {
     const mapped = unwrapListPayload(projectsPayload).map((project) => ({
         ...project,
         name: project.name || project.projectName || project.title || "",
-        tag: project.tag || project.alias || project.code || ""
+        tag: project.tag || project.alias || project.code || "",
+        environments: Array.isArray(project.environments) ? project.environments.filter(Boolean) : []
     })).filter((project) => project.name);
     return setCached(cacheKey, mapped);
 };
 export const initializeProjectData = () => {};
-export const addProject = async (projectName, projectTag = "") => {
+export const addProject = async (projectName, projectTag = "", environments = []) => {
     const created = await apiRequest("/projects", {
         method: "POST",
         body: JSON.stringify({
             name: projectName,
             projectName,
-            tag: projectTag || ""
+            tag: projectTag || "",
+            environments: Array.isArray(environments) ? environments : []
         })
     });
     emitDataChange("projects", "create");

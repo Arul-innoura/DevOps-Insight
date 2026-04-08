@@ -1,15 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { X, Plus, Trash2, Save, Layers, Mail, Bell } from "lucide-react";
+import { X, Plus, Trash2, Save, Layers, Mail, Bell, ArrowUp, ArrowDown, Users, DollarSign, Shield, CheckCircle, AlertCircle, MessageSquare, Settings } from "lucide-react";
 import { getProjectWorkflow, saveProjectWorkflow } from "../../services/projectWorkflowService";
-import { REQUEST_TYPES } from "../../services/ticketService";
-
-const parseEmails = (s) =>
-    (s || "")
-        .split(/[,;\n]+/)
-        .map((e) => e.trim())
-        .filter(Boolean);
-
-const joinEmails = (arr) => (Array.isArray(arr) ? arr.join(", ") : "");
+import EmailChipsInput from "../../components/EmailChipsInput";
 
 const emptyNotif = () => ({
     ticketStatusChanges: true,
@@ -33,13 +25,26 @@ const emptyWorkflow = () => ({
     notificationPreferences: emptyNotif()
 });
 
+const normalizeApprovalLevels = (levels = []) =>
+    (levels || []).map((lvl, idx) => {
+        const first = Array.isArray(lvl?.approvers) && lvl.approvers.length > 0 ? lvl.approvers[0] : {};
+        return {
+            ...lvl,
+            level: idx + 1,
+            approvers: [{
+                role: first?.role || "",
+                name: first?.name || "",
+                email: first?.email || ""
+            }]
+        };
+    });
+
 const ProjectWorkflowEditor = ({ project, onClose, onSaved }) => {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState("");
     const [docId, setDocId] = useState(null);
     const [defaultCfg, setDefaultCfg] = useState(emptyWorkflow);
-    const [overrides, setOverrides] = useState([]);
 
     const load = useCallback(async () => {
         if (!project?.id) return;
@@ -50,14 +55,9 @@ const ProjectWorkflowEditor = ({ project, onClose, onSaved }) => {
             setDocId(data.id || null);
             setDefaultCfg({
                 ...emptyWorkflow(),
-                ...(data.defaultConfiguration || {})
+                ...(data.defaultConfiguration || {}),
+                approvalLevels: normalizeApprovalLevels(data?.defaultConfiguration?.approvalLevels || [])
             });
-            setOverrides(
-                (data.requestTypeOverrides || []).map((o) => ({
-                    requestType: o.requestType || "NEW_ENVIRONMENT",
-                    configuration: { ...emptyWorkflow(), ...(o.configuration || {}) }
-                }))
-            );
         } catch (e) {
             setError(e.message || "Failed to load workflow");
         } finally {
@@ -76,11 +76,11 @@ const ProjectWorkflowEditor = ({ project, onClose, onSaved }) => {
             const body = {
                 id: docId,
                 projectId: project.id,
-                defaultConfiguration: defaultCfg,
-                requestTypeOverrides: overrides.map((o) => ({
-                    requestType: o.requestType,
-                    configuration: o.configuration
-                }))
+                defaultConfiguration: {
+                    ...defaultCfg,
+                    approvalLevels: normalizeApprovalLevels(defaultCfg.approvalLevels || [])
+                },
+                requestTypeOverrides: []
             };
             await saveProjectWorkflow(project.id, body);
             onSaved?.();
@@ -92,379 +92,495 @@ const ProjectWorkflowEditor = ({ project, onClose, onSaved }) => {
         }
     };
 
-    const addLevel = (cfg, setCfg) => {
+    const addApproverRow = (cfg, setCfg) => {
         const levels = [...(cfg.approvalLevels || [])];
-        const next = (levels.reduce((m, l) => Math.max(m, l.level || 0), 0) || 0) + 1;
-        levels.push({ level: next, approvers: [{ name: "", email: "" }] });
-        setCfg({ ...cfg, approvalLevels: levels });
-    };
-
-    const addOverride = () => {
-        const used = new Set(overrides.map((o) => o.requestType));
-        const nextType = Object.keys(REQUEST_TYPES).find((k) => !used.has(k)) || "NEW_ENVIRONMENT";
-        setOverrides([...overrides, { requestType: nextType, configuration: emptyWorkflow() }]);
+        levels.push({ level: levels.length + 1, approvers: [{ role: "", name: "", email: "" }] });
+        setCfg({ ...cfg, approvalLevels: normalizeApprovalLevels(levels) });
     };
 
     const defaultApprovalLevels = (defaultCfg.approvalLevels || []).length;
     const defaultCostRequired = !!defaultCfg.costApprovalRequired;
 
     const renderWorkflowForm = (cfg, setCfg, title) => (
-        <div className="analytics-card" style={{ marginBottom: "1rem" }}>
-            <h4 style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Layers size={16} /> {title}
-            </h4>
-
-            <div className="team-form" style={{ marginTop: "0.75rem" }}>
-                <label>Thread To (comma-separated)</label>
-                <input
-                    type="text"
-                    value={joinEmails(cfg.emailRouting?.to)}
-                    onChange={(e) =>
-                        setCfg({
-                            ...cfg,
-                            emailRouting: { ...cfg.emailRouting, to: parseEmails(e.target.value) }
-                        })
-                    }
-                    placeholder="devopsteam@company.com"
-                />
-                <label>Thread CC</label>
-                <input
-                    type="text"
-                    value={joinEmails(cfg.emailRouting?.cc)}
-                    onChange={(e) =>
-                        setCfg({
-                            ...cfg,
-                            emailRouting: { ...cfg.emailRouting, cc: parseEmails(e.target.value) }
-                        })
-                    }
-                />
-                <label>Thread BCC</label>
-                <input
-                    type="text"
-                    value={joinEmails(cfg.emailRouting?.bcc)}
-                    onChange={(e) =>
-                        setCfg({
-                            ...cfg,
-                            emailRouting: { ...cfg.emailRouting, bcc: parseEmails(e.target.value) }
-                        })
-                    }
-                />
-            </div>
-
-            <div style={{ marginTop: "1rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <strong>Project managers (auto-fill in new request)</strong>
-                    <button
-                        type="button"
-                        className="btn-secondary"
-                        onClick={() => setCfg({ ...cfg, managers: [...(cfg.managers || []), { name: "", email: "" }] })}
-                    >
-                        <Plus size={14} /> Add manager
-                    </button>
-                </div>
-                {(cfg.managers || []).map((m, idx) => (
-                    <div key={`mgr-${idx}`} className="form-row" style={{ marginTop: 8 }}>
-                        <input
-                            placeholder="Manager name"
-                            value={m.name || ""}
-                            onChange={(e) => {
-                                const managers = [...(cfg.managers || [])];
-                                managers[idx] = { ...managers[idx], name: e.target.value };
-                                setCfg({ ...cfg, managers });
-                            }}
-                        />
-                        <input
-                            placeholder="Manager email"
-                            type="email"
-                            value={m.email || ""}
-                            onChange={(e) => {
-                                const managers = [...(cfg.managers || [])];
-                                managers[idx] = { ...managers[idx], email: e.target.value };
-                                setCfg({ ...cfg, managers });
-                            }}
-                        />
-                        <button
-                            type="button"
-                            className="btn-icon btn-danger"
-                            onClick={() => {
-                                const managers = [...(cfg.managers || [])];
-                                managers.splice(idx, 1);
-                                setCfg({ ...cfg, managers });
-                            }}
-                        >
-                            <Trash2 size={14} />
-                        </button>
+        <div className="workflow-editor-form">
+            {/* Email Routing Section */}
+            <div className="workflow-section">
+                <div className="workflow-section-header">
+                    <div className="workflow-section-icon">
+                        <Mail size={18} />
                     </div>
-                ))}
-            </div>
-
-            <div style={{ marginTop: "1rem" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <strong>Approval levels (sequential)</strong>
-                    <button type="button" className="btn-secondary" onClick={() => addLevel(cfg, setCfg)}>
-                        <Plus size={14} /> Add level
-                    </button>
-                </div>
-                {(cfg.approvalLevels || []).map((lvl, idx) => (
-                    <div key={lvl.level + "-" + idx} className="team-member-card" style={{ marginTop: "0.5rem" }}>
-                        <div className="team-member-head">
-                            <span>Level {lvl.level}</span>
-                            <button
-                                type="button"
-                                className="btn-icon btn-danger"
-                                onClick={() => {
-                                    const next = [...cfg.approvalLevels];
-                                    next.splice(idx, 1);
-                                    setCfg({ ...cfg, approvalLevels: next });
-                                }}
-                            >
-                                <Trash2 size={14} />
-                            </button>
-                        </div>
-                        {(lvl.approvers || []).map((ap, j) => (
-                            <div key={j} className="form-row" style={{ marginTop: 8 }}>
-                                <input
-                                    placeholder="Name"
-                                    value={ap.name || ""}
-                                    onChange={(e) => {
-                                        const al = [...cfg.approvalLevels];
-                                        al[idx].approvers[j] = { ...al[idx].approvers[j], name: e.target.value };
-                                        setCfg({ ...cfg, approvalLevels: al });
-                                    }}
-                                />
-                                <input
-                                    placeholder="Email"
-                                    type="email"
-                                    value={ap.email || ""}
-                                    onChange={(e) => {
-                                        const al = [...cfg.approvalLevels];
-                                        al[idx].approvers[j] = { ...al[idx].approvers[j], email: e.target.value };
-                                        setCfg({ ...cfg, approvalLevels: al });
-                                    }}
-                                />
-                            </div>
-                        ))}
-                        <button
-                            type="button"
-                            className="btn-secondary"
-                            style={{ marginTop: 8 }}
-                            onClick={() => {
-                                const al = [...cfg.approvalLevels];
-                                al[idx].approvers = [...(al[idx].approvers || []), { name: "", email: "" }];
-                                setCfg({ ...cfg, approvalLevels: al });
-                            }}
-                        >
-                            <Plus size={14} /> Approver
-                        </button>
+                    <div className="workflow-section-title">
+                        <h4>Email Routing</h4>
+                        <p>Configure notification recipients</p>
                     </div>
-                ))}
-            </div>
-
-            <div style={{ marginTop: "1rem" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <input
-                        type="checkbox"
-                        checked={!!cfg.costApprovalRequired}
-                        onChange={(e) => setCfg({ ...cfg, costApprovalRequired: e.target.checked })}
-                    />
-                    Cost approval required for this configuration
-                </label>
-                {cfg.costApprovalRequired && (
-                    <div style={{ marginTop: 8 }}>
-                        <strong>Cost approvers</strong>
-                        {(cfg.costApprovers || []).map((ap, j) => (
-                            <div key={j} className="form-row" style={{ marginTop: 8 }}>
-                                <input
-                                    placeholder="Name"
-                                    value={ap.name || ""}
-                                    onChange={(e) => {
-                                        const ca = [...(cfg.costApprovers || [])];
-                                        ca[j] = { ...ca[j], name: e.target.value };
-                                        setCfg({ ...cfg, costApprovers: ca });
-                                    }}
-                                />
-                                <input
-                                    placeholder="Email"
-                                    type="email"
-                                    value={ap.email || ""}
-                                    onChange={(e) => {
-                                        const ca = [...(cfg.costApprovers || [])];
-                                        ca[j] = { ...ca[j], email: e.target.value };
-                                        setCfg({ ...cfg, costApprovers: ca });
-                                    }}
-                                />
-                            </div>
-                        ))}
-                        <button
-                            type="button"
-                            className="btn-secondary"
-                            style={{ marginTop: 8 }}
-                            onClick={() =>
+                </div>
+                <div className="workflow-section-content">
+                    <div className="workflow-input-group">
+                        <label>
+                            <span className="label-text">Primary Recipients</span>
+                            <span className="label-hint">To</span>
+                        </label>
+                        <EmailChipsInput
+                            mode="array"
+                            value={cfg.emailRouting?.to || []}
+                            onChange={(to) =>
                                 setCfg({
                                     ...cfg,
-                                    costApprovers: [...(cfg.costApprovers || []), { name: "", email: "" }]
+                                    emailRouting: { ...cfg.emailRouting, to }
                                 })
                             }
-                        >
-                            <Plus size={14} /> Cost approver
-                        </button>
+                            placeholder="Enter email address"
+                        />
+                    </div>
+                    <div className="workflow-input-group">
+                        <label>
+                            <span className="label-text">Copy Recipients</span>
+                            <span className="label-hint">CC</span>
+                        </label>
+                        <EmailChipsInput
+                            mode="array"
+                            value={cfg.emailRouting?.cc || []}
+                            onChange={(cc) =>
+                                setCfg({
+                                    ...cfg,
+                                    emailRouting: { ...cfg.emailRouting, cc }
+                                })
+                            }
+                            placeholder="Enter email address"
+                        />
+                    </div>
+                    <div className="workflow-input-group">
+                        <label>
+                            <span className="label-text">Hidden Recipients</span>
+                            <span className="label-hint">BCC</span>
+                        </label>
+                        <EmailChipsInput
+                            mode="array"
+                            value={cfg.emailRouting?.bcc || []}
+                            onChange={(bcc) =>
+                                setCfg({
+                                    ...cfg,
+                                    emailRouting: { ...cfg.emailRouting, bcc }
+                                })
+                            }
+                            placeholder="Enter email address"
+                        />
+                    </div>
+                </div>
+            </div>
+
+            {/* Default Approvers Section */}
+            <div className="workflow-section">
+                <div className="workflow-section-header">
+                    <div className="workflow-section-icon accent">
+                        <Users size={18} />
+                    </div>
+                    <div className="workflow-section-title">
+                        <h4>Quick Approvers</h4>
+                        <p>Default team members for fast approval</p>
+                    </div>
+                    <button
+                        type="button"
+                        className="btn-add-item"
+                        onClick={() => setCfg({ ...cfg, managers: [...(cfg.managers || []), { name: "", email: "" }] })}
+                    >
+                        <Plus size={14} /> Add
+                    </button>
+                </div>
+                <div className="workflow-section-content">
+                    {(cfg.managers || []).length === 0 ? (
+                        <div className="workflow-empty-hint">
+                            No quick approvers configured. Add team members for streamlined approval routing.
+                        </div>
+                    ) : (
+                        <div className="approver-list">
+                            {(cfg.managers || []).map((m, idx) => (
+                                <div key={`mgr-${idx}`} className="approver-row">
+                                    <div className="approver-number">{idx + 1}</div>
+                                    <div className="approver-inputs">
+                                        <input
+                                            placeholder="Name"
+                                            value={m.name || ""}
+                                            onChange={(e) => {
+                                                const managers = [...(cfg.managers || [])];
+                                                managers[idx] = { ...managers[idx], name: e.target.value };
+                                                setCfg({ ...cfg, managers });
+                                            }}
+                                        />
+                                        <input
+                                            placeholder="Email"
+                                            type="email"
+                                            value={m.email || ""}
+                                            onChange={(e) => {
+                                                const managers = [...(cfg.managers || [])];
+                                                managers[idx] = { ...managers[idx], email: e.target.value };
+                                                setCfg({ ...cfg, managers });
+                                            }}
+                                        />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="btn-remove-item"
+                                        onClick={() => {
+                                            const managers = [...(cfg.managers || [])];
+                                            managers.splice(idx, 1);
+                                            setCfg({ ...cfg, managers });
+                                        }}
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Approval Chain Section */}
+            <div className="workflow-section">
+                <div className="workflow-section-header">
+                    <div className="workflow-section-icon primary">
+                        <Shield size={18} />
+                    </div>
+                    <div className="workflow-section-title">
+                        <h4>Approval Chain</h4>
+                        <p>Sequential approval workflow configuration</p>
+                    </div>
+                    <button type="button" className="btn-add-item" onClick={() => addApproverRow(cfg, setCfg)}>
+                        <Plus size={14} /> Add Level
+                    </button>
+                </div>
+                <div className="workflow-section-content">
+                    {(cfg.approvalLevels || []).length === 0 ? (
+                        <div className="workflow-empty-hint">
+                            No approval levels configured. Add levels to create an approval hierarchy.
+                        </div>
+                    ) : (
+                        <div className="approval-chain">
+                            {(cfg.approvalLevels || []).map((lvl, idx) => (
+                                <div key={lvl.level + "-" + idx} className="approval-level-card">
+                                    <div className="approval-level-header">
+                                        <div className="level-badge">Level {idx + 1}</div>
+                                        <div className="level-actions">
+                                            <button
+                                                type="button"
+                                                className="btn-icon-sm"
+                                                disabled={idx === 0}
+                                                title="Move up"
+                                                onClick={() => {
+                                                    if (idx === 0) return;
+                                                    const next = [...cfg.approvalLevels];
+                                                    [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                                                    setCfg({
+                                                        ...cfg,
+                                                        approvalLevels: next.map((x, i) => ({ ...x, level: i + 1 }))
+                                                    });
+                                                }}
+                                            >
+                                                <ArrowUp size={12} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="btn-icon-sm"
+                                                disabled={idx === (cfg.approvalLevels || []).length - 1}
+                                                title="Move down"
+                                                onClick={() => {
+                                                    if (idx >= (cfg.approvalLevels || []).length - 1) return;
+                                                    const next = [...cfg.approvalLevels];
+                                                    [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+                                                    setCfg({
+                                                        ...cfg,
+                                                        approvalLevels: next.map((x, i) => ({ ...x, level: i + 1 }))
+                                                    });
+                                                }}
+                                            >
+                                                <ArrowDown size={12} />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="btn-icon-sm danger"
+                                                title="Remove"
+                                                onClick={() => {
+                                                    const next = [...cfg.approvalLevels];
+                                                    next.splice(idx, 1);
+                                                    setCfg({
+                                                        ...cfg,
+                                                        approvalLevels: next.map((x, i) => ({ ...x, level: i + 1 }))
+                                                    });
+                                                }}
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="approval-level-fields">
+                                        <input
+                                            placeholder="Role (e.g. Lead, Manager)"
+                                            value={lvl.approvers?.[0]?.role || ""}
+                                            onChange={(e) => {
+                                                const al = [...cfg.approvalLevels];
+                                                al[idx].approvers = [{ ...(al[idx].approvers?.[0] || {}), role: e.target.value }];
+                                                setCfg({ ...cfg, approvalLevels: normalizeApprovalLevels(al) });
+                                            }}
+                                        />
+                                        <input
+                                            placeholder="Name"
+                                            value={lvl.approvers?.[0]?.name || ""}
+                                            onChange={(e) => {
+                                                const al = [...cfg.approvalLevels];
+                                                al[idx].approvers = [{ ...(al[idx].approvers?.[0] || {}), name: e.target.value }];
+                                                setCfg({ ...cfg, approvalLevels: normalizeApprovalLevels(al) });
+                                            }}
+                                        />
+                                        <input
+                                            placeholder="Email"
+                                            type="email"
+                                            value={lvl.approvers?.[0]?.email || ""}
+                                            onChange={(e) => {
+                                                const al = [...cfg.approvalLevels];
+                                                al[idx].approvers = [{ ...(al[idx].approvers?.[0] || {}), email: e.target.value }];
+                                                setCfg({ ...cfg, approvalLevels: normalizeApprovalLevels(al) });
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+
+            {/* Cost Approval Section */}
+            <div className="workflow-section">
+                <div className="workflow-section-header">
+                    <div className="workflow-section-icon warning">
+                        <DollarSign size={18} />
+                    </div>
+                    <div className="workflow-section-title">
+                        <h4>Cost Authorization</h4>
+                        <p>Financial approval requirements</p>
+                    </div>
+                    <label className="toggle-switch">
+                        <input
+                            type="checkbox"
+                            checked={!!cfg.costApprovalRequired}
+                            onChange={(e) => setCfg({ ...cfg, costApprovalRequired: e.target.checked })}
+                        />
+                        <span className="toggle-slider"></span>
+                    </label>
+                </div>
+                {cfg.costApprovalRequired && (
+                    <div className="workflow-section-content">
+                        <div className="cost-approvers-section">
+                            <div className="section-subheader">
+                                <span>Cost Approvers</span>
+                                <button
+                                    type="button"
+                                    className="btn-add-item small"
+                                    onClick={() =>
+                                        setCfg({
+                                            ...cfg,
+                                            costApprovers: [...(cfg.costApprovers || []), { name: "", email: "" }]
+                                        })
+                                    }
+                                >
+                                    <Plus size={12} /> Add
+                                </button>
+                            </div>
+                            {(cfg.costApprovers || []).length === 0 ? (
+                                <div className="workflow-empty-hint">
+                                    Add cost approvers who can authorize financial expenditures.
+                                </div>
+                            ) : (
+                                <div className="approver-list">
+                                    {(cfg.costApprovers || []).map((ap, j) => (
+                                        <div key={j} className="approver-row compact">
+                                            <div className="approver-inputs">
+                                                <input
+                                                    placeholder="Name"
+                                                    value={ap.name || ""}
+                                                    onChange={(e) => {
+                                                        const ca = [...(cfg.costApprovers || [])];
+                                                        ca[j] = { ...ca[j], name: e.target.value };
+                                                        setCfg({ ...cfg, costApprovers: ca });
+                                                    }}
+                                                />
+                                                <input
+                                                    placeholder="Email"
+                                                    type="email"
+                                                    value={ap.email || ""}
+                                                    onChange={(e) => {
+                                                        const ca = [...(cfg.costApprovers || [])];
+                                                        ca[j] = { ...ca[j], email: e.target.value };
+                                                        setCfg({ ...cfg, costApprovers: ca });
+                                                    }}
+                                                />
+                                            </div>
+                                            <button
+                                                type="button"
+                                                className="btn-remove-item"
+                                                onClick={() => {
+                                                    const ca = [...(cfg.costApprovers || [])];
+                                                    ca.splice(j, 1);
+                                                    setCfg({ ...cfg, costApprovers: ca });
+                                                }}
+                                            >
+                                                <Trash2 size={14} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
                     </div>
                 )}
             </div>
 
-            <div style={{ marginTop: "1rem" }}>
-                <h4 style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Bell size={16} /> Notification defaults
-                </h4>
-                <p style={{ fontSize: "0.8rem", color: "#64748b" }}>
-                    Mandatory channels ignore end-user opt-out. Approval request emails are always mandatory.
-                </p>
-                {[
-                    ["ticketStatusChanges", "Ticket status changes"],
-                    ["approvalRequests", "Approval requests"],
-                    ["approvalCompleted", "Approval completed"],
-                    ["costApprovalUpdates", "Cost approval updates"],
-                    ["commentsAndUpdates", "Comments / updates"]
-                ].map(([key, label]) => (
-                    <label key={key} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-                        <input
-                            type="checkbox"
-                            checked={!!cfg.notificationPreferences?.[key]}
-                            onChange={(e) =>
-                                setCfg({
-                                    ...cfg,
-                                    notificationPreferences: {
-                                        ...emptyNotif(),
-                                        ...cfg.notificationPreferences,
-                                        [key]: e.target.checked
-                                    }
-                                })
-                            }
-                        />
-                        {label}
-                        <input
-                            type="checkbox"
-                            title="Mandatory"
-                            checked={!!cfg.notificationPreferences?.[`${key}Mandatory`]}
-                            onChange={(e) =>
-                                setCfg({
-                                    ...cfg,
-                                    notificationPreferences: {
-                                        ...emptyNotif(),
-                                        ...cfg.notificationPreferences,
-                                        [`${key}Mandatory`]: e.target.checked
-                                    }
-                                })
-                            }
-                        />
-                        <span style={{ fontSize: "0.75rem", color: "#64748b" }}>mandatory</span>
-                    </label>
-                ))}
+            {/* Notifications Section */}
+            <div className="workflow-section">
+                <div className="workflow-section-header">
+                    <div className="workflow-section-icon info">
+                        <Bell size={18} />
+                    </div>
+                    <div className="workflow-section-title">
+                        <h4>Notifications</h4>
+                        <p>Configure alert preferences</p>
+                    </div>
+                </div>
+                <div className="workflow-section-content">
+                    <div className="notification-grid">
+                        {[
+                            { key: "ticketStatusChanges", label: "Status Updates", icon: AlertCircle, desc: "When ticket status changes" },
+                            { key: "approvalRequests", label: "Approval Requests", icon: Shield, desc: "When approval is needed" },
+                            { key: "approvalCompleted", label: "Approvals Done", icon: CheckCircle, desc: "When approval is completed" },
+                            { key: "costApprovalUpdates", label: "Cost Updates", icon: DollarSign, desc: "Financial approval status" },
+                            { key: "commentsAndUpdates", label: "Comments", icon: MessageSquare, desc: "New comments and updates" }
+                        ].map(({ key, label, icon: Icon, desc }) => (
+                            <div key={key} className="notification-item">
+                                <div className="notification-info">
+                                    <Icon size={16} className="notification-icon" />
+                                    <div>
+                                        <span className="notification-label">{label}</span>
+                                        <span className="notification-desc">{desc}</span>
+                                    </div>
+                                </div>
+                                <div className="notification-controls">
+                                    <label className="checkbox-pill">
+                                        <input
+                                            type="checkbox"
+                                            checked={!!cfg.notificationPreferences?.[key]}
+                                            onChange={(e) =>
+                                                setCfg({
+                                                    ...cfg,
+                                                    notificationPreferences: {
+                                                        ...emptyNotif(),
+                                                        ...cfg.notificationPreferences,
+                                                        [key]: e.target.checked
+                                                    }
+                                                })
+                                            }
+                                        />
+                                        <span>Enabled</span>
+                                    </label>
+                                    <label className="checkbox-pill mandatory">
+                                        <input
+                                            type="checkbox"
+                                            checked={!!cfg.notificationPreferences?.[`${key}Mandatory`]}
+                                            onChange={(e) =>
+                                                setCfg({
+                                                    ...cfg,
+                                                    notificationPreferences: {
+                                                        ...emptyNotif(),
+                                                        ...cfg.notificationPreferences,
+                                                        [`${key}Mandatory`]: e.target.checked
+                                                    }
+                                                })
+                                            }
+                                        />
+                                        <span>Required</span>
+                                    </label>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
             </div>
         </div>
     );
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-overlay workflow-modal-overlay" onClick={onClose}>
             <div
-                className="modal-content create-ticket-modal"
-                style={{ maxWidth: 720, maxHeight: "90vh", overflow: "auto" }}
+                className="modal-content workflow-editor-modal"
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="modal-header">
-                    <h2>
-                        <Mail size={22} style={{ verticalAlign: "middle", marginRight: 8 }} />
-                        Product Workflow: {project?.name}
-                    </h2>
+                <div className="modal-header workflow-modal-header">
+                    <div className="modal-title-group">
+                        <div className="modal-icon">
+                            <Settings size={22} />
+                        </div>
+                        <div>
+                            <h2>Workflow Configuration</h2>
+                            <span className="modal-subtitle">{project?.name}</span>
+                        </div>
+                    </div>
                     <button className="modal-close" onClick={onClose}>
                         <X size={20} />
                     </button>
                 </div>
-                <div className="modal-body">
+                <div className="modal-body workflow-modal-body">
                     {error && (
-                        <div className="form-error" style={{ marginBottom: "1rem" }}>
-                            {error}
+                        <div className="workflow-error">
+                            <AlertCircle size={16} />
+                            <span>{error}</span>
                         </div>
                     )}
                     {loading ? (
-                        <p>Loading configuration…</p>
+                        <div className="workflow-loading">
+                            <div className="loading-spinner"></div>
+                            <span>Loading configuration...</span>
+                        </div>
                     ) : (
                         <>
-                            <div
-                                style={{
-                                    display: "grid",
-                                    gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
-                                    gap: 10,
-                                    marginBottom: "1rem"
-                                }}
-                            >
-                                <div className="team-member-card">
-                                    <div className="team-member-head"><strong>Default approvals</strong></div>
-                                    <div>{defaultApprovalLevels} level(s)</div>
-                                </div>
-                                <div className="team-member-card">
-                                    <div className="team-member-head"><strong>Cost approval</strong></div>
-                                    <div>{defaultCostRequired ? "Required" : "Not required"}</div>
-                                </div>
-                                <div className="team-member-card">
-                                    <div className="team-member-head"><strong>Overrides</strong></div>
-                                    <div>{overrides.length} request type(s)</div>
-                                </div>
-                            </div>
-                            <p style={{ color: "#64748b", marginBottom: "1rem" }}>
-                                Default applies to all request types unless you add a request-type override below.
-                                Thread emails use To/CC/BCC; approval links are sent only to configured approvers.
-                            </p>
-                            {renderWorkflowForm(defaultCfg, setDefaultCfg, "Default configuration")}
-
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                <h3>Request Type Overrides</h3>
-                                <button type="button" className="btn-primary" onClick={addOverride}>
-                                    <Plus size={14} /> Add request type
-                                </button>
-                            </div>
-                            {overrides.map((ov, i) => (
-                                <div key={i} style={{ marginTop: "1rem", borderTop: "1px solid #DFE1E6", paddingTop: "1rem" }}>
-                                    <div className="form-row" style={{ marginBottom: 8 }}>
-                                        <label>Request type</label>
-                                        <select
-                                            value={ov.requestType}
-                                            onChange={(e) => {
-                                                const next = [...overrides];
-                                                next[i] = { ...next[i], requestType: e.target.value };
-                                                setOverrides(next);
-                                            }}
-                                        >
-                                            {Object.keys(REQUEST_TYPES).map((k) => (
-                                                <option key={k} value={k}>
-                                                    {REQUEST_TYPES[k]}
-                                                </option>
-                                            ))}
-                                        </select>
-                                        <button
-                                            type="button"
-                                            className="btn-icon btn-danger"
-                                            onClick={() => setOverrides(overrides.filter((_, j) => j !== i))}
-                                        >
-                                            <Trash2 size={14} />
-                                        </button>
+                            <div className="workflow-summary-cards">
+                                <div className="summary-card">
+                                    <div className="summary-icon">
+                                        <Users size={18} />
                                     </div>
-                                    {renderWorkflowForm(ov.configuration, (c) => {
-                                        const next = [...overrides];
-                                        next[i] = { ...next[i], configuration: c };
-                                        setOverrides(next);
-                                    }, `Override: ${REQUEST_TYPES[ov.requestType] || ov.requestType}`)}
+                                    <div className="summary-content">
+                                        <span className="summary-value">{defaultApprovalLevels}</span>
+                                        <span className="summary-label">Approval Levels</span>
+                                    </div>
                                 </div>
-                            ))}
+                                <div className={`summary-card ${defaultCostRequired ? 'active' : ''}`}>
+                                    <div className="summary-icon">
+                                        <DollarSign size={18} />
+                                    </div>
+                                    <div className="summary-content">
+                                        <span className="summary-value">{defaultCostRequired ? 'Active' : 'Off'}</span>
+                                        <span className="summary-label">Cost Approval</span>
+                                    </div>
+                                </div>
+                                <div className="summary-card">
+                                    <div className="summary-icon">
+                                        <Layers size={18} />
+                                    </div>
+                                    <div className="summary-content">
+                                        <span className="summary-value">Standard</span>
+                                        <span className="summary-label">Workflow Mode</span>
+                                    </div>
+                                </div>
+                            </div>
+                            {renderWorkflowForm(defaultCfg, setDefaultCfg, "Default configuration")}
                         </>
                     )}
                 </div>
-                <div className="form-actions" style={{ padding: "1rem", position: "sticky", bottom: 0, background: "#fff", borderTop: "1px solid #DFE1E6" }}>
+                <div className="modal-footer workflow-modal-footer">
                     <button type="button" className="btn-secondary" onClick={onClose}>
                         Cancel
                     </button>
                     <button type="button" className="btn-primary" disabled={loading || saving} onClick={save}>
-                        <Save size={16} /> {saving ? "Saving…" : "Save workflow"}
+                        <Save size={16} /> {saving ? "Saving..." : "Save Configuration"}
                     </button>
                 </div>
             </div>

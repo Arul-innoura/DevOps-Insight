@@ -1,4 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import Quill from "quill";
+import "quill/dist/quill.snow.css";
 import { 
     X, 
     Clock, 
@@ -26,7 +28,13 @@ import {
     Globe,
     FileText,
     AlertTriangle,
-    Tag
+    Tag,
+    CircleDot,
+    Rocket,
+    ShieldCheck,
+    DollarSign,
+    Loader2,
+    Ban
 } from 'lucide-react';
 import { 
     TICKET_STATUS, 
@@ -42,13 +50,156 @@ import {
     saveCcEmail
 } from '../services/ticketService';
 import { getEffectiveWorkflow } from '../services/projectWorkflowService';
+import EmailChipsInput from "../components/EmailChipsInput";
 
-// ============ STATUS BADGE COMPONENT ============
-export const StatusBadge = ({ status, size = 'medium' }) => {
+// Status configuration with icons and simplified labels for dropdowns
+export const STATUS_DISPLAY_CONFIG = {
+    [TICKET_STATUS.CREATED]: { 
+        icon: CircleDot, 
+        label: 'New Request',
+        shortLabel: 'New'
+    },
+    [TICKET_STATUS.ACCEPTED]: { 
+        icon: Rocket, 
+        label: 'Accepted',
+        shortLabel: 'Accepted'
+    },
+    [TICKET_STATUS.MANAGER_APPROVAL_PENDING]: { 
+        icon: Clock, 
+        label: 'Pending Approval',
+        shortLabel: 'Pending'
+    },
+    [TICKET_STATUS.MANAGER_APPROVED]: { 
+        icon: ShieldCheck, 
+        label: 'Approved',
+        shortLabel: 'Approved'
+    },
+    [TICKET_STATUS.COST_APPROVAL_PENDING]: { 
+        icon: DollarSign, 
+        label: 'Cost Review',
+        shortLabel: 'Cost Review'
+    },
+    [TICKET_STATUS.COST_APPROVED]: { 
+        icon: CheckCircle, 
+        label: 'Cost Approved',
+        shortLabel: 'Cost OK'
+    },
+    [TICKET_STATUS.IN_PROGRESS]: { 
+        icon: Loader2, 
+        label: 'In Progress',
+        shortLabel: 'Active'
+    },
+    [TICKET_STATUS.ACTION_REQUIRED]: { 
+        icon: AlertCircle, 
+        label: 'Action Needed',
+        shortLabel: 'Action'
+    },
+    [TICKET_STATUS.ON_HOLD]: { 
+        icon: Pause, 
+        label: 'On Hold',
+        shortLabel: 'Hold'
+    },
+    [TICKET_STATUS.COMPLETED]: { 
+        icon: CheckCircle, 
+        label: 'Completed',
+        shortLabel: 'Done'
+    },
+    [TICKET_STATUS.CLOSED]: { 
+        icon: Ban, 
+        label: 'Closed',
+        shortLabel: 'Closed'
+    }
+};
+
+// Helper to get display label for status
+export const getStatusDisplayLabel = (status) => {
+    return STATUS_DISPLAY_CONFIG[status]?.label || status;
+};
+
+/** Timeline entries use display labels (e.g. "Waiting for Manager Approval"), not API enums. */
+const TICKET_STATUS_DISPLAY_TO_KEY = Object.fromEntries(
+    Object.entries(TICKET_STATUS).map(([enumKey, label]) => [label, enumKey])
+);
+
+function timelineStatusKey(displayStatus) {
+    if (!displayStatus) return "";
+    if (TICKET_STATUS_DISPLAY_TO_KEY[displayStatus]) return TICKET_STATUS_DISPLAY_TO_KEY[displayStatus];
+    const normalized = String(displayStatus).toUpperCase().replace(/\s+/g, "_");
+    if (Object.prototype.hasOwnProperty.call(TICKET_STATUS, normalized)) return normalized;
+    return normalized;
+}
+
+function normalizeFlowNotes(notes) {
+    return String(notes || "")
+        .replace(/<[^>]+>/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+/** Remove back-to-back timeline rows that repeat the same status and same note (common duplicate writes). */
+function dedupeConsecutiveStatusTimeline(entries) {
+    const out = [];
+    for (const entry of entries) {
+        const st = timelineStatusKey(entry?.status);
+        const norm = normalizeFlowNotes(entry?.notes);
+        const prev = out[out.length - 1];
+        if (prev) {
+            const pst = timelineStatusKey(prev?.status);
+            const pn = normalizeFlowNotes(prev?.notes);
+            if (st === pst && norm === pn) continue;
+        }
+        out.push(entry);
+    }
+    return out;
+}
+
+function extractPurposeSnippet(notes) {
+    const s = String(notes || "");
+    const m = s.match(/Purpose:\s*([\s\S]+?)(?=\.\s+[A-Z]|$)/i) || s.match(/Purpose:\s*(.+)/i);
+    if (!m) return "";
+    const t = normalizeFlowNotes(m[1]);
+    if (!t) return "";
+    return t.length > 88 ? `${t.slice(0, 85)}…` : t;
+}
+
+// ============ ENHANCED STATUS BADGE COMPONENT ============
+export const StatusBadge = ({ status, size = 'medium', animated = true }) => {
     const colors = STATUS_COLORS[status] || { bg: '#e5e7eb', text: '#4b5563' };
     
+    // Simplified display labels for cleaner UI
+    const getDisplayLabel = () => {
+        switch (status) {
+            case TICKET_STATUS.CREATED:
+                return 'New';
+            case TICKET_STATUS.ACCEPTED:
+                return 'Accepted';
+            case TICKET_STATUS.MANAGER_APPROVAL_PENDING:
+                return 'Pending Approval';
+            case TICKET_STATUS.MANAGER_APPROVED:
+                return 'Approved';
+            case TICKET_STATUS.COST_APPROVAL_PENDING:
+                return 'Cost Review';
+            case TICKET_STATUS.COST_APPROVED:
+                return 'Cost Approved';
+            case TICKET_STATUS.IN_PROGRESS:
+                return 'In Progress';
+            case TICKET_STATUS.ACTION_REQUIRED:
+                return 'Action Needed';
+            case TICKET_STATUS.ON_HOLD:
+                return 'On Hold';
+            case TICKET_STATUS.COMPLETED:
+                return 'Completed';
+            case TICKET_STATUS.CLOSED:
+                return 'Closed';
+            case TICKET_STATUS.REJECTED:
+                return 'Rejected';
+            default:
+                return status;
+        }
+    };
+    
     const getIcon = () => {
-        const iconSize = size === 'small' ? 12 : 14;
+        const iconSize = size === 'small' ? 12 : size === 'large' ? 16 : 14;
         switch (status) {
             case TICKET_STATUS.CREATED:
                 return <Clock size={iconSize} />;
@@ -76,48 +227,60 @@ export const StatusBadge = ({ status, size = 'medium' }) => {
                 return <Clock size={iconSize} />;
         }
     };
+
+    // Check if status needs attention indicator (pulsing animation)
+    const needsAttention = [
+        TICKET_STATUS.ACTION_REQUIRED,
+        TICKET_STATUS.MANAGER_APPROVAL_PENDING,
+        TICKET_STATUS.COST_APPROVAL_PENDING
+    ].includes(status);
     
     const sizeClasses = {
-        small: { padding: '2px 8px', fontSize: '0.7rem', gap: '4px' },
-        medium: { padding: '4px 10px', fontSize: '0.75rem', gap: '6px' },
-        large: { padding: '6px 12px', fontSize: '0.875rem', gap: '8px' }
+        small: { padding: '3px 10px', fontSize: '0.7rem', gap: '5px' },
+        medium: { padding: '5px 12px', fontSize: '0.75rem', gap: '6px' },
+        large: { padding: '7px 14px', fontSize: '0.85rem', gap: '8px' }
     };
     
     const sizeStyle = sizeClasses[size] || sizeClasses.medium;
     
     return (
         <span 
-            className="status-badge"
+            className={`status-badge-enhanced ${animated && needsAttention ? 'pulse' : ''}`}
             style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: sizeStyle.gap,
                 padding: sizeStyle.padding,
-                borderRadius: '9999px',
+                borderRadius: '8px',
                 fontSize: sizeStyle.fontSize,
                 fontWeight: 600,
                 backgroundColor: colors.bg,
                 color: colors.text,
-                whiteSpace: 'nowrap'
+                whiteSpace: 'nowrap',
+                boxShadow: `0 2px 8px -2px ${colors.bg}`,
+                transition: 'all 0.2s ease'
             }}
         >
-            {getIcon()}
-            {status}
+            <span className={animated && needsAttention ? 'icon-pulse' : ''}>
+                {getIcon()}
+            </span>
+            {getDisplayLabel()}
         </span>
     );
 };
 
 // ============ HORIZONTAL PROGRESS COMPONENT ============
 export const HorizontalProgress = ({ timeline = [], currentStatus, workflowStages: dynamicStages }) => {
+    // Simplified stage labels for cleaner display
     const staticStages = [
-        { key: TICKET_STATUS.CREATED, label: 'Ticket Raised' },
-        { key: TICKET_STATUS.ACCEPTED, label: 'DevOps Accepted' },
-        { key: TICKET_STATUS.MANAGER_APPROVAL_PENDING, label: 'Mgr Approval' },
-        { key: TICKET_STATUS.MANAGER_APPROVED, label: 'Mgr Approved' },
-        { key: TICKET_STATUS.COST_APPROVAL_PENDING, label: 'Cost Pending' },
-        { key: TICKET_STATUS.COST_APPROVED, label: 'Cost Approved' },
-        { key: TICKET_STATUS.IN_PROGRESS, label: 'Work In Progress' },
-        { key: TICKET_STATUS.COMPLETED, label: 'Completed' },
+        { key: TICKET_STATUS.CREATED, label: 'Submitted' },
+        { key: TICKET_STATUS.ACCEPTED, label: 'Reviewed' },
+        { key: TICKET_STATUS.MANAGER_APPROVAL_PENDING, label: 'Approval' },
+        { key: TICKET_STATUS.MANAGER_APPROVED, label: 'Verified' },
+        { key: TICKET_STATUS.COST_APPROVAL_PENDING, label: 'Cost Review' },
+        { key: TICKET_STATUS.COST_APPROVED, label: 'Authorized' },
+        { key: TICKET_STATUS.IN_PROGRESS, label: 'Processing' },
+        { key: TICKET_STATUS.COMPLETED, label: 'Complete' },
         { key: TICKET_STATUS.CLOSED, label: 'Closed' }
     ];
 
@@ -202,7 +365,16 @@ export const HorizontalProgress = ({ timeline = [], currentStatus, workflowStage
 };
 
 // ============ TICKET TIMELINE COMPONENT ============
-export const TicketTimeline = ({ timeline = [] }) => {
+const maskCostText = (text) => {
+    const raw = String(text || "");
+    return raw
+        .replace(/(Cost estimation submitted:\s*)([A-Z]{3}\s*)?[\d,]+(?:\.\d+)?/gi, "$1***")
+        .replace(/(Cost approved:\s*)([A-Z]{3}\s*)?[\d,]+(?:\.\d+)?/gi, "$1***")
+        .replace(/(Cost approval declined; ticket closed\.\s*)([A-Z]{3}\s*)?[\d,]+(?:\.\d+)?/gi, "$1***")
+        .replace(/\b(USD|EUR|INR|GBP)\s*[\d,]+(?:\.\d+)?\b/gi, "***");
+};
+
+export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
     if (!timeline || timeline.length === 0) {
         return <div className="timeline-empty">No timeline entries</div>;
     }
@@ -247,7 +419,7 @@ export const TicketTimeline = ({ timeline = [] }) => {
                         {entry.notes && (
                             <div className="timeline-notes">
                                 {entry.isNote && <MessageSquare size={12} />}
-                                {entry.notes}
+                                {maskSensitive ? maskCostText(entry.notes) : entry.notes}
                             </div>
                         )}
                         {Array.isArray(entry.attachments) && entry.attachments.length > 0 && (
@@ -379,27 +551,16 @@ export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChang
             {/* Footer: requester + assignee */}
             <div className="jtc-footer">
                 <div className="jtc-people">
-                    <span className="jtc-avatar" title={`Requested by: ${ticket.requestedBy}`}>
+                    <span className="jtc-avatar" title={ticket.requestedBy}>
                         {(ticket.requestedBy || 'U').charAt(0).toUpperCase()}
                     </span>
                     {ticket.assignedTo && (
                         <>
                             <span className="jtc-arrow">→</span>
-                            <span className="jtc-avatar assigned" title={`Assigned to: ${ticket.assignedTo}`}>
+                            <span className="jtc-avatar assigned" title={ticket.assignedTo}>
                                 {ticket.assignedTo.charAt(0).toUpperCase()}
                             </span>
                         </>
-                    )}
-                    <span className="jtc-people-names">
-                        <span>{ticket.requestedBy}</span>
-                        {ticket.assignedTo && <span className="jtc-assigned-name">→ {ticket.assignedTo}</span>}
-                    </span>
-                </div>
-                <div className="jtc-footer-right">
-                    {ticket.ccEmail && (
-                        <span className="jtc-chip cc" title={`CC: ${ticket.ccEmail}`}>
-                            <Mail size={11} /> CC
-                        </span>
                     )}
                 </div>
             </div>
@@ -407,7 +568,7 @@ export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChang
             {showActions && (
                 <div className="jtc-expand-row" onClick={e => e.stopPropagation()}>
                     <button className="jtc-expand-btn" onClick={() => setExpanded(!expanded)}>
-                        {expanded ? <><ChevronUp size={14} /> Hide Timeline</> : <><ChevronDown size={14} /> Show Timeline</>}
+                        {expanded ? <><ChevronUp size={14} /> Hide</> : <><ChevronDown size={14} /> Details</>}
                     </button>
                 </div>
             )}
@@ -431,20 +592,22 @@ export const TicketFilters = ({ filters, onFilterChange }) => {
                     value={filters.status || ''} 
                     onChange={e => onFilterChange({ ...filters, status: e.target.value || null })}
                 >
-                    <option value="">All Statuses</option>
+                    <option value="">All</option>
                     {Object.values(TICKET_STATUS).map(status => (
-                        <option key={status} value={status}>{status}</option>
+                        <option key={status} value={status}>
+                            {STATUS_DISPLAY_CONFIG[status]?.label || status}
+                        </option>
                     ))}
                 </select>
             </div>
             
             <div className="filter-group">
-                <label>Request Type</label>
+                <label>Type</label>
                 <select 
                     value={filters.requestType || ''} 
                     onChange={e => onFilterChange({ ...filters, requestType: e.target.value || null })}
                 >
-                    <option value="">All Types</option>
+                    <option value="">All</option>
                     {Object.values(REQUEST_TYPES).map(type => (
                         <option key={type} value={type}>{type}</option>
                     ))}
@@ -457,7 +620,7 @@ export const TicketFilters = ({ filters, onFilterChange }) => {
                     value={filters.environment || ''} 
                     onChange={e => onFilterChange({ ...filters, environment: e.target.value || null })}
                 >
-                    <option value="">All Environments</option>
+                    <option value="">All</option>
                     {ENVIRONMENTS.map(env => (
                         <option key={env} value={env}>{env}</option>
                     ))}
@@ -502,6 +665,9 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
     const [note, setNote] = useState('');
     const [selectedStatus, setSelectedStatus] = useState('');
     const [noteAttachments, setNoteAttachments] = useState([]);
+    const [showApprovalEditor, setShowApprovalEditor] = useState(false);
+    const [approvalEditorText, setApprovalEditorText] = useState('');
+    const [approvalEditorHtml, setApprovalEditorHtml] = useState('');
     
     if (!ticket) return null;
 
@@ -509,22 +675,100 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
     const allowedTransitions = getDynamicAllowedTransitions(ticket);
     const requiresCostApproval = !!ticket.costApprovalRequired || !!ticket.workflowConfiguration?.costApprovalRequired;
     
+    // Get simplified action label with icon indicator
     const getStatusActionLabel = (status) => {
-        if (status === TICKET_STATUS.COST_APPROVAL_PENDING) return "Raise Cost Approval (enter estimate)";
-        return status;
+        const config = STATUS_DISPLAY_CONFIG[status];
+        if (status === TICKET_STATUS.COST_APPROVAL_PENDING) return "💰 Submit Cost Estimate";
+        if (!config) return status;
+        return config.label;
     };
+    
+    const configuredApprovalPeople = (ticket.workflowConfiguration?.approvalLevels || [])
+        .slice()
+        .sort((a, b) => (a.level || 0) - (b.level || 0))
+        .map((lvl, idx) => {
+            const a = (lvl.approvers || [])[0] || {};
+            return {
+                key: `approval-${lvl.level || idx + 1}-${a?.email || a?.name || ''}`,
+                level: lvl.level || (idx + 1),
+                role: a?.role || "Approver",
+                name: a?.name || '',
+                email: a?.email || ''
+            };
+        })
+        .filter((p) => p.email);
+    const approvalActions = configuredApprovalPeople.map((p) => {
+        const displayName = (p.name || "").trim() || p.email;
+        return {
+            value: `APPROVAL::${p.email}`,
+            label: `📋 ${displayName}`,
+            type: "approval",
+            person: p
+        };
+    });
+    const managerRespondedApproved = String(ticket.managerApprovalStatus || "").toUpperCase() === "APPROVED";
+    const approvalActionsForUser = !canManage && managerRespondedApproved ? [] : approvalActions;
+    const defaultActions = (canManage ? Object.values(TICKET_STATUS) : allowedTransitions).map((s) => ({
+        value: `STATUS::${s}`,
+        label: getStatusActionLabel(s),
+        type: "status",
+        status: s
+    }));
+    const selectableActions = canManage ? [...defaultActions, ...approvalActions] : approvalActionsForUser;
+    const selectedApprovalAction = selectedStatus.startsWith("APPROVAL::")
+        ? approvalActions.find((a) => a.value === selectedStatus)
+        : null;
 
-    const handleStatusChange = () => {
+    const applySelectedAction = (actionNoteText) => {
         if (selectedStatus && onStatusChange) {
+            if (selectedStatus.startsWith("STATUS::")) {
+                const statusValue = selectedStatus.replace("STATUS::", "");
+                if (statusValue === TICKET_STATUS.COST_APPROVAL_PENDING && onRequestCostApproval) {
+                    onRequestCostApproval(ticket);
+                    setSelectedStatus('');
+                    return;
+                }
+                onStatusChange(ticket.id, statusValue, actionNoteText || note, {});
+                setNote('');
+                setSelectedStatus('');
+                return;
+            }
+            if (selectedStatus.startsWith("APPROVAL::")) {
+                const targetEmail = selectedStatus.replace("APPROVAL::", "");
+                const target = configuredApprovalPeople.find(
+                    (p) => String(p.email || "").toLowerCase() === String(targetEmail).toLowerCase()
+                );
+                const resolvedEmail = (target?.email || targetEmail || "").trim();
+                const approvalNote = [
+                    `Designation: ${target?.role || "Approver"} — ${target?.name || resolvedEmail} · ${resolvedEmail}`,
+                    actionNoteText ? `Purpose: ${actionNoteText}` : null
+                ].filter(Boolean).join(". ");
+                onStatusChange(ticket.id, TICKET_STATUS.MANAGER_APPROVAL_PENDING, approvalNote, {
+                    approvalTargetEmail: resolvedEmail
+                });
+                setNote('');
+                setSelectedStatus('');
+                return;
+            }
             if (selectedStatus === TICKET_STATUS.COST_APPROVAL_PENDING && onRequestCostApproval) {
                 onRequestCostApproval(ticket);
                 setSelectedStatus('');
                 return;
             }
-            onStatusChange(ticket.id, selectedStatus, note);
+            onStatusChange(ticket.id, selectedStatus, actionNoteText || note, {});
             setNote('');
             setSelectedStatus('');
         }
+    };
+
+    const handleStatusChange = () => {
+        if (selectedApprovalAction) {
+            setApprovalEditorText(note || '');
+            setApprovalEditorHtml('');
+            setShowApprovalEditor(true);
+            return;
+        }
+        applySelectedAction(note);
     };
     
     const handleAddNote = () => {
@@ -564,6 +808,82 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
             hour: '2-digit', minute: '2-digit'
         });
     };
+    const latestTimelineEntry = Array.isArray(ticket.timeline) && ticket.timeline.length > 0
+        ? ticket.timeline[ticket.timeline.length - 1]
+        : null;
+    const flowTimelineSource = dedupeConsecutiveStatusTimeline(
+        (ticket.timeline || []).filter((entry) => !entry?.isNote)
+    );
+    let mgrPendingRound = 0;
+    let mgrApprovedRound = 0;
+    let costPendingRound = 0;
+    let costApprovedRound = 0;
+
+    const actionFlowItems = flowTimelineSource.map((entry, idx) => {
+            const st = timelineStatusKey(entry?.status);
+            let label = entry?.status || "Updated";
+            if (st === "MANAGER_APPROVAL_PENDING") {
+                mgrPendingRound += 1;
+                label = mgrPendingRound > 1 ? `Pending #${mgrPendingRound}` : "Pending";
+            } else if (st === "MANAGER_APPROVED") {
+                mgrApprovedRound += 1;
+                label = mgrApprovedRound > 1 ? `Approved #${mgrApprovedRound}` : "Approved";
+            } else if (st === "COST_APPROVAL_PENDING") {
+                costPendingRound += 1;
+                label = costPendingRound > 1 ? `Cost #${costPendingRound}` : "Cost Review";
+            } else if (st === "COST_APPROVED") {
+                costApprovedRound += 1;
+                label = costApprovedRound > 1 ? `Cost OK #${costApprovedRound}` : "Cost OK";
+            } else if (st === "CREATED") {
+                label = "New";
+            } else if (st === "ACCEPTED") {
+                label = "Accepted";
+            } else if (st === "IN_PROGRESS") {
+                label = "Active";
+            } else if (st === "COMPLETED") {
+                label = "Done";
+            } else if (st === "CLOSED") {
+                label = "Closed";
+            } else if (st === "ACTION_REQUIRED") {
+                label = "Action";
+            } else if (st === "ON_HOLD") {
+                label = "Hold";
+            }
+            const tone = (() => {
+                if (st === "CLOSED" || st === "REJECTED") return "red";
+                if (st === "MANAGER_APPROVAL_PENDING" || st === "COST_APPROVAL_PENDING") return "red";
+                if (st === "MANAGER_APPROVED" || st === "COST_APPROVED") return "green";
+                if (st === "COMPLETED" || st === "IN_PROGRESS" || st === "ACCEPTED") return "green";
+                if (st === "ACTION_REQUIRED" || st === "ON_HOLD") return "amber";
+                return "blue";
+            })();
+            return { id: `${entry?.timestamp || "x"}-${idx}`, label, tone };
+        });
+    const runtimeBarTone = (() => {
+        const st = timelineStatusKey(ticket.status);
+        if (st === "CLOSED" || st === "REJECTED") {
+            return { color: "#dc2626", bg: "#fee2e2", label: "Closed" };
+        }
+        if (st === "MANAGER_APPROVAL_PENDING") {
+            return { color: "#dc2626", bg: "#fee2e2", label: "Pending Approval" };
+        }
+        if (st === "COST_APPROVAL_PENDING") {
+            return { color: "#dc2626", bg: "#fee2e2", label: "Cost Review" };
+        }
+        if (st === "MANAGER_APPROVED") {
+            return { color: "#16a34a", bg: "#dcfce7", label: "Approved" };
+        }
+        if (st === "COST_APPROVED") {
+            return { color: "#16a34a", bg: "#dcfce7", label: "Cost Approved" };
+        }
+        if (st === "COMPLETED" || st === "IN_PROGRESS") {
+            return { color: "#16a34a", bg: "#dcfce7", label: "Processing" };
+        }
+        if (st === "ACTION_REQUIRED" || st === "ON_HOLD") {
+            return { color: "#d97706", bg: "#fef3c7", label: "Waiting" };
+        }
+        return { color: "#2563eb", bg: "#dbeafe", label: "Active" };
+    })();
     
     return (
         <div className="modal-overlay" onClick={onClose}>
@@ -588,14 +908,13 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                     </div>
                     <button className="modal-close" onClick={onClose}><X size={20} /></button>
                 </div>
-
-                {/* ── Progress Bar ── */}
-                <div className="jdm-progress-wrap">
-                    <HorizontalProgress
-                        timeline={ticket.timeline}
-                        currentStatus={ticket.status}
-                        workflowStages={ticket.workflowStages}
-                    />
+                <div style={{ padding: "0.5rem 1rem", borderBottom: "1px solid #e5e7eb", background: runtimeBarTone.bg }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ height: 6, borderRadius: 999, background: runtimeBarTone.color, flex: 1 }} />
+                        <span style={{ color: runtimeBarTone.color, fontWeight: 600, fontSize: "0.78rem" }}>
+                            {runtimeBarTone.label}
+                        </span>
+                    </div>
                 </div>
 
                 {/* ── Two-panel body ── */}
@@ -607,25 +926,53 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                         {/* Description */}
                         {ticket.description && (
                             <div className="jdm-section">
-                                <div className="jdm-section-title"><FileText size={14} /> Description</div>
+                                <div className="jdm-section-title"><FileText size={14} /> Details</div>
                                 <p className="jdm-description">{ticket.description}</p>
                             </div>
                         )}
 
+                        <div className="jdm-section">
+                            <div className="jdm-section-title"><Clock size={14} /> Progress</div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                                {actionFlowItems.length === 0 && (
+                                    <span style={{ color: "#64748b", fontSize: "0.85rem" }}>Pending</span>
+                                )}
+                                {actionFlowItems.map((item, index) => {
+                                    const toneStyle = item.tone === "green"
+                                        ? { background: "#dcfce7", color: "#166534", border: "1px solid #86efac" }
+                                        : item.tone === "red"
+                                            ? { background: "#fee2e2", color: "#991b1b", border: "1px solid #fca5a5" }
+                                            : item.tone === "amber"
+                                                ? { background: "#fef3c7", color: "#92400e", border: "1px solid #fcd34d" }
+                                                : { background: "#dbeafe", color: "#1e40af", border: "1px solid #93c5fd" };
+                                    return (
+                                        <React.Fragment key={item.id}>
+                                            <span style={{ ...toneStyle, borderRadius: 999, padding: "4px 10px", fontSize: "0.78rem", fontWeight: 600 }}>
+                                                {item.label}
+                                            </span>
+                                            {index < actionFlowItems.length - 1 && (
+                                                <span style={{ color: "#94a3b8", fontWeight: 700 }}>→</span>
+                                            )}
+                                        </React.Fragment>
+                                    );
+                                })}
+                            </div>
+                        </div>
+
                         {/* Service Details */}
                         <div className="jdm-section">
-                            <div className="jdm-section-title">{getRequestTypeIcon(ticket.requestType, 14)} Service Details</div>
+                            <div className="jdm-section-title">{getRequestTypeIcon(ticket.requestType, 14)} Configuration</div>
                             <div className="jdm-fields-grid">
                                 <DetailField icon={Globe} label="Environment" value={ticket.environment} />
                                 {ticket.databaseType && <DetailField icon={Database} label="Database" value={ticket.databaseType} />}
-                                {ticket.releaseVersion && <DetailField icon={Tag} label="Release Version" value={ticket.releaseVersion} mono />}
-                                {ticket.deploymentStrategy && <DetailField icon={Upload} label="Deployment Strategy" value={ticket.deploymentStrategy} />}
+                                {ticket.releaseVersion && <DetailField icon={Tag} label="Version" value={ticket.releaseVersion} mono />}
+                                {ticket.deploymentStrategy && <DetailField icon={Upload} label="Strategy" value={ticket.deploymentStrategy} />}
                                 {ticket.branchName && <DetailField icon={GitBranch} label="Branch" value={ticket.branchName} mono />}
-                                {ticket.commitId && <DetailField icon={GitBranch} label="Commit ID" value={ticket.commitId} mono />}
-                                {ticket.issueType && <DetailField icon={AlertTriangle} label="Issue Type" value={ticket.issueType} />}
+                                {ticket.commitId && <DetailField icon={GitBranch} label="Commit" value={ticket.commitId} mono />}
+                                {ticket.issueType && <DetailField icon={AlertTriangle} label="Type" value={ticket.issueType} />}
                                 {ticket.duration && <DetailField icon={Clock} label="Duration" value={`${ticket.duration} days`} />}
-                                {ticket.activationDate && <DetailField icon={Calendar} label="Activation Date" value={fmt(ticket.activationDate)} />}
-                                {ticket.shutdownDate && <DetailField icon={Calendar} label="Shutdown Date" value={fmt(ticket.shutdownDate)} />}
+                                {ticket.activationDate && <DetailField icon={Calendar} label="Start" value={fmt(ticket.activationDate)} />}
+                                {ticket.shutdownDate && <DetailField icon={Calendar} label="End" value={fmt(ticket.shutdownDate)} />}
                             </div>
                             {ticket.purpose && (
                                 <div className="jdm-text-block">
@@ -672,26 +1019,46 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                         </div>
 
                         {/* Actions (manage) */}
-                        {canManage && allowedTransitions.length > 0 && (
+                        {selectableActions.length > 0 && (
                             <div className="jdm-section">
-                                <div className="jdm-section-title"><PlayCircle size={14} /> Workflow Action</div>
+                                <div className="jdm-section-title"><PlayCircle size={14} /> Actions</div>
                                 <div className="jdm-action-row">
                                     <select
                                         value={selectedStatus}
                                         onChange={e => setSelectedStatus(e.target.value)}
                                         className="jdm-select"
                                     >
-                                        <option value="">Select next workflow action…</option>
-                                        {allowedTransitions.map(s => (
-                                            <option key={s} value={s}>{getStatusActionLabel(s)}</option>
-                                        ))}
+                                        <option value="">Select action...</option>
+                                        {defaultActions.length > 0 && (
+                                            <optgroup label="Status">
+                                                {defaultActions.map((a) => (
+                                                    <option key={a.value} value={a.value}>{a.label}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
+                                        {approvalActions.length > 0 && (
+                                            <optgroup label="Request Approval">
+                                                {approvalActions.map((a) => (
+                                                    <option key={a.value} value={a.value}>{a.label}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
+                                        {!canManage && managerRespondedApproved && (
+                                            <option value="" disabled>✓ Approved - pending processing</option>
+                                        )}
+                                        {!canManage && !managerRespondedApproved && approvalActions.length === 0 && (
+                                            <option value="" disabled>No approvers configured</option>
+                                        )}
+                                        {canManage && defaultActions.length === 0 && approvalActions.length === 0 && (
+                                            <option value="" disabled>No actions</option>
+                                        )}
                                     </select>
                                     <button
                                         className="jdm-btn-primary"
                                         onClick={handleStatusChange}
                                         disabled={!selectedStatus}
                                     >
-                                        Apply Action
+                                        Apply
                                     </button>
                                 </div>
                                 {ticket.status === TICKET_STATUS.MANAGER_APPROVED
@@ -704,20 +1071,29 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                                             style={{ marginTop: 10 }}
                                             onClick={() => onRequestCostApproval(ticket)}
                                         >
-                                            <Database size={14} /> Raise Cost Approval
+                                            <DollarSign size={14} /> Submit Cost Estimate
                                         </button>
                                     )}
                             </div>
                         )}
                         {canManage && ticket.status === TICKET_STATUS.MANAGER_APPROVAL_PENDING && (
                             <div className="jdm-section">
-                                <div className="jdm-section-title"><Clock size={14} /> Approval In Progress</div>
-                                <p className="jdm-hint-text">
-                                    Waiting for manager approval
-                                    {ticket.currentApprovalLevel && ticket.totalApprovalLevels
-                                        ? ` (Level ${ticket.currentApprovalLevel} of ${ticket.totalApprovalLevels})`
-                                        : ""}.
-                                    Status will update automatically when the approver clicks Approve/Reject from email.
+                                <div className="jdm-section-title"><Clock size={14} /> Awaiting Response</div>
+                                {managerRespondedApproved ? (
+                                    <p className="jdm-hint-text" style={{ color: "#166534", fontWeight: 500 }}>
+                                        ✓ Approved - Apply <strong>Approved</strong> to continue
+                                    </p>
+                                ) : (
+                                    <p className="jdm-hint-text">
+                                        Pending approval response
+                                    </p>
+                                )}
+                            </div>
+                        )}
+                        {!canManage && ticket.status === TICKET_STATUS.MANAGER_APPROVAL_PENDING && managerRespondedApproved && (
+                            <div className="jdm-section">
+                                <p className="jdm-hint-text" style={{ color: "#166534" }}>
+                                    ✓ Approved - Processing will continue shortly
                                 </p>
                             </div>
                         )}
@@ -763,15 +1139,15 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                             </div>
                         )}
 
-                        {/* Add Note (log style for both DevOps and requester) */}
+                        {/* Add Note */}
                         {onAddNote && (
                             <div className="jdm-section">
-                                <div className="jdm-section-title"><MessageSquare size={14} /> Add Work Log Entry</div>
+                                <div className="jdm-section-title"><MessageSquare size={14} /> Notes</div>
                                 <textarea
                                     className="jdm-textarea"
                                     value={note}
                                     onChange={e => setNote(e.target.value)}
-                                    placeholder="Write a formal log note..."
+                                    placeholder="Add a note..."
                                     rows={3}
                                 />
                                 <input
@@ -783,7 +1159,7 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                                 />
                                 {noteAttachments.length > 0 && (
                                     <div style={{ marginTop: 6, fontSize: '0.8rem', color: '#374151' }}>
-                                        {noteAttachments.length} attachment(s) selected
+                                        {noteAttachments.length} file(s)
                                     </div>
                                 )}
                                 <button
@@ -792,7 +1168,7 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                                     onClick={handleAddNote}
                                     disabled={!note.trim()}
                                 >
-                                    <Send size={14} /> Add Log Entry
+                                    <Send size={14} /> Add Note
                                 </button>
                             </div>
                         )}
@@ -800,27 +1176,26 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                         {/* Activity Timeline */}
                         <div className="jdm-section">
                             <div className="jdm-section-title"><Clock size={14} /> Activity</div>
-                            <TicketTimeline timeline={ticket.timeline} />
+                            <TicketTimeline timeline={ticket.timeline} maskSensitive={!canManage} />
                         </div>
                     </div>
 
                     {/* RIGHT: Sidebar */}
                     <div className="jdm-sidebar">
                         <div className="jdm-sidebar-section">
-                            <div className="jdm-sidebar-title">People</div>
+                            <div className="jdm-sidebar-title">Team</div>
                             <div className="jdm-sidebar-field">
-                                <div className="jdm-sidebar-label"><User size={12} /> Reporter</div>
+                                <div className="jdm-sidebar-label"><User size={12} /> Requester</div>
                                 <div className="jdm-person-row">
                                     <span className="jdm-avatar-sm">{(ticket.requestedBy || 'U').charAt(0).toUpperCase()}</span>
                                     <div>
                                         <div className="jdm-person-name">{ticket.requestedBy}</div>
-                                        {ticket.requesterEmail && <div className="jdm-person-email">{ticket.requesterEmail}</div>}
                                     </div>
                                 </div>
                             </div>
                             {ticket.assignedTo && (
                                 <div className="jdm-sidebar-field">
-                                    <div className="jdm-sidebar-label"><UserCheck size={12} /> Assignee</div>
+                                    <div className="jdm-sidebar-label"><UserCheck size={12} /> Assigned</div>
                                     <div className="jdm-person-row">
                                         <span className="jdm-avatar-sm assigned">{ticket.assignedTo.charAt(0).toUpperCase()}</span>
                                         <div className="jdm-person-name">{ticket.assignedTo}</div>
@@ -829,20 +1204,14 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                             )}
                             {ticket.managerName && (
                                 <div className="jdm-sidebar-field">
-                                    <div className="jdm-sidebar-label"><Building size={12} /> Manager</div>
+                                    <div className="jdm-sidebar-label"><Building size={12} /> Approver</div>
                                     <div className="jdm-person-name">{ticket.managerName}</div>
-                                </div>
-                            )}
-                            {ticket.ccEmail && (
-                                <div className="jdm-sidebar-field">
-                                    <div className="jdm-sidebar-label"><Mail size={12} /> CC</div>
-                                    <div className="jdm-person-email" style={{ wordBreak: 'break-all' }}>{ticket.ccEmail}</div>
                                 </div>
                             )}
                         </div>
 
                         <div className="jdm-sidebar-section">
-                            <div className="jdm-sidebar-title">Dates</div>
+                            <div className="jdm-sidebar-title">Timeline</div>
                             <div className="jdm-sidebar-field">
                                 <div className="jdm-sidebar-label"><Calendar size={12} /> Created</div>
                                 <div className="jdm-sidebar-value">{fmt(ticket.createdAt)}</div>
@@ -854,23 +1223,111 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                         </div>
 
                         <div className="jdm-sidebar-section">
-                            <div className="jdm-sidebar-title">Details</div>
+                            <div className="jdm-sidebar-title">Info</div>
                             <div className="jdm-sidebar-field">
-                                <div className="jdm-sidebar-label">Manager Approval</div>
+                                <div className="jdm-sidebar-label">Approval</div>
                                 <span className={`jdm-tag ${ticket.managerApprovalRequired ? 'required' : 'not-required'}`}>
-                                    {ticket.managerApprovalRequired ? '✓ Required' : '✕ Not Required'}
+                                    {ticket.managerApprovalRequired ? '✓ Required' : '—'}
                                 </span>
                             </div>
                             {ticket.environment && (
                                 <div className="jdm-sidebar-field">
-                                    <div className="jdm-sidebar-label"><Globe size={12} /> Environment</div>
+                                    <div className="jdm-sidebar-label"><Globe size={12} /> Env</div>
                                     <span className="jdm-tag env">{ticket.environment}</span>
+                                </div>
+                            )}
+                            {canManage && (ticket.estimatedCost || ticket.costCurrency) && (
+                                <div className="jdm-sidebar-field">
+                                    <div className="jdm-sidebar-label"><DollarSign size={12} /> Cost</div>
+                                    <span className="jdm-sidebar-value">
+                                        {`${ticket.costCurrency || ""} ${ticket.estimatedCost || ""}`.trim()}
+                                    </span>
                                 </div>
                             )}
                         </div>
                     </div>
                 </div>
             </div>
+            {showApprovalEditor && (
+                <div className="modal-overlay" onClick={() => setShowApprovalEditor(false)}>
+                    <div className="modal-content" style={{ maxWidth: 620 }} onClick={(e) => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h2>Request Note</h2>
+                            <button className="modal-close" onClick={() => setShowApprovalEditor(false)}>
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="modal-body">
+                            <RichTextEditor
+                                valueHtml={approvalEditorHtml}
+                                onChange={({ html, text }) => {
+                                    setApprovalEditorHtml(html);
+                                    setApprovalEditorText(text);
+                                }}
+                                placeholder="Write purpose / context for approval..."
+                            />
+                            <div className="form-actions" style={{ marginTop: 12 }}>
+                                <button type="button" className="btn-secondary" onClick={() => setShowApprovalEditor(false)}>Cancel</button>
+                                <button
+                                    type="button"
+                                    className="btn-primary"
+                                    onClick={() => {
+                                        applySelectedAction((approvalEditorText || "").trim());
+                                        setShowApprovalEditor(false);
+                                    }}
+                                    disabled={!(approvalEditorText || "").trim()}
+                                >
+                                    Send Approval Request
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+const RichTextEditor = ({ valueHtml = "", onChange, placeholder = "" }) => {
+    const containerRef = useRef(null);
+    const quillRef = useRef(null);
+
+    useEffect(() => {
+        if (!containerRef.current || quillRef.current) return;
+        const q = new Quill(containerRef.current, {
+            theme: "snow",
+            placeholder,
+            modules: {
+                toolbar: [
+                    [{ header: [1, 2, 3, false] }],
+                    ["bold", "italic", "underline"],
+                    [{ align: [] }],
+                    [{ list: "ordered" }, { list: "bullet" }],
+                    ["link"],
+                    ["clean"]
+                ]
+            }
+        });
+        quillRef.current = q;
+        q.on("text-change", () => {
+            const html = q.root.innerHTML || "";
+            const text = (q.getText() || "").trimEnd();
+            onChange?.({ html, text });
+        });
+    }, [onChange, placeholder]);
+
+    useEffect(() => {
+        const q = quillRef.current;
+        if (!q) return;
+        const current = q.root.innerHTML || "";
+        if ((valueHtml || "") && current !== valueHtml) {
+            q.clipboard.dangerouslyPasteHTML(valueHtml);
+        }
+    }, [valueHtml]);
+
+    return (
+        <div style={{ border: "1px solid #dfe1e6", borderRadius: 8, overflow: "hidden" }}>
+            <div ref={containerRef} />
         </div>
     );
 };
@@ -1072,98 +1529,7 @@ const CodeCutForm = ({ formData, onChange }) => (
     </>
 );
 
-// ============ CC EMAIL CHIP INPUT ============
-const CcEmailInput = ({ value, onChange, savedEmails = [] }) => {
-    const [inputValue, setInputValue] = useState('');
-    const [showSuggestions, setShowSuggestions] = useState(false);
-    
-    // Parse value as array of emails
-    const emails = value ? value.split(',').map(e => e.trim()).filter(e => e && e.includes('@')) : [];
-    
-    const handleKeyDown = (e) => {
-        if (e.key === 'Enter' || e.key === ',' || e.key === ';' || e.key === ' ') {
-            e.preventDefault();
-            addEmail(inputValue);
-        } else if (e.key === 'Backspace' && !inputValue && emails.length > 0) {
-            removeEmail(emails.length - 1);
-        }
-    };
-    
-    const handlePaste = (e) => {
-        e.preventDefault();
-        const pastedText = e.clipboardData.getData('text');
-        // Split by common separators
-        const pastedEmails = pastedText.split(/[,;\s\n]+/).filter(email => email.includes('@'));
-        if (pastedEmails.length > 0) {
-            const newEmails = [...emails, ...pastedEmails];
-            onChange(newEmails.join(', '));
-            pastedEmails.forEach(email => saveCcEmail(email));
-        }
-    };
-    
-    const addEmail = (email) => {
-        const trimmed = email.trim().toLowerCase();
-        if (trimmed && trimmed.includes('@') && !emails.includes(trimmed)) {
-            const newEmails = [...emails, trimmed];
-            onChange(newEmails.join(', '));
-            saveCcEmail(trimmed);
-        }
-        setInputValue('');
-        setShowSuggestions(false);
-    };
-    
-    const removeEmail = (index) => {
-        const newEmails = emails.filter((_, i) => i !== index);
-        onChange(newEmails.join(', '));
-    };
-    
-    const filteredSuggestions = savedEmails.filter(
-        email => email.includes(inputValue.toLowerCase()) && !emails.includes(email)
-    ).slice(0, 5);
-    
-    return (
-        <div className="cc-email-input-container">
-            <div className="cc-email-chips">
-                {emails.map((email, index) => (
-                    <span key={email} className="cc-email-chip">
-                        {email}
-                        <button type="button" onClick={() => removeEmail(index)} className="chip-remove">
-                            <X size={12} />
-                        </button>
-                    </span>
-                ))}
-                <input
-                    type="text"
-                    value={inputValue}
-                    onChange={(e) => {
-                        setInputValue(e.target.value);
-                        setShowSuggestions(e.target.value.length > 0);
-                    }}
-                    onKeyDown={handleKeyDown}
-                    onPaste={handlePaste}
-                    onFocus={() => setShowSuggestions(inputValue.length > 0)}
-                    onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                    placeholder={emails.length === 0 ? "Type email and press Enter" : "Add more..."}
-                    className="cc-email-text-input"
-                />
-            </div>
-            {showSuggestions && filteredSuggestions.length > 0 && (
-                <div className="cc-email-suggestions">
-                    {filteredSuggestions.map(email => (
-                        <button
-                            key={email}
-                            type="button"
-                            className="cc-email-suggestion"
-                            onClick={() => addEmail(email)}
-                        >
-                            {email}
-                        </button>
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-};
+// CC email input moved to shared component `components/EmailChipsInput.js`.
 
 // ============ CREATE TICKET MODAL ============
 export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, managers = [] }) => {
@@ -1206,6 +1572,11 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
     }, [isOpen]);
 
     const selectedProjectId = (projects || []).find((p) => p.name === formData.productName)?.id;
+    const selectedProject = (projects || []).find((p) => p.name === formData.productName);
+    const availableEnvironments = selectedProject
+        ? (Array.isArray(selectedProject.environments) ? selectedProject.environments.filter(Boolean) : [])
+        : [];
+    const availableEnvironmentsKey = availableEnvironments.join("|");
 
     useEffect(() => {
         if (!isOpen || step !== 2 || !selectedProjectId || !formData.requestType) {
@@ -1236,6 +1607,14 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             cancelled = true;
         };
     }, [isOpen, step, selectedProjectId, formData.requestType]);
+
+    useEffect(() => {
+        if (!isOpen || !formData.productName) return;
+        const allowed = availableEnvironments;
+        if (formData.environment && (allowed.length === 0 || !allowed.includes(formData.environment))) {
+            setFormData((prev) => ({ ...prev, environment: "" }));
+        }
+    }, [isOpen, formData.productName, formData.environment, availableEnvironmentsKey]);
 
     useEffect(() => {
         if (!workflowPreview || !selectedProjectId || !formData.requestType) return;
@@ -1269,19 +1648,68 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
     }, [workflowPreview, selectedProjectId, formData.requestType, workflowAutoKey, formData.ccEmail]);
     
     if (!isOpen) return null;
-    
+
+    const approvalLevelPeople = (workflowPreview?.approvalLevels || [])
+        .slice()
+        .sort((a, b) => (a.level || 0) - (b.level || 0))
+        .map((lvl, idx) => {
+            const a = (lvl.approvers || [])[0] || {};
+            return {
+                id: `${lvl.level || idx + 1}-${a?.email || a?.name || ""}`,
+                level: lvl.level || (idx + 1),
+                role: a?.role || "Approver",
+                name: (a?.name || "").trim(),
+                email: String(a?.email || "").trim()
+            };
+        })
+        .filter((p) => p.email);
+
+    const projectApproverOptions = (() => {
+        const map = new Map();
+        approvalLevelPeople.forEach((p) => map.set(p.email.toLowerCase(), p));
+        (workflowPreview?.managers || []).forEach((m) => {
+            const email = String(m?.email || "").trim();
+            if (!email) return;
+            const k = email.toLowerCase();
+            if (map.has(k)) return;
+            map.set(k, {
+                id: `wfm-${k}`,
+                role: "Manager",
+                name: String(m?.name || "").trim(),
+                email
+            });
+        });
+        return [...map.values()];
+    })();
+
+    const formatApproverDropdownLabel = (person) => {
+        const namePart = (person.name || "").trim() || person.email;
+        const designation = (person.role || "").trim() || "Approver";
+        return `${designation} — ${namePart} · ${person.email}`;
+    };
+
     const handleManagerSelect = (e) => {
         const selectedKey = e.target.value;
         if (!selectedKey) {
             setFormData({ ...formData, managerName: '', managerEmail: '' });
             return;
         }
+        const keyLc = selectedKey.toLowerCase();
+        const projectPerson = projectApproverOptions.find(
+            (p) => String(p.email || "").toLowerCase() === keyLc
+        );
+        if (projectPerson) {
+            setFormData({
+                ...formData,
+                managerName: projectPerson.name || projectPerson.role || "Approver",
+                managerEmail: projectPerson.email
+            });
+            return;
+        }
         const manager = managers.find(
-            (m) => String(m.id || "").toLowerCase() === selectedKey.toLowerCase()
-                || String(m.email || "").toLowerCase() === selectedKey.toLowerCase()
+            (m) => String(m.email || "").toLowerCase() === keyLc
         );
         if (manager) {
-            // Add manager email to CC automatically
             const currentCc = formData.ccEmail ? formData.ccEmail.split(',').map(e => e.trim()).filter(e => e) : [];
             if (!currentCc.includes(manager.email.toLowerCase())) {
                 currentCc.push(manager.email.toLowerCase());
@@ -1436,7 +1864,13 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                     <FormField label="Product" required>
                                         <select 
                                             value={formData.productName}
-                                            onChange={e => setFormData({ ...formData, productName: e.target.value })}
+                                            onChange={(e) =>
+                                                setFormData((prev) => ({
+                                                    ...prev,
+                                                    productName: e.target.value,
+                                                    environment: ""
+                                                }))
+                                            }
                                             required
                                         >
                                             <option value="">Select Product</option>
@@ -1452,48 +1886,59 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                             value={formData.environment}
                                             onChange={e => setFormData({ ...formData, environment: e.target.value })}
                                             required
+                                            disabled={!formData.productName || availableEnvironments.length === 0}
                                         >
-                                            <option value="">Select Environment</option>
-                                            {ENVIRONMENTS.map(env => (
+                                            <option value="">
+                                                {!formData.productName
+                                                    ? "Select a product first"
+                                                    : availableEnvironments.length === 0
+                                                        ? "No environments for this product"
+                                                        : "Select Environment"}
+                                            </option>
+                                            {availableEnvironments.map(env => (
                                                 <option key={env} value={env}>{env}</option>
                                             ))}
                                         </select>
+                                        {formData.productName && availableEnvironments.length === 0 && (
+                                            <small style={{ color: "#b45309", fontSize: "0.75rem", display: "block", marginTop: 6 }}>
+                                                An admin must enable environments for this product before you can submit a request.
+                                            </small>
+                                        )}
                                     </FormField>
                                 </div>
                                 
                                 <div className="form-row">
-                                    <FormField label="Manager">
+                                    <FormField label="To (Approver)">
                                         <select 
-                                            value={formData.managerEmail || managers.find(m => m.name === formData.managerName)?.email || ''}
+                                            value={formData.managerEmail || ''}
                                             onChange={handleManagerSelect}
                                         >
-                                            {formData.managerEmail && !(managers || []).some(
-                                                (m) => String(m.email || "").toLowerCase() === String(formData.managerEmail || "").toLowerCase()
-                                            ) && (
-                                                <option value={formData.managerEmail}>
-                                                    {formData.managerName || formData.managerEmail} ({formData.managerEmail})
-                                                </option>
+                                            <option value="">Select approver (designation · name · email)</option>
+                                            {projectApproverOptions.length > 0 && (
+                                                <optgroup label="Project workflow (by designation)">
+                                                    {projectApproverOptions.map((person) => (
+                                                        <option key={person.id} value={person.email}>
+                                                            {formatApproverDropdownLabel(person)}
+                                                        </option>
+                                                    ))}
+                                                </optgroup>
                                             )}
-                                            <option value="">Select Manager (optional)</option>
-                                            {(managers || []).filter(m => m.active !== false).map(manager => (
-                                                <option key={manager.id || manager.email} value={manager.id || manager.email}>
-                                                    {manager.name} ({manager.email})
-                                                </option>
-                                            ))}
+                                            {(managers || []).filter((m) => m.active !== false && String(m.email || "").trim()).length > 0 && (
+                                                <optgroup label="Manager directory">
+                                                    {(managers || []).filter((m) => m.active !== false && String(m.email || "").trim()).map((manager) => (
+                                                        <option key={manager.id || manager.email} value={manager.email}>
+                                                            {`Manager — ${manager.name} · ${manager.email}`}
+                                                        </option>
+                                                    ))}
+                                                </optgroup>
+                                            )}
                                         </select>
                                         <small style={{ color: '#64748b', fontSize: '0.75rem' }}>
-                                            Or type manually below
+                                            Auto-filled from workflow; you can change it if needed.
                                         </small>
-                                        <input 
-                                            type="text"
-                                            value={formData.managerName}
-                                            onChange={e => setFormData({ ...formData, managerName: e.target.value })}
-                                            placeholder="Enter manager name"
-                                            style={{ marginTop: '0.5rem' }}
-                                        />
                                     </FormField>
                                     <FormField label="CC Emails">
-                                        <CcEmailInput
+                                        <EmailChipsInput
                                             value={formData.ccEmail}
                                             onChange={(ccEmail) => setFormData({ ...formData, ccEmail })}
                                             savedEmails={savedEmails}
@@ -1504,80 +1949,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                     </FormField>
                                 </div>
                                 
-                                {step === 2 && formData.productName && formData.requestType && (
-                                    <div
-                                        className="form-info-box"
-                                        style={{ flexDirection: 'column', alignItems: 'flex-start', gap: '0.5rem' }}
-                                    >
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                            <Mail size={16} />
-                                            <strong>Configured Approval Flow</strong>
-                                        </div>
-                                        {workflowPreviewLoading && (
-                                            <span style={{ fontSize: '0.85rem', color: '#5E6C84' }}>Loading configured flow…</span>
-                                        )}
-                                        {!workflowPreviewLoading && workflowPreview && (
-                                            <div style={{ width: '100%', fontSize: '0.85rem', color: '#172B4D' }}>
-                                                <div style={{ fontWeight: 600, marginBottom: 6 }}>Hierarchy</div>
-                                                <div style={{ paddingLeft: 6, borderLeft: '2px solid #dfe1e6', marginLeft: 6 }}>
-                                                    <div style={{ marginBottom: 4 }}>Product Request</div>
-                                                    {!!(workflowPreview.managers || []).length && (
-                                                        <div style={{ marginBottom: 4 }}>
-                                                            ├─ Configured Managers:
-                                                            <div style={{ paddingLeft: 18 }}>
-                                                                {(workflowPreview.managers || []).map((m, idx) => (
-                                                                    <div key={`mgr-${idx}`}>
-                                                                        • {m?.name || 'Manager'} {m?.email ? `(${m.email})` : ''}
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    <div style={{ marginBottom: 4 }}>
-                                                        ├─ Approval Levels ({(workflowPreview.approvalLevels || []).length})
-                                                    </div>
-                                                    <div style={{ paddingLeft: 18, marginBottom: 4 }}>
-                                                        {(workflowPreview.approvalLevels || [])
-                                                            .slice()
-                                                            .sort((a, b) => (a.level || 0) - (b.level || 0))
-                                                            .map((lvl) => (
-                                                                <div key={`preview-level-${lvl.level}`} style={{ marginBottom: 2 }}>
-                                                                    • Level {lvl.level}
-                                                                    <div style={{ paddingLeft: 16 }}>
-                                                                        {(lvl.approvers || []).length === 0 && <div>- No approver configured</div>}
-                                                                        {(lvl.approvers || []).map((a, i) => (
-                                                                            <div key={`lvl-${lvl.level}-ap-${i}`}>
-                                                                                - {a?.name || 'Approver'} {a?.email ? `(${a.email})` : ''}
-                                                                            </div>
-                                                                        ))}
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                    </div>
-                                                    <div style={{ marginBottom: 4 }}>
-                                                        ├─ Cost Approval: <strong>{workflowPreview.costApprovalRequired ? 'Required' : 'Not Required'}</strong>
-                                                    </div>
-                                                    <div>
-                                                        └─ Routing To: <strong>{(workflowPreview.emailRouting?.to || []).join(', ') || '—'}</strong>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        )}
-                                        {!workflowPreviewLoading && !workflowPreview && selectedProjectId && (
-                                            <span style={{ fontSize: '0.85rem', color: '#5E6C84' }}>
-                                                Default workflow settings apply for this project.
-                                            </span>
-                                        )}
-                                    </div>
-                                )}
-
-                                <div className="form-info-box">
-                                    <Mail size={16} />
-                                    <span>
-                                        Notifications use the project workflow (To / CC / BCC). Your CC list is included on
-                                        ticket threads where applicable.
-                                    </span>
-                                </div>
+                                {/* Workflow preview removed from end-user request flow. */}
                                 
                                 <div className="form-checkbox">
                                     <input 
@@ -1587,10 +1959,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                         onChange={e => setFormData({ ...formData, managerApprovalRequired: e.target.checked })}
                                     />
                                     <label htmlFor="managerApproval">
-                                        Manager Approval Required
-                                        {workflowPreview && (workflowPreview.approvalLevels || []).length > 0 && (
-                                            <span className="mandatory-note"> (Configured from project workflow)</span>
-                                        )}
+                                        Manager approval required
                                     </label>
                                 </div>
                                 
