@@ -37,13 +37,11 @@ spring:
           timeout: 5000
           writetimeout: 5000
 
-azure:
-  storage:
-    queue:
-      connection-string:
-      queue-name: ${AZURE_QUEUE_NAME:shipit-mail-queue}
-
 app:
+  azure:
+    queue:
+      connection-string: ${AZURE_QUEUE_CONNECTION_STRING:}
+      queue-name: ${AZURE_QUEUE_NAME:shipit-mail-queue}
   email:
     from: ${MAIL_FROM:devopsteam@altermanager.encipherhealth.com}
     devops-to: ${DEVOPS_EMAIL:devopsteam@encipherhealth.com}

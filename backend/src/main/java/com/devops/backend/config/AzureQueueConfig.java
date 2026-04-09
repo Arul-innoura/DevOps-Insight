@@ -10,10 +10,10 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class AzureQueueConfig {
 
-    @Value("${azure.storage.queue.connection-string}")
+    @Value("${app.azure.queue.connection-string}")
     private String connectionString;
 
-    @Value("${azure.storage.queue.queue-name}")
+    @Value("${app.azure.queue.queue-name}")
     private String queueName;
 
     @Bean
