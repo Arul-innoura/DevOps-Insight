@@ -5,9 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: devops-backend
     environment:
-      # Uses containerized MongoDB by default (no local MongoDB install required).
-      # Override with .env MONGODB_URI for managed/Atlas DB if needed.
-      MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/devops_portal}
+      # Uses external MongoDB connection string from .env (Atlas/managed DB).
+      MONGODB_URI: ${MONGODB_URI}
       MONGODB_DATABASE: ${MONGODB_DATABASE:-devops_portal}
       EMAIL_ENABLED: ${EMAIL_ENABLED:-true}
       MAIL_HOST: ${MAIL_HOST:-smtp.azurecomm.net}
@@ -27,8 +26,6 @@ services:
     restart: unless-stopped
     depends_on:
       rabbitmq:
-        condition: service_healthy
-      mongodb:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/api/public/status"]
@@ -78,21 +75,5 @@ services:
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
 
-  mongodb:
-    image: mongo:7
-    container_name: devops-mongodb
-    restart: unless-stopped
-    ports:
-      - "27017:27017"
-    healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
-      start_period: 20s
-    volumes:
-      - mongodb_data:/data/db
-
 volumes:
   rabbitmq_data:
-  mongodb_data:
