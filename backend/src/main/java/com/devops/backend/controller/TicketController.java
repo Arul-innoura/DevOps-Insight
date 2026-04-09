@@ -157,6 +157,11 @@ public class TicketController {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
             }
         }
+        // Cost-pending is set only via cost-submission (DevOps); block manual status skips for Admin/User.
+        if (request.getNewStatus() == TicketStatus.COST_APPROVAL_PENDING && !hasRole(jwt, "APPROLE_DevOps")) {
+            log.warn("Blocked non-DevOps from setting COST_APPROVAL_PENDING on ticket {}", ticketId);
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
 
         log.info("Updating ticket {} status to {} by {}", ticketId, request.getNewStatus(), userName);
         
@@ -235,10 +240,10 @@ public class TicketController {
     }
     
     /**
-     * Submit cost estimation for manager approval (DevOps & Admin)
+     * Submit cost estimation for cost-approver email (DevOps only).
      */
     @PostMapping("/cost-submission")
-    @PreAuthorize("hasAnyAuthority('APPROLE_DevOps', 'APPROLE_Admin')")
+    @PreAuthorize("hasAuthority('APPROLE_DevOps')")
     public ResponseEntity<TicketResponse> submitCostEstimation(
             @Valid @RequestBody CostSubmissionRequest request,
             @AuthenticationPrincipal Jwt jwt) {

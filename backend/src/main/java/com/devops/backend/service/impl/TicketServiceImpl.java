@@ -4,6 +4,8 @@ import com.devops.backend.dto.*;
 import com.devops.backend.exception.ResourceNotFoundException;
 import com.devops.backend.model.*;
 import com.devops.backend.model.workflow.ApprovalLevelConfig;
+import com.devops.backend.model.workflow.InfrastructureConfig;
+import com.devops.backend.model.workflow.WorkflowApprover;
 import com.devops.backend.model.workflow.WorkflowConfiguration;
 import com.devops.backend.repository.ManagerApprovalTokenRepository;
 import com.devops.backend.repository.ProjectRepository;
@@ -240,9 +242,10 @@ public class TicketServiceImpl implements TicketService {
                 // Trigger manager approval workflow (include trigger note / purpose in email body)
                 sendManagerApprovalEmail(savedTicket, request.getNotes());
             } else if (request.getNewStatus() == TicketStatus.MANAGER_APPROVED
-                    || request.getNewStatus() == TicketStatus.COST_APPROVAL_PENDING
                     || request.getNewStatus() == TicketStatus.COST_APPROVED) {
                 emailService.sendTicketStatusEmail(savedTicket, previousStatus);
+            } else if (request.getNewStatus() == TicketStatus.COST_APPROVAL_PENDING) {
+                // Cost-approval link email is sent only from submitCostEstimation — do not email the requester here on Apply/status alone.
             } else if (request.getNewStatus() == TicketStatus.COMPLETED) {
                 emailService.sendTicketCompletedEmail(savedTicket);
             } else if (request.getNewStatus() == TicketStatus.CLOSED) {
@@ -309,12 +312,85 @@ public class TicketServiceImpl implements TicketService {
     }
     
     /**
+     * Find an approver row in cost approvers, approval levels, or workflow managers (case-insensitive email).
+     */
+    private Optional<WorkflowApprover> findWorkflowApproverByEmailIgnoreCase(WorkflowConfiguration wf, String emailLower) {
+        if (wf == null || emailLower == null || emailLower.isBlank()) {
+            return Optional.empty();
+        }
+        String norm = emailLower.trim().toLowerCase(Locale.ROOT);
+        if (wf.getCostApprovers() != null) {
+            for (WorkflowApprover a : wf.getCostApprovers()) {
+                if (a != null && a.getEmail() != null && norm.equals(a.getEmail().trim().toLowerCase(Locale.ROOT))) {
+                    return Optional.of(a);
+                }
+            }
+        }
+        if (wf.getApprovalLevels() != null) {
+            for (var lvl : wf.getApprovalLevels()) {
+                if (lvl == null || lvl.getApprovers() == null) {
+                    continue;
+                }
+                for (WorkflowApprover a : lvl.getApprovers()) {
+                    if (a != null && a.getEmail() != null && norm.equals(a.getEmail().trim().toLowerCase(Locale.ROOT))) {
+                        return Optional.of(a);
+                    }
+                }
+            }
+        }
+        if (wf.getManagers() != null) {
+            for (WorkflowApprover a : wf.getManagers()) {
+                if (a != null && a.getEmail() != null && norm.equals(a.getEmail().trim().toLowerCase(Locale.ROOT))) {
+                    return Optional.of(a);
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Sets {@code managerEmail}/{@code managerName} on the ticket for the cost-approval email recipient.
+     */
+    private void resolveCostApprovalRecipient(Ticket ticket, WorkflowConfiguration wf, String requestedCostEmailRaw) {
+        String requested = requestedCostEmailRaw != null ? requestedCostEmailRaw.trim() : "";
+        if (!requested.isEmpty()) {
+            String reqLower = requested.toLowerCase(Locale.ROOT);
+            Optional<WorkflowApprover> match = findWorkflowApproverByEmailIgnoreCase(wf, reqLower);
+            if (match.isPresent()) {
+                WorkflowApprover a = match.get();
+                ticket.setManagerEmail(a.getEmail() != null ? a.getEmail().trim() : requested);
+                String nm = a.getName();
+                ticket.setManagerName(nm != null && !nm.isBlank() ? nm.trim()
+                        : (a.getEmail() != null ? localPartOfEmail(a.getEmail()) : localPartOfEmail(requested)));
+                return;
+            }
+            if (requested.contains("@")) {
+                ticket.setManagerEmail(requested);
+                ticket.setManagerName(localPartOfEmail(requested));
+                log.warn("Cost approver {} not listed in workflow snapshot for ticket {}; using explicit address",
+                        requested, ticket.getId());
+                return;
+            }
+            throw new IllegalArgumentException("costApproverEmail must be a valid email or match a workflow approver");
+        }
+        if (ticket.getStatus() == TicketStatus.COST_APPROVAL_PENDING
+                && ticket.getManagerEmail() != null && !ticket.getManagerEmail().isBlank()) {
+            return;
+        }
+        workflowSnapshotService.firstCostApprover(wf).ifPresent(a -> {
+            ticket.setManagerEmail(a.getEmail() != null ? a.getEmail().trim() : null);
+            ticket.setManagerName(a.getName() != null && !a.getName().isBlank()
+                    ? a.getName().trim()
+                    : (a.getEmail() != null ? localPartOfEmail(a.getEmail()) : "Approver"));
+        });
+    }
+
+    /**
      * Create cost approval token and send cost approval email
      */
     private void sendCostApprovalEmail(Ticket ticket, String userName) {
-        if (ticket.getManagerEmail() == null || ticket.getManagerEmail().isEmpty()) {
-            log.warn("Cannot send cost approval email - no manager email for ticket {}", ticket.getId());
-            return;
+        if (ticket.getManagerEmail() == null || ticket.getManagerEmail().isBlank()) {
+            throw new IllegalStateException("Cannot send cost approval email — no recipient address on ticket " + ticket.getId());
         }
         
         // Generate secure random token
@@ -351,11 +427,18 @@ public class TicketServiceImpl implements TicketService {
         Ticket ticket = ticketRepository.findById(request.getTicketId())
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + request.getTicketId()));
         
-        // Validate ticket is in correct status
-        if (ticket.getStatus() != TicketStatus.MANAGER_APPROVED) {
-            throw new IllegalStateException("Cost can only be submitted after manager approval. Current: " + ticket.getStatus());
+        if (ticket.getStatus() == TicketStatus.CLOSED) {
+            throw new IllegalStateException("Cannot submit cost on a closed ticket.");
         }
-        
+
+        WorkflowConfiguration wfCost = workflowSnapshotService.parse(ticket.getWorkflowSnapshotJson());
+        resolveCostApprovalRecipient(ticket, wfCost, request.getCostApproverEmail());
+
+        if (ticket.getManagerEmail() == null || ticket.getManagerEmail().isBlank()) {
+            throw new IllegalStateException(
+                    "Cannot submit cost: no approver email. Configure cost approvers in the product workflow or set a manager on the ticket.");
+        }
+
         // Update ticket with cost information
         ticket.setEstimatedCost(request.getEstimatedCost());
         ticket.setCostCurrency(request.getCurrency());
@@ -365,12 +448,6 @@ public class TicketServiceImpl implements TicketService {
         ticket.setCostSubmittedByEmail(userEmail);
         ticket.setStatus(TicketStatus.COST_APPROVAL_PENDING);
         ticket.setUpdatedAt(Instant.now());
-
-        WorkflowConfiguration wfCost = workflowSnapshotService.parse(ticket.getWorkflowSnapshotJson());
-        workflowSnapshotService.firstCostApprover(wfCost).ifPresent(a -> {
-            ticket.setManagerEmail(a.getEmail());
-            ticket.setManagerName(a.getName() != null && !a.getName().isBlank() ? a.getName() : a.getEmail());
-        });
         
         String notes = String.format("Cost estimation submitted: %s %,.2f%s", 
                 request.getCurrency(), request.getEstimatedCost(),
@@ -379,12 +456,7 @@ public class TicketServiceImpl implements TicketService {
         
         Ticket savedTicket = ticketRepository.save(ticket);
         
-        // Send cost approval email to manager
-        try {
-            sendCostApprovalEmail(savedTicket, userName);
-        } catch (Exception e) {
-            log.error("Failed to send cost approval email: {}", e.getMessage());
-        }
+        sendCostApprovalEmail(savedTicket, userName);
         
         TicketResponse response = mapToResponse(savedTicket);
 
@@ -599,41 +671,35 @@ public class TicketServiceImpl implements TicketService {
     // Helper methods
     
     private String generateTicketId(CreateTicketRequest request) {
-        String basis = firstNonBlank(
-                request.getProductName(),
-                request.getDescription(),
-                request.getRequestType() != null ? request.getRequestType().getDisplayName() : null,
-                "GENERAL"
-        );
-        String shortCode = toShortCode(basis);
-        String uuidPart = UUID.randomUUID().toString().replace("-", "").substring(0, 6).toUpperCase();
-        return "EH-IMOM-" + shortCode + "-" + uuidPart;
+        String typeShort = requestTypeShortCode(request.getRequestType());
+        String projectShort = projectShortCode(request.getProductName());
+        String prefix = "EH-" + typeShort + "-" + projectShort + "-";
+        long seq = ticketRepository.countByIdStartingWith(prefix) + 1;
+        String seqStr = String.format("%04d", seq);
+        return prefix + seqStr;
     }
 
-    private String toShortCode(String value) {
-        String cleaned = value == null ? "" : value.toUpperCase().replaceAll("[^A-Z0-9\\s]", " ").trim();
-        if (cleaned.isBlank()) return "GEN";
-        String[] parts = cleaned.split("\\s+");
-        if (parts.length == 1) {
-            return parts[0].substring(0, Math.min(4, parts[0].length()));
+    private String requestTypeShortCode(RequestType type) {
+        if (type == null) return "GEN";
+        switch (type) {
+            case NEW_ENVIRONMENT:    return "NEWENV";
+            case ENVIRONMENT_UP:     return "ENVUP";
+            case ENVIRONMENT_DOWN:   return "ENVDN";
+            case RELEASE_DEPLOYMENT: return "RELDEP";
+            case BUILD_REQUEST:      return "GENREQ";
+            case CODE_CUT:           return "CDCUT";
+            case ISSUE_FIX:          return "ISFIX";
+            case OTHER_QUERIES:      return "OTHER";
+            default:                 return "GEN";
         }
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < Math.min(3, parts.length); i++) {
-            if (!parts[i].isBlank()) sb.append(parts[i].charAt(0));
-        }
-        String out = sb.toString();
-        if (out.isBlank()) return "GEN";
-        return out.length() > 4 ? out.substring(0, 4) : out;
     }
 
-    private String firstNonBlank(String... values) {
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value;
-            }
-        }
-        return "GENERAL";
+    private String projectShortCode(String productName) {
+        if (productName == null || productName.isBlank()) return "PROJ";
+        String cleaned = productName.toUpperCase().replaceAll("[^A-Z0-9]", "");
+        return cleaned.isEmpty() ? "PROJ" : cleaned.substring(0, Math.min(8, cleaned.length()));
     }
+
 
     private void applyManagerApprovalRecipient(Ticket ticket, UpdateStatusRequest request) {
         String explicit = request.getApprovalTargetEmail() != null ? request.getApprovalTargetEmail().trim() : "";
@@ -818,6 +884,9 @@ public class TicketServiceImpl implements TicketService {
         projectRepository.findByNameIgnoreCase(request.getProductName().trim()).ifPresent(project -> {
             ticket.setProjectId(project.getId());
             WorkflowConfiguration wf = projectWorkflowService.resolveEffective(project.getId(), request.getRequestType());
+            InfrastructureConfig mergedInfra = projectWorkflowService.mergeInfrastructureForEnvironment(
+                    project.getId(), request.getEnvironment(), wf.getInfrastructure());
+            wf.setInfrastructure(mergedInfra);
             ticket.setWorkflowSnapshotJson(workflowSnapshotService.serialize(wf));
             if (wf.getEmailRouting() != null) {
                 ticket.setWorkflowEmailTo(copyEmailList(wf.getEmailRouting().getTo()));
@@ -986,6 +1055,11 @@ public class TicketServiceImpl implements TicketService {
 
     private TicketResponse mapToResponse(Ticket ticket) {
         WorkflowConfiguration wf = workflowSnapshotService.parse(ticket.getWorkflowSnapshotJson());
+        if (ticket.getProjectId() != null && ticket.getEnvironment() != null) {
+            InfrastructureConfig merged = projectWorkflowService.mergeInfrastructureForEnvironment(
+                    ticket.getProjectId(), ticket.getEnvironment(), wf.getInfrastructure());
+            wf.setInfrastructure(merged);
+        }
         return TicketResponse.builder()
                 .id(ticket.getId())
                 .requestType(ticket.getRequestType())

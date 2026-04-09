@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { 
@@ -10,7 +10,6 @@ import {
     XCircle, 
     PlayCircle,
     UserCheck,
-    UserPlus,
     FileCheck,
     ChevronDown,
     ChevronUp,
@@ -44,12 +43,13 @@ import {
     REQUEST_TYPE_TO_API_ENUM,
     ENVIRONMENTS,
     getDynamicAllowedTransitions,
+    STATUS_TRANSITIONS,
     createTicket,
     updateTicketStatus,
     addTicketNote,
-    assignTicket,
     getSavedCcEmails,
-    saveCcEmail
+    saveCcEmail,
+    toDisplayTicketStatus
 } from '../services/ticketService';
 import { getEffectiveWorkflow } from '../services/projectWorkflowService';
 import EmailChipsInput from "../components/EmailChipsInput";
@@ -246,21 +246,22 @@ export const StatusBadge = ({ status, size = 'medium', animated = true }) => {
     const sizeStyle = sizeClasses[size] || sizeClasses.medium;
     
     return (
-        <span 
+        <span
             className={`status-badge-enhanced ${animated && needsAttention ? 'pulse' : ''}`}
             style={{
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: sizeStyle.gap,
                 padding: sizeStyle.padding,
-                borderRadius: '8px',
+                borderRadius: '6px',
                 fontSize: sizeStyle.fontSize,
                 fontWeight: 600,
                 backgroundColor: colors.bg,
                 color: colors.text,
                 whiteSpace: 'nowrap',
-                boxShadow: `0 2px 8px -2px ${colors.bg}`,
-                transition: 'all 0.2s ease'
+                border: `1px solid ${colors.text}22`,
+                boxShadow: 'none',
+                transition: 'background 0.15s, color 0.15s'
             }}
         >
             <span className={animated && needsAttention ? 'icon-pulse' : ''}>
@@ -398,7 +399,7 @@ export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
                 <div key={index} className={`timeline-entry ${entry.isNote ? 'is-note' : ''}`}>
                     <div className="timeline-marker">
                         <div className="timeline-dot" style={{
-                            backgroundColor: entry.isNote ? '#6b7280' : STATUS_COLORS[entry.status]?.text || '#6b7280'
+                            background: entry.isNote ? '#d1d5db' : (STATUS_COLORS[entry.status]?.text || '#d1d5db')
                         }} />
                         {index < timeline.length - 1 && <div className="timeline-line" />}
                     </div>
@@ -432,7 +433,7 @@ export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
                                         href={att}
                                         target="_blank"
                                         rel="noreferrer"
-                                        style={{ fontSize: '0.8rem', color: '#1f2937', textDecoration: 'underline' }}
+                                        style={{ fontSize: '0.8rem', color: '#2563eb', textDecoration: 'underline' }}
                                     >
                                         Attachment {idx + 1}
                                     </a>
@@ -448,18 +449,18 @@ export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
 
 // ============ TYPE ACCENT COLORS ============
 const TYPE_ACCENT = {
-    'New Environment':       { border: '#7c3aed', bg: '#f5f3ff', icon: '#7c3aed', label: 'bg-purple' },
-    'Environment Up':        { border: '#16a34a', bg: '#f0fdf4', icon: '#16a34a', label: 'bg-green' },
-    'Environment Down':      { border: '#dc2626', bg: '#fef2f2', icon: '#dc2626', label: 'bg-red' },
-    'Release Deployment':    { border: '#2563eb', bg: '#eff6ff', icon: '#2563eb', label: 'bg-blue' },
-    'Issue Fix':             { border: '#d97706', bg: '#fffbeb', icon: '#d97706', label: 'bg-yellow' },
-    'Build Request':         { border: '#0891b2', bg: '#ecfeff', icon: '#0891b2', label: 'bg-cyan' },
-    'Code Cut':              { border: '#be185d', bg: '#fdf2f8', icon: '#be185d', label: 'bg-pink' },
-    'Other Queries':         { border: '#64748b', bg: '#f8fafc', icon: '#64748b', label: 'bg-gray' },
+    'New Environment':       { border: '#6d28d9', bg: '#f5f3ff', icon: '#6d28d9' },
+    'Environment Up':        { border: '#15803d', bg: '#f0fdf4', icon: '#15803d' },
+    'Environment Down':      { border: '#dc2626', bg: '#fef2f2', icon: '#dc2626' },
+    'Release Deployment':    { border: '#1d4ed8', bg: '#eff6ff', icon: '#1d4ed8' },
+    'Issue Fix':             { border: '#b45309', bg: '#fffbeb', icon: '#b45309' },
+    'Build Request':         { border: '#0e7490', bg: '#ecfeff', icon: '#0e7490' },
+    'Code Cut':              { border: '#9d174d', bg: '#fdf2f8', icon: '#9d174d' },
+    'Other Queries':         { border: '#4b5563', bg: '#f9fafb', icon: '#4b5563' },
 };
 
 const getTypeAccent = (requestType) =>
-    TYPE_ACCENT[requestType] || { border: '#64748b', bg: '#f8fafc', icon: '#64748b', label: 'bg-gray' };
+    TYPE_ACCENT[requestType] || { border: '#4b5563', bg: '#f9fafb', icon: '#4b5563' };
 
 const getRequestTypeIcon = (requestType, size = 16) => {
     switch (requestType) {
@@ -478,6 +479,13 @@ const getRequestTypeIcon = (requestType, size = 16) => {
 export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChange, user }) => {
     const [expanded, setExpanded] = useState(false);
     const accent = getTypeAccent(ticket.requestType);
+    const ageDays = ticket?.createdAt ? Math.floor((Date.now() - new Date(ticket.createdAt).getTime()) / 86400000) : 0;
+    const ageClass = ageDays >= 6 ? "old" : ageDays >= 3 ? "mid" : "new";
+    const isActionRequired = [
+        TICKET_STATUS.ACTION_REQUIRED,
+        TICKET_STATUS.MANAGER_APPROVAL_PENDING,
+        TICKET_STATUS.COST_APPROVAL_PENDING
+    ].includes(ticket?.status);
 
     const formatDate = (dateString) => {
         if (!dateString) return '—';
@@ -499,82 +507,81 @@ export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChang
 
     return (
         <div
-            className="jira-ticket-card"
+            className={`jira-ticket-card ${isActionRequired ? 'status-glow' : ''}`}
             onClick={onClick}
-            style={{ borderLeftColor: accent.border }}
+            style={{ borderLeftColor: accent.border, borderLeftWidth: 6, background: accent.bg }}
         >
-            {/* Top row: ID + Status + Date */}
-            <div className="jtc-top">
-                <div className="jtc-top-left">
-                    <span className="jtc-id">{ticket.id}</span>
-                    <StatusBadge status={ticket.status} size="small" />
+            {/* ── Main row ── */}
+            <div className="jtc-row">
+
+                {/* Left: type icon */}
+                <div className="jtc-icon" style={{ background: accent.bg, color: accent.icon }}>
+                    {getRequestTypeIcon(ticket.requestType, 14)}
                 </div>
-                <div className="jtc-top-right">
-                    <span className="jtc-date" title={formatDate(ticket.createdAt)}>
-                        <Calendar size={11} /> {timeSince(ticket.createdAt)}
-                    </span>
-                </div>
-            </div>
 
-            {/* Type chip + product name */}
-            <div className="jtc-type-row">
-                <span className="jtc-type-chip" style={{ background: accent.bg, color: accent.icon, border: `1px solid ${accent.border}22` }}>
-                    {getRequestTypeIcon(ticket.requestType, 13)}
-                    {ticket.requestType}
-                </span>
-            </div>
-
-            <h3 className="jtc-title">{ticket.productName || '(No product)'}</h3>
-
-            {/* Key details chips */}
-            <div className="jtc-chips">
-                {ticket.environment && (
-                    <span className="jtc-chip env">
-                        <Globe size={11} /> {ticket.environment}
-                    </span>
-                )}
-                {serviceDetail && (
-                    <span className="jtc-chip service">
-                        <Cpu size={11} /> {serviceDetail}
-                    </span>
-                )}
-                {ticket.managerApprovalRequired && (
-                    <span className="jtc-chip approval">
-                        <UserCheck size={11} /> Approval Req.
-                    </span>
-                )}
-            </div>
-
-            {/* Description preview */}
-            {ticket.description && (
-                <p className="jtc-description">{ticket.description}</p>
-            )}
-
-            {/* Footer: requester + assignee */}
-            <div className="jtc-footer">
-                <div className="jtc-people">
-                    <span className="jtc-avatar" title={ticket.requestedBy}>
-                        {(ticket.requestedBy || 'U').charAt(0).toUpperCase()}
-                    </span>
-                    {ticket.assignedTo && (
-                        <>
-                            <span className="jtc-arrow">→</span>
-                            <span className="jtc-avatar assigned" title={ticket.assignedTo}>
-                                {ticket.assignedTo.charAt(0).toUpperCase()}
+                {/* Centre: title + meta chips */}
+                <div className="jtc-centre">
+                    <h3 className="jtc-title">{ticket.productName || '(No product)'}</h3>
+                    <div className="jtc-meta">
+                        <span className="jtc-type-badge" style={{ color: accent.icon, borderColor: `${accent.icon}44`, background: `${accent.icon}14` }}>
+                            {getRequestTypeIcon(ticket.requestType, 10)} {ticket.requestType || "General Request"}
+                        </span>
+                        <span className="jtc-id">{ticket.id}</span>
+                        {ticket.environment && (
+                            <span className="jtc-chip env">
+                                <Globe size={9} /> {ticket.environment}
                             </span>
-                        </>
-                    )}
+                        )}
+                        {serviceDetail && (
+                            <span className="jtc-chip service">
+                                <Cpu size={9} /> {serviceDetail}
+                            </span>
+                        )}
+                        {ticket.managerApprovalRequired && (
+                            <span className="jtc-chip approval">
+                                <UserCheck size={9} /> Approval
+                            </span>
+                        )}
+                    </div>
                 </div>
+
+                {/* Right: status + people + date */}
+                <div className="jtc-right">
+                    <StatusBadge status={ticket.status} size="small" />
+                    <div className="jtc-right-bottom">
+                        <div className="jtc-people">
+                            <span className="jtc-avatar" title={ticket.requestedBy}>
+                                {(ticket.requestedBy || 'U').charAt(0).toUpperCase()}
+                            </span>
+                            {ticket.assignedTo && (
+                                <>
+                                    <span className="jtc-arrow">›</span>
+                                    <span className="jtc-avatar assigned" title={ticket.assignedTo}>
+                                        {ticket.assignedTo.charAt(0).toUpperCase()}
+                                    </span>
+                                </>
+                            )}
+                        </div>
+                        <span className="jtc-date" title={formatDate(ticket.createdAt)}>
+                            {timeSince(ticket.createdAt)}
+                        </span>
+                        <span className={`jtc-age-dot ${ageClass}`} title={`Ticket age: ${Math.max(ageDays, 0)} day(s)`} />
+                    </div>
+                </div>
+
+                {/* Expand toggle */}
+                {showActions && (
+                    <button
+                        className="jtc-toggle"
+                        onClick={e => { e.stopPropagation(); setExpanded(!expanded); }}
+                        title={expanded ? 'Collapse' : 'Expand'}
+                    >
+                        {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                    </button>
+                )}
             </div>
 
-            {showActions && (
-                <div className="jtc-expand-row" onClick={e => e.stopPropagation()}>
-                    <button className="jtc-expand-btn" onClick={() => setExpanded(!expanded)}>
-                        {expanded ? <><ChevronUp size={14} /> Hide</> : <><ChevronDown size={14} /> Details</>}
-                    </button>
-                </div>
-            )}
-
+            {/* ── Expanded timeline ── */}
             {expanded && (
                 <div className="jtc-expanded" onClick={e => e.stopPropagation()}>
                     <TicketTimeline timeline={ticket.timeline} />
@@ -662,141 +669,41 @@ const DetailField = ({ icon: Icon, label, value, mono = false, pill = false, pil
     );
 };
 
-// ============ STATUS FLOW BAR COMPONENT ============
-const StatusFlowBar = ({ ticket }) => {
-    const statusSteps = [
-        { key: TICKET_STATUS.CREATED, label: 'Raised' },
-        { key: TICKET_STATUS.ACCEPTED, label: 'Accepted' },
-        { key: TICKET_STATUS.MANAGER_APPROVAL_PENDING, label: 'Mgr Approval', optional: !ticket.managerApprovalRequired },
-        { key: TICKET_STATUS.MANAGER_APPROVED, label: 'Approved', optional: !ticket.managerApprovalRequired },
-        { key: TICKET_STATUS.COST_APPROVAL_PENDING, label: 'Cost Review', optional: !ticket.costApprovalRequired },
-        { key: TICKET_STATUS.COST_APPROVED, label: 'Cost OK', optional: !ticket.costApprovalRequired },
-        { key: TICKET_STATUS.IN_PROGRESS, label: 'In Progress' },
-        { key: TICKET_STATUS.COMPLETED, label: 'Completed' },
-        { key: TICKET_STATUS.CLOSED, label: 'Closed' },
-    ];
-
-    const useDynamic = Array.isArray(ticket.workflowStages) && ticket.workflowStages.length > 0;
-
-    if (useDynamic) {
-        return (
-            <div style={{ overflowX: 'auto', background: '#fafafa', borderBottom: '1px solid #e5e7eb' }}>
-                <div style={{ display: 'flex', alignItems: 'center', height: 48, padding: '0 1.25rem', minWidth: 'max-content', gap: 0 }}>
-                    {ticket.workflowStages.map((stage, i) => {
-                        const isDone = stage.state === 'done';
-                        const isCurrent = stage.state === 'current';
-                        return (
-                            <React.Fragment key={stage.id || i}>
-                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3 }}>
-                                    <div style={{
-                                        width: isCurrent ? 14 : 10, height: isCurrent ? 14 : 10, borderRadius: '50%',
-                                        background: isDone ? '#16a34a' : isCurrent ? '#2563eb' : '#d1d5db',
-                                        boxShadow: isCurrent ? '0 0 0 3px #bfdbfe' : 'none',
-                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                        flexShrink: 0, transition: 'all 0.2s'
-                                    }}>
-                                        {isDone && <span style={{ fontSize: 7, color: '#fff', lineHeight: 1, fontWeight: 900 }}>✓</span>}
-                                    </div>
-                                    <span style={{
-                                        fontSize: '0.6rem', fontWeight: isCurrent ? 700 : 400,
-                                        color: isDone ? '#166534' : isCurrent ? '#1d4ed8' : '#9ca3af',
-                                        whiteSpace: 'nowrap', lineHeight: 1
-                                    }}>
-                                        {stage.label}
-                                    </span>
-                                </div>
-                                {i < ticket.workflowStages.length - 1 && (
-                                    <div style={{ width: 18, height: 1.5, background: isDone ? '#86efac' : '#e5e7eb', margin: '-7px 3px 0', flexShrink: 0 }} />
-                                )}
-                            </React.Fragment>
-                        );
-                    })}
-                </div>
-            </div>
-        );
-    }
-
-    const getStepIdx = () => {
-        const idx = statusSteps.findIndex(s => s.key === ticket.status);
-        if (idx !== -1) return idx;
-        if (ticket.status === TICKET_STATUS.ACTION_REQUIRED || ticket.status === TICKET_STATUS.ON_HOLD) {
-            return statusSteps.findIndex(s => s.key === TICKET_STATUS.IN_PROGRESS);
-        }
-        return 0;
-    };
-    const currentIdx = getStepIdx();
-
-    return (
-        <div style={{ overflowX: 'auto', background: '#fafafa', borderBottom: '1px solid #e5e7eb' }}>
-            <div style={{ display: 'flex', alignItems: 'center', height: 48, padding: '0 1.25rem', minWidth: 'max-content', gap: 0 }}>
-                {statusSteps.map((step, i) => {
-                    const isDone = i < currentIdx;
-                    const isCurrent = i === currentIdx;
-                    const isOptionalFaded = step.optional && !isDone && !isCurrent;
-                    return (
-                        <React.Fragment key={step.key}>
-                            <div style={{
-                                display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3,
-                                opacity: isOptionalFaded ? 0.3 : 1, transition: 'opacity 0.2s'
-                            }}>
-                                <div style={{
-                                    width: isCurrent ? 14 : 10, height: isCurrent ? 14 : 10, borderRadius: '50%',
-                                    background: isDone ? '#16a34a' : isCurrent ? '#2563eb' : '#d1d5db',
-                                    boxShadow: isCurrent ? '0 0 0 3px #bfdbfe' : 'none',
-                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                    flexShrink: 0, transition: 'all 0.2s'
-                                }}>
-                                    {isDone && <span style={{ fontSize: 7, color: '#fff', lineHeight: 1, fontWeight: 900 }}>✓</span>}
-                                </div>
-                                <span style={{
-                                    fontSize: '0.6rem', fontWeight: isCurrent ? 700 : 400,
-                                    color: isDone ? '#166534' : isCurrent ? '#1d4ed8' : '#9ca3af',
-                                    whiteSpace: 'nowrap', lineHeight: 1
-                                }}>
-                                    {step.label}
-                                </span>
-                            </div>
-                            {i < statusSteps.length - 1 && (
-                                <div style={{
-                                    width: 18, height: 1.5,
-                                    background: isDone ? '#86efac' : '#e5e7eb',
-                                    margin: '-7px 3px 0', flexShrink: 0,
-                                    opacity: isOptionalFaded ? 0.3 : 1
-                                }} />
-                            )}
-                        </React.Fragment>
-                    );
-                })}
-            </div>
-            {(ticket.status === TICKET_STATUS.ACTION_REQUIRED || ticket.status === TICKET_STATUS.ON_HOLD) && (
-                <div style={{ padding: '0 1.25rem 6px', display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <StatusBadge status={ticket.status} size="small" animated />
-                </div>
-            )}
-        </div>
-    );
-};
-
 // ============ TICKET DETAILS MODAL ============
-export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote, user, canManage = false, onToggleActiveStatus, onRequestCostApproval }) => {
+const COST_APPROVAL_PREFIX = "COST_APPROVAL::";
+/** Dropdown row when workflow has no named cost approvers — still opens the cost tool. */
+const OPEN_COST_TOOL_ACTION = "OPEN_COST_TOOL";
+
+export const TicketDetailsModal = ({
+    ticket,
+    onClose,
+    onStatusChange,
+    onAddNote,
+    user,
+    canManage = false,
+    /** Only DevOps: cost approver picker, cost estimate window, and cost-related status transitions */
+    canSubmitCostEstimate = false,
+    onToggleActiveStatus,
+    onRequestCostApproval
+}) => {
     const [note, setNote] = useState('');
     const [selectedStatus, setSelectedStatus] = useState('');
     const [noteAttachments, setNoteAttachments] = useState([]);
     const [showApprovalEditor, setShowApprovalEditor] = useState(false);
     const [approvalEditorText, setApprovalEditorText] = useState('');
     const [approvalEditorHtml, setApprovalEditorHtml] = useState('');
-    const [showApprovalPanel, setShowApprovalPanel] = useState(false);
-    const [approvalType, setApprovalType] = useState('Manager Approval');
-    const [approvalNote, setApprovalNote] = useState('');
-    const [closeNote, setCloseNote] = useState('');
-    const [modalActionLoading, setModalActionLoading] = useState(false);
+    /** DevOps: workflow cost approver chosen in Actions dropdown (sent with cost submission). */
+    const [pendingCostApproverEmail, setPendingCostApproverEmail] = useState(null);
+
+    useEffect(() => {
+        if (ticket?.id) setPendingCostApproverEmail(null);
+    }, [ticket?.id]);
 
     if (!ticket) return null;
 
     const accent = getTypeAccent(ticket.requestType);
     const allowedTransitions = getDynamicAllowedTransitions(ticket);
-    const requiresCostApproval = !!ticket.costApprovalRequired || !!ticket.workflowConfiguration?.costApprovalRequired;
-    
+
     // Get simplified action label with icon indicator
     const getStatusActionLabel = (status) => {
         const config = STATUS_DISPLAY_CONFIG[status];
@@ -819,68 +726,195 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
             };
         })
         .filter((p) => p.email);
+
     const approvalActions = configuredApprovalPeople.map((p) => {
-        const displayName = (p.name || "").trim() || p.email;
+        const role = (p.role || "Approver").trim();
+        const name = (p.name || "").trim() || p.email;
+        const label = canManage ? `${role} — ${name} · ${p.email}` : `${role} — ${name}`;
         return {
             value: `APPROVAL::${p.email}`,
-            label: `📋 ${displayName}`,
+            label,
             type: "approval",
             person: p
         };
     });
+
+    const configuredCostApprovers = (ticket.workflowConfiguration?.costApprovers || [])
+        .map((ap, idx) => ({
+            key: `cost-${idx}-${ap?.email || ""}`,
+            role: (ap?.role || "Cost approver").trim() || "Cost approver",
+            name: (ap?.name || "").trim(),
+            email: String(ap?.email || "").trim()
+        }))
+        .filter((p) => p.email);
+
+    const requiresCostApproval =
+        !!ticket.costApprovalRequired ||
+        !!ticket.workflowConfiguration?.costApprovalRequired ||
+        configuredCostApprovers.length > 0;
+
+    const costApprovalActions =
+        canSubmitCostEstimate
+            ? configuredCostApprovers.length > 0
+                ? configuredCostApprovers.map((p) => {
+                      const role = p.role || "Cost approver";
+                      const name = (p.name || "").trim() || p.email;
+                      return {
+                          value: `${COST_APPROVAL_PREFIX}${p.email}`,
+                          label: `${role} — ${name} · ${p.email}`,
+                          type: "costApprover",
+                          person: p
+                      };
+                  })
+                : [
+                      {
+                          value: OPEN_COST_TOOL_ACTION,
+                          label: "💰 Cost approval — open estimate tool",
+                          type: "openCostTool"
+                      }
+                  ]
+            : [];
+
     const managerRespondedApproved = String(ticket.managerApprovalStatus || "").toUpperCase() === "APPROVED";
-    const approvalActionsForUser = !canManage && managerRespondedApproved ? [] : approvalActions;
-    const defaultActions = (canManage ? Object.values(TICKET_STATUS) : allowedTransitions).map((s) => ({
+    // Users can always trigger an approval action regardless of ticket state
+    const approvalActionsForUser = approvalActions;
+
+    // Users can always close their own ticket (unless already closed)
+    const userCloseAction = ticket.status !== TICKET_STATUS.CLOSED
+        ? [{ value: `STATUS::${TICKET_STATUS.CLOSED}`, label: '🔒 Close Ticket', type: 'status', status: TICKET_STATUS.CLOSED }]
+        : [];
+
+    // DevOps-friendly short action labels based on destination status
+    const getDevOpsActionLabel = (status) => {
+        switch (status) {
+            case TICKET_STATUS.ACCEPTED:               return '✅ Accept';
+            case TICKET_STATUS.MANAGER_APPROVAL_PENDING: return '📤 Send for Approval';
+            case TICKET_STATUS.MANAGER_APPROVED:       return '✔ Mark Approved';
+            case TICKET_STATUS.COST_APPROVAL_PENDING:  return '💰 Cost Estimate';
+            case TICKET_STATUS.COST_APPROVED:          return '✔ Cost Approved';
+            case TICKET_STATUS.IN_PROGRESS:            return '▶ In Progress';
+            case TICKET_STATUS.ACTION_REQUIRED:        return '⚠ Action Required';
+            case TICKET_STATUS.COMPLETED:              return '✅ Complete';
+            case TICKET_STATUS.CLOSED:                 return '🔒 Close';
+            default: return getStatusActionLabel(status);
+        }
+    };
+
+    // Context-aware transitions — no more dumping all statuses.
+    // MANAGER_APPROVAL_PENDING is excluded from status actions for both DevOps and users
+    // because sending for approval is handled by the "Request Approval" optgroup (pick the person directly).
+    const normalizedTicketStatus = toDisplayTicketStatus(ticket.status);
+    const devOpsTransitionBase =
+        STATUS_TRANSITIONS[ticket.status] ||
+        STATUS_TRANSITIONS[normalizedTicketStatus] ||
+        [];
+    let smartTransitions = (canManage ? devOpsTransitionBase : getDynamicAllowedTransitions(ticket))
+        .filter((s) => s !== TICKET_STATUS.MANAGER_APPROVAL_PENDING)
+        .filter((s) => !(s === TICKET_STATUS.COST_APPROVAL_PENDING && !canSubmitCostEstimate));
+    if (
+        canManage &&
+        canSubmitCostEstimate &&
+        normalizedTicketStatus !== TICKET_STATUS.CLOSED &&
+        !smartTransitions.includes(TICKET_STATUS.COST_APPROVAL_PENDING)
+    ) {
+        smartTransitions = [...smartTransitions, TICKET_STATUS.COST_APPROVAL_PENDING];
+    }
+
+    const defaultActions = smartTransitions.map((s) => ({
         value: `STATUS::${s}`,
-        label: getStatusActionLabel(s),
+        label: canManage ? getDevOpsActionLabel(s) : getStatusActionLabel(s),
         type: "status",
         status: s
     }));
-    const selectableActions = canManage ? [...defaultActions, ...approvalActions] : approvalActionsForUser;
+
+    // Users: approval requests + close only. DevOps: status + manager approval + cost approver targets.
+    const selectableActions = canManage
+        ? [...defaultActions, ...approvalActions, ...costApprovalActions]
+        : [...userCloseAction, ...approvalActionsForUser];
+
     const selectedApprovalAction = selectedStatus.startsWith("APPROVAL::")
         ? approvalActions.find((a) => a.value === selectedStatus)
         : null;
 
     const applySelectedAction = (actionNoteText) => {
-        if (selectedStatus && onStatusChange) {
-            if (selectedStatus.startsWith("STATUS::")) {
-                const statusValue = selectedStatus.replace("STATUS::", "");
-                if (statusValue === TICKET_STATUS.COST_APPROVAL_PENDING && onRequestCostApproval) {
-                    onRequestCostApproval(ticket);
-                    setSelectedStatus('');
-                    return;
-                }
-                onStatusChange(ticket.id, statusValue, actionNoteText || note, {});
-                setNote('');
+        if (!selectedStatus) return;
+
+        if (selectedStatus === OPEN_COST_TOOL_ACTION) {
+            if (!canSubmitCostEstimate || !onRequestCostApproval) return;
+            onRequestCostApproval(ticket, { costApproverEmail: pendingCostApproverEmail || undefined });
+            setSelectedStatus("");
+            return;
+        }
+
+        if (selectedStatus.startsWith(COST_APPROVAL_PREFIX)) {
+            if (!canSubmitCostEstimate || !onRequestCostApproval) return;
+            const email = selectedStatus.slice(COST_APPROVAL_PREFIX.length).trim();
+            if (email) {
+                setPendingCostApproverEmail(email);
+                onRequestCostApproval(ticket, { costApproverEmail: email });
+            }
+            setSelectedStatus("");
+            return;
+        }
+
+        if (!onStatusChange) return;
+
+        if (selectedStatus.startsWith("STATUS::")) {
+            const statusValue = selectedStatus.replace("STATUS::", "");
+            if (statusValue === TICKET_STATUS.COST_APPROVAL_PENDING && canSubmitCostEstimate && onRequestCostApproval) {
+                onRequestCostApproval(ticket, { costApproverEmail: pendingCostApproverEmail || undefined });
                 setSelectedStatus('');
                 return;
             }
-            if (selectedStatus.startsWith("APPROVAL::")) {
-                const targetEmail = selectedStatus.replace("APPROVAL::", "");
-                const target = configuredApprovalPeople.find(
-                    (p) => String(p.email || "").toLowerCase() === String(targetEmail).toLowerCase()
-                );
-                const resolvedEmail = (target?.email || targetEmail || "").trim();
-                const approvalNote = [
-                    `Designation: ${target?.role || "Approver"} — ${target?.name || resolvedEmail} · ${resolvedEmail}`,
-                    actionNoteText ? `Purpose: ${actionNoteText}` : null
-                ].filter(Boolean).join(". ");
-                onStatusChange(ticket.id, TICKET_STATUS.MANAGER_APPROVAL_PENDING, approvalNote, {
-                    approvalTargetEmail: resolvedEmail
-                });
-                setNote('');
-                setSelectedStatus('');
-                return;
-            }
-            if (selectedStatus === TICKET_STATUS.COST_APPROVAL_PENDING && onRequestCostApproval) {
-                onRequestCostApproval(ticket);
-                setSelectedStatus('');
-                return;
-            }
-            onStatusChange(ticket.id, selectedStatus, actionNoteText || note, {});
+            onStatusChange(ticket.id, statusValue, actionNoteText || note, {});
             setNote('');
             setSelectedStatus('');
+            return;
         }
+        if (selectedStatus.startsWith("APPROVAL::")) {
+            const targetEmail = selectedStatus.replace("APPROVAL::", "");
+            const target = configuredApprovalPeople.find(
+                (p) => String(p.email || "").toLowerCase() === String(targetEmail).toLowerCase()
+            );
+            const resolvedEmail = (target?.email || targetEmail || "").trim();
+            const approvalNote = [
+                `Designation: ${target?.role || "Approver"} — ${target?.name || resolvedEmail} · ${resolvedEmail}`,
+                actionNoteText ? `Purpose: ${actionNoteText}` : null
+            ].filter(Boolean).join(". ");
+            onStatusChange(ticket.id, TICKET_STATUS.MANAGER_APPROVAL_PENDING, approvalNote, {
+                approvalTargetEmail: resolvedEmail
+            });
+            setNote('');
+            setSelectedStatus('');
+            return;
+        }
+        if (selectedStatus === TICKET_STATUS.COST_APPROVAL_PENDING && canSubmitCostEstimate && onRequestCostApproval) {
+            onRequestCostApproval(ticket, { costApproverEmail: pendingCostApproverEmail || undefined });
+            setSelectedStatus('');
+            return;
+        }
+        onStatusChange(ticket.id, selectedStatus, actionNoteText || note, {});
+        setNote('');
+        setSelectedStatus('');
+    };
+
+    /** Choosing a cost approver opens the same cost tool window as the primary button (auto-calc / autofill / send). */
+    const handleActionSelectChange = (value) => {
+        if (value === OPEN_COST_TOOL_ACTION && canSubmitCostEstimate && onRequestCostApproval) {
+            onRequestCostApproval(ticket, { costApproverEmail: pendingCostApproverEmail || undefined });
+            setSelectedStatus("");
+            return;
+        }
+        if (canSubmitCostEstimate && onRequestCostApproval && value.startsWith(COST_APPROVAL_PREFIX)) {
+            const email = value.slice(COST_APPROVAL_PREFIX.length).trim();
+            if (email) {
+                setPendingCostApproverEmail(email);
+                onRequestCostApproval(ticket, { costApproverEmail: email });
+            }
+            setSelectedStatus("");
+            return;
+        }
+        setSelectedStatus(value);
     };
 
     const handleStatusChange = () => {
@@ -892,44 +926,7 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
         }
         applySelectedAction(note);
     };
-
-    const handleAssignMe = async () => {
-        if (!user) return;
-        setModalActionLoading(true);
-        try {
-            await assignTicket(ticket.id, user.name, user);
-        } catch (e) {
-            alert(e.message);
-        } finally {
-            setModalActionLoading(false);
-        }
-    };
-
-    const handleQuickStatus = (status, defaultNote) => {
-        if (onStatusChange) onStatusChange(ticket.id, status, defaultNote, {});
-    };
-
-    const handleSendApprovalRequest = () => {
-        if (!onStatusChange) return;
-        if (approvalType === 'Cost Approval') {
-            if (onRequestCostApproval) {
-                onRequestCostApproval(ticket);
-            } else {
-                onStatusChange(ticket.id, TICKET_STATUS.COST_APPROVAL_PENDING, approvalNote || 'Cost approval requested', {});
-            }
-        } else {
-            const typeNote = [approvalType, approvalNote ? `Purpose: ${approvalNote}` : null].filter(Boolean).join('. ');
-            onStatusChange(
-                ticket.id,
-                TICKET_STATUS.MANAGER_APPROVAL_PENDING,
-                typeNote,
-                ticket.managerEmail ? { approvalTargetEmail: ticket.managerEmail } : {}
-            );
-        }
-        setApprovalNote('');
-        setShowApprovalPanel(false);
-    };
-
+    
     const handleAddNote = () => {
         if (note.trim() && onAddNote) {
             onAddNote(ticket.id, note, noteAttachments);
@@ -1016,32 +1013,18 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                 if (st === "ACTION_REQUIRED" || st === "ON_HOLD") return "amber";
                 return "blue";
             })();
-            return { id: `${entry?.timestamp || "x"}-${idx}`, label, tone };
+            return { id: `${entry?.timestamp || "x"}-${idx}`, label, tone, user: entry?.user || '', timestamp: entry?.timestamp || '', notes: entry?.notes ? normalizeFlowNotes(entry.notes).slice(0, 80) : '' };
         });
     const runtimeBarTone = (() => {
         const st = timelineStatusKey(ticket.status);
-        if (st === "CLOSED" || st === "REJECTED") {
-            return { color: "#dc2626", bg: "#fee2e2", label: "Closed" };
-        }
-        if (st === "MANAGER_APPROVAL_PENDING") {
-            return { color: "#dc2626", bg: "#fee2e2", label: "Pending Approval" };
-        }
-        if (st === "COST_APPROVAL_PENDING") {
-            return { color: "#dc2626", bg: "#fee2e2", label: "Cost Review" };
-        }
-        if (st === "MANAGER_APPROVED") {
-            return { color: "#16a34a", bg: "#dcfce7", label: "Approved" };
-        }
-        if (st === "COST_APPROVED") {
-            return { color: "#16a34a", bg: "#dcfce7", label: "Cost Approved" };
-        }
-        if (st === "COMPLETED" || st === "IN_PROGRESS") {
-            return { color: "#16a34a", bg: "#dcfce7", label: "Processing" };
-        }
-        if (st === "ACTION_REQUIRED" || st === "ON_HOLD") {
-            return { color: "#d97706", bg: "#fef3c7", label: "Waiting" };
-        }
-        return { color: "#2563eb", bg: "#dbeafe", label: "Active" };
+        if (st === "CLOSED" || st === "REJECTED")          return { color: "#6b7280", bg: "#f9fafb", label: "Closed" };
+        if (st === "MANAGER_APPROVAL_PENDING")              return { color: "#b45309", bg: "#fffbeb", label: "Pending Approval" };
+        if (st === "COST_APPROVAL_PENDING")                 return { color: "#c2410c", bg: "#fff7ed", label: "Cost Review" };
+        if (st === "MANAGER_APPROVED")                      return { color: "#15803d", bg: "#f0fdf4", label: "Approved" };
+        if (st === "COST_APPROVED")                         return { color: "#059669", bg: "#ecfdf5", label: "Cost Approved" };
+        if (st === "COMPLETED" || st === "IN_PROGRESS")     return { color: "#059669", bg: "#ecfdf5", label: "Processing" };
+        if (st === "ACTION_REQUIRED" || st === "ON_HOLD")   return { color: "#b45309", bg: "#fffbeb", label: "Waiting" };
+        return { color: "#1d4ed8", bg: "#eff6ff", label: "Active" };
     })();
     
     return (
@@ -1067,7 +1050,14 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                     </div>
                     <button className="modal-close" onClick={onClose}><X size={20} /></button>
                 </div>
-                <StatusFlowBar ticket={ticket} />
+                <div style={{ padding: "0.5rem 1rem", borderBottom: "1px solid #e5e7eb", background: runtimeBarTone.bg }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ height: 6, borderRadius: 999, background: runtimeBarTone.color, flex: 1 }} />
+                        <span style={{ color: runtimeBarTone.color, fontWeight: 600, fontSize: "0.78rem" }}>
+                            {runtimeBarTone.label}
+                        </span>
+                    </div>
+                </div>
 
                 {/* ── Two-panel body ── */}
                 <div className="jdm-body">
@@ -1091,19 +1081,22 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                                 )}
                                 {actionFlowItems.map((item, index) => {
                                     const toneStyle = item.tone === "green"
-                                        ? { background: "#dcfce7", color: "#166534", border: "1px solid #86efac" }
+                                        ? { background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0" }
                                         : item.tone === "red"
-                                            ? { background: "#fee2e2", color: "#991b1b", border: "1px solid #fca5a5" }
+                                            ? { background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }
                                             : item.tone === "amber"
-                                                ? { background: "#fef3c7", color: "#92400e", border: "1px solid #fcd34d" }
-                                                : { background: "#dbeafe", color: "#1e40af", border: "1px solid #93c5fd" };
+                                                ? { background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a" }
+                                                : { background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" };
                                     return (
                                         <React.Fragment key={item.id}>
-                                            <span style={{ ...toneStyle, borderRadius: 999, padding: "4px 10px", fontSize: "0.78rem", fontWeight: 600 }}>
+                                            <span 
+                                                style={{ ...toneStyle, borderRadius: 999, padding: "4px 10px", fontSize: "0.78rem", fontWeight: 600, cursor: item.user ? 'help' : 'default', position: 'relative' }}
+                                                title={item.user ? `${item.label}\nBy: ${item.user}${item.timestamp ? '\n' + new Date(item.timestamp).toLocaleString() : ''}${item.notes ? '\n' + item.notes : ''}` : item.label}
+                                            >
                                                 {item.label}
                                             </span>
                                             {index < actionFlowItems.length - 1 && (
-                                                <span style={{ color: "#94a3b8", fontWeight: 700 }}>→</span>
+                                                <span style={{ color: "#d1d5db", fontWeight: 600 }}>→</span>
                                             )}
                                         </React.Fragment>
                                     );
@@ -1170,86 +1163,53 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                             )}
                         </div>
 
-                        {/* Actions (manage) */}
-                        {ticket.status === TICKET_STATUS.ACTION_REQUIRED && canManage ? (
-                            <div className="jdm-section">
-                                <div className="jdm-section-title"><AlertCircle size={14} /> Action Required — What to do?</div>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                                    {user && ticket.assignedTo !== user.name && (
-                                        <button
-                                            className="jdm-btn-secondary"
-                                            onClick={handleAssignMe}
-                                            disabled={modalActionLoading}
-                                            title="Assign this ticket to yourself"
-                                        >
-                                            <UserPlus size={14} /> Assign Me
-                                        </button>
-                                    )}
-                                    <button
-                                        className="jdm-btn-primary"
-                                        onClick={() => handleQuickStatus(TICKET_STATUS.IN_PROGRESS, 'Resuming work on ticket')}
-                                        disabled={modalActionLoading}
-                                    >
-                                        <PlayCircle size={14} /> Work In Progress
-                                    </button>
-                                    <button
-                                        className="jdm-btn-ghost"
-                                        onClick={() => handleQuickStatus(TICKET_STATUS.ON_HOLD, 'Ticket put on hold')}
-                                        disabled={modalActionLoading}
-                                    >
-                                        <Pause size={14} /> On Hold
-                                    </button>
-                                </div>
-                                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                    <input
-                                        className="jdm-select"
-                                        style={{ flex: 1, padding: '5px 8px', height: 34 }}
-                                        placeholder="Close note (optional)..."
-                                        value={closeNote}
-                                        onChange={e => setCloseNote(e.target.value)}
-                                    />
-                                    <button
-                                        className="jdm-btn-ghost"
-                                        style={{ color: '#dc2626', borderColor: '#fca5a5', flexShrink: 0 }}
-                                        onClick={() => handleQuickStatus(TICKET_STATUS.CLOSED, closeNote || 'Ticket closed')}
-                                        disabled={modalActionLoading}
-                                    >
-                                        <XCircle size={14} /> Close Ticket
-                                    </button>
-                                </div>
-                            </div>
-                        ) : selectableActions.length > 0 && (
+                        {/* Actions */}
+                        {(selectableActions.length > 0 || (!canManage && approvalActions.length === 0)) && (
                             <div className="jdm-section">
                                 <div className="jdm-section-title"><PlayCircle size={14} /> Actions</div>
+                                {!canManage && approvalActions.length === 0 ? (
+                                    <p className="jdm-hint-text">No approvers configured for this product.</p>
+                                ) : (
                                 <div className="jdm-action-row">
                                     <select
                                         value={selectedStatus}
-                                        onChange={e => setSelectedStatus(e.target.value)}
+                                        onChange={(e) => handleActionSelectChange(e.target.value)}
                                         className="jdm-select"
                                     >
                                         <option value="">Select action...</option>
-                                        {defaultActions.length > 0 && (
+                                        {canManage && defaultActions.length > 0 && (
                                             <optgroup label="Status">
                                                 {defaultActions.map((a) => (
                                                     <option key={a.value} value={a.value}>{a.label}</option>
                                                 ))}
                                             </optgroup>
                                         )}
-                                        {approvalActions.length > 0 && (
-                                            <optgroup label="Request Approval">
+                                        {!canManage && userCloseAction.length > 0 && (
+                                            <optgroup label="Actions">
+                                                {userCloseAction.map((a) => (
+                                                    <option key={a.value} value={a.value}>{a.label}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
+                                        {canManage && (approvalActions.length > 0 || costApprovalActions.length > 0) && (
+                                            <optgroup label="Request & cost approval">
+                                                {approvalActions.map((a) => (
+                                                    <option key={a.value} value={a.value}>{a.label}</option>
+                                                ))}
+                                                {costApprovalActions.map((a) => (
+                                                    <option key={a.value} value={a.value}>{a.label}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
+                                        {!canManage && approvalActions.length > 0 && (
+                                            <optgroup label="Send for Approval">
                                                 {approvalActions.map((a) => (
                                                     <option key={a.value} value={a.value}>{a.label}</option>
                                                 ))}
                                             </optgroup>
                                         )}
-                                        {!canManage && managerRespondedApproved && (
-                                            <option value="" disabled>✓ Approved - pending processing</option>
-                                        )}
-                                        {!canManage && !managerRespondedApproved && approvalActions.length === 0 && (
-                                            <option value="" disabled>No approvers configured</option>
-                                        )}
-                                        {canManage && defaultActions.length === 0 && approvalActions.length === 0 && (
-                                            <option value="" disabled>No actions</option>
+                                        {canManage && defaultActions.length === 0 && approvalActions.length === 0 && costApprovalActions.length === 0 && (
+                                            <option value="" disabled>No actions available</option>
                                         )}
                                     </select>
                                     <button
@@ -1260,66 +1220,11 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                                         Apply
                                     </button>
                                 </div>
-                                {ticket.status === TICKET_STATUS.MANAGER_APPROVED
-                                    && requiresCostApproval
-                                    && !String(ticket.costApprovalStatus || '').toUpperCase().includes('PENDING')
-                                    && !String(ticket.costApprovalStatus || '').toUpperCase().includes('APPROVED')
-                                    && onRequestCostApproval && (
-                                        <button
-                                            className="jdm-btn-primary"
-                                            style={{ marginTop: 10 }}
-                                            onClick={() => onRequestCostApproval(ticket)}
-                                        >
-                                            <DollarSign size={14} /> Submit Cost Estimate
-                                        </button>
-                                    )}
-                            </div>
-                        )}
-
-                        {/* Request Approval — collapsible panel for DevOps/Admin */}
-                        {canManage && ![TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(ticket.status) && (
-                            <div className="jdm-section">
-                                <button
-                                    style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: '#374151', fontWeight: 600, fontSize: '0.82rem' }}
-                                    onClick={() => setShowApprovalPanel(!showApprovalPanel)}
-                                >
-                                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                                        <ShieldCheck size={14} /> Send for Approval
-                                    </span>
-                                    {showApprovalPanel ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                                </button>
-                                {showApprovalPanel && (
-                                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                            <label style={{ fontSize: '0.78rem', color: '#6b7280', whiteSpace: 'nowrap', minWidth: 90 }}>Approval type</label>
-                                            <select
-                                                value={approvalType}
-                                                onChange={e => setApprovalType(e.target.value)}
-                                                className="jdm-select"
-                                                style={{ flex: 1 }}
-                                            >
-                                                <option>Manager Approval</option>
-                                                <option>Lead Approval</option>
-                                                <option>CEO Approval</option>
-                                                <option>Cost Approval</option>
-                                            </select>
-                                        </div>
-                                        <textarea
-                                            className="jdm-textarea"
-                                            value={approvalNote}
-                                            onChange={e => setApprovalNote(e.target.value)}
-                                            placeholder="Note / context for approver (optional)"
-                                            rows={2}
-                                        />
-                                        <button
-                                            className="jdm-btn-primary"
-                                            style={{ alignSelf: 'flex-start' }}
-                                            onClick={handleSendApprovalRequest}
-                                            disabled={modalActionLoading}
-                                        >
-                                            <Send size={14} /> Send Approval Request
-                                        </button>
-                                    </div>
+                                )}
+                                {!canManage && managerRespondedApproved && approvalActions.length > 0 && (
+                                    <p className="jdm-hint-text" style={{ marginTop: 6, color: '#15803d' }}>
+                                        ✓ Manager has already approved — you can still re-send or escalate to another approver.
+                                    </p>
                                 )}
                             </div>
                         )}
@@ -1327,7 +1232,7 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                             <div className="jdm-section">
                                 <div className="jdm-section-title"><Clock size={14} /> Awaiting Response</div>
                                 {managerRespondedApproved ? (
-                                    <p className="jdm-hint-text" style={{ color: "#166534", fontWeight: 500 }}>
+                                    <p className="jdm-hint-text" style={{ color: "#15803d", fontWeight: 500 }}>
                                         ✓ Approved - Apply <strong>Approved</strong> to continue
                                     </p>
                                 ) : (
@@ -1339,7 +1244,7 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                         )}
                         {!canManage && ticket.status === TICKET_STATUS.MANAGER_APPROVAL_PENDING && managerRespondedApproved && (
                             <div className="jdm-section">
-                                <p className="jdm-hint-text" style={{ color: "#166534" }}>
+                                <p className="jdm-hint-text" style={{ color: "#15803d" }}>
                                     ✓ Approved - Processing will continue shortly
                                 </p>
                             </div>
@@ -1350,16 +1255,40 @@ export const TicketDetailsModal = ({ ticket, onClose, onStatusChange, onAddNote,
                                 <p className="jdm-hint-text">
                                     Waiting for configured cost manager approval from email link. Status updates automatically.
                                 </p>
+                                {canSubmitCostEstimate && (
+                                    <p className="jdm-hint-text" style={{ marginTop: 8 }}>
+                                        To resend or revise, pick a cost line under{" "}
+                                        <strong>Request & cost approval</strong> in Actions (same as manager approval).
+                                    </p>
+                                )}
                             </div>
                         )}
-                        {canManage && ticket.status === TICKET_STATUS.MANAGER_APPROVED && requiresCostApproval
-                            && !String(ticket.costApprovalStatus || '').toUpperCase().includes('PENDING')
-                            && !String(ticket.costApprovalStatus || '').toUpperCase().includes('APPROVED') && (
+                        {canManage && canSubmitCostEstimate && onRequestCostApproval && requiresCostApproval && (
                             <div className="jdm-section">
-                                <div className="jdm-section-title"><Database size={14} /> Cost Approval Required</div>
-                                <p className="jdm-hint-text">
-                                    Raise cost approval with estimated budget to proceed in workflow.
-                                </p>
+                                <div className="jdm-section-title"><Database size={14} /> Cost approval</div>
+                                {canSubmitCostEstimate && onRequestCostApproval ? (
+                                    <>
+                                        <p className="jdm-hint-text">
+                                            Open the cost tool to auto-calculate from the workflow, edit if needed, then send the approval request to the selected cost approver.
+                                        </p>
+                                        <button
+                                            type="button"
+                                            className="jdm-btn-primary"
+                                            style={{ marginTop: 12 }}
+                                            onClick={() =>
+                                                onRequestCostApproval(ticket, {
+                                                    costApproverEmail: pendingCostApproverEmail || undefined
+                                                })
+                                            }
+                                        >
+                                            <Database size={14} /> Raise cost approval request
+                                        </button>
+                                    </>
+                                ) : (
+                                    <p className="jdm-hint-text">
+                                        DevOps will submit the cost estimate and notify the cost approver. You will be updated when the decision is recorded.
+                                    </p>
+                                )}
                             </div>
                         )}
 
@@ -1701,29 +1630,12 @@ const IssueFixForm = ({ formData, onChange }) => (
 
 const BuildRequestForm = ({ formData, onChange }) => (
     <>
-        <FormField label="Branch Name" required>
-            <input 
-                type="text"
-                value={formData.branchName || ''}
-                onChange={e => onChange({ ...formData, branchName: e.target.value })}
-                placeholder="e.g., feature/new-feature"
-                required
-            />
-        </FormField>
-        <FormField label="Commit ID">
-            <input 
-                type="text"
-                value={formData.commitId || ''}
-                onChange={e => onChange({ ...formData, commitId: e.target.value })}
-                placeholder="e.g., abc1234"
-            />
-        </FormField>
         <FormField label="Purpose" required>
             <textarea 
                 value={formData.purpose || ''}
                 onChange={e => onChange({ ...formData, purpose: e.target.value })}
-                placeholder="Purpose of this build"
-                rows={3}
+                placeholder="Describe your request in detail"
+                rows={4}
                 required
             />
         </FormField>
@@ -1929,10 +1841,23 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
         return [...map.values()];
     })();
 
+    /** Dropdown text: designation first, then name and/or email (matches approval-request style). */
     const formatApproverDropdownLabel = (person) => {
-        const namePart = (person.name || "").trim() || person.email;
         const designation = (person.role || "").trim() || "Approver";
-        return `${designation} — ${namePart} · ${person.email}`;
+        const name = (person.name || "").trim();
+        const email = String(person.email || "").trim();
+        if (!email) return designation;
+        if (name) return `${designation} — ${name} · ${email}`;
+        return `${designation} — ${email}`;
+    };
+
+    const formatManagerDirectoryLabel = (manager) => {
+        const designation = "Manager";
+        const name = (manager.name || "").trim();
+        const email = String(manager.email || "").trim();
+        if (!email) return designation;
+        if (name) return `${designation} — ${name} · ${email}`;
+        return `${designation} — ${email}`;
     };
 
     const handleManagerSelect = (e) => {
@@ -2008,12 +1933,8 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                 return <EnvironmentUpForm formData={formData} onChange={setFormData} />;
             case REQUEST_TYPES.ENVIRONMENT_DOWN:
                 return <EnvironmentDownForm formData={formData} onChange={setFormData} />;
-            case REQUEST_TYPES.ISSUE_FIX:
-                return <IssueFixForm formData={formData} onChange={setFormData} />;
             case REQUEST_TYPES.BUILD_REQUEST:
                 return <BuildRequestForm formData={formData} onChange={setFormData} />;
-            case REQUEST_TYPES.OTHER_QUERIES:
-                return <OtherQueriesForm formData={formData} onChange={setFormData} />;
             case REQUEST_TYPES.CODE_CUT:
                 return <CodeCutForm formData={formData} onChange={setFormData} />;
             default:
@@ -2160,11 +2081,15 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                             value={formData.managerEmail || ''}
                                             onChange={handleManagerSelect}
                                         >
-                                            <option value="">Select approver (designation · name · email)</option>
+                                            <option value="">Select approver (designation — name · email)</option>
                                             {projectApproverOptions.length > 0 && (
-                                                <optgroup label="Project workflow (by designation)">
+                                                <optgroup label="From product workflow">
                                                     {projectApproverOptions.map((person) => (
-                                                        <option key={person.id} value={person.email}>
+                                                        <option
+                                                            key={person.id}
+                                                            value={person.email}
+                                                            title={formatApproverDropdownLabel(person)}
+                                                        >
                                                             {formatApproverDropdownLabel(person)}
                                                         </option>
                                                     ))}
@@ -2173,8 +2098,12 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                             {(managers || []).filter((m) => m.active !== false && String(m.email || "").trim()).length > 0 && (
                                                 <optgroup label="Manager directory">
                                                     {(managers || []).filter((m) => m.active !== false && String(m.email || "").trim()).map((manager) => (
-                                                        <option key={manager.id || manager.email} value={manager.email}>
-                                                            {`Manager — ${manager.name} · ${manager.email}`}
+                                                        <option
+                                                            key={manager.id || manager.email}
+                                                            value={manager.email}
+                                                            title={formatManagerDirectoryLabel(manager)}
+                                                        >
+                                                            {formatManagerDirectoryLabel(manager)}
                                                         </option>
                                                     ))}
                                                 </optgroup>

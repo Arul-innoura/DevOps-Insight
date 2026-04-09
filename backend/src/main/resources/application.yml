@@ -3,7 +3,7 @@ server:
 
 spring:
   application:
-    name: devops-backend
+    name: shipit-backend
 
   servlet:
     multipart:
@@ -11,7 +11,7 @@ spring:
       max-request-size: 50MB
 
   mongodb:
-    uri: ${MONGODB_URI:mongodb+srv://infraUser:3DVK5Rx5MFP2NkKT@ops-cluster.9tb2ted.mongodb.net}
+    uri: ${MONGODB_URI:mongodb+srv://infraUser:3DVK5Rx5MFP2NkKT@ops-cluster.9tb2ted.mongodb.net/}
     database: ${MONGODB_DATABASE:devops_portal}
 
   security:
@@ -21,7 +21,6 @@ spring:
           issuer-uri: https://login.microsoftonline.com/cd775fb1-40c4-42dc-8ddf-2ca152bec472/v2.0
           jwk-set-uri: https://login.microsoftonline.com/cd775fb1-40c4-42dc-8ddf-2ca152bec472/discovery/v2.0/keys
 
-  # Email Configuration
   mail:
     host: ${MAIL_HOST:smtp.azurecomm.net}
     port: ${MAIL_PORT:587}
@@ -38,7 +37,12 @@ spring:
           timeout: 5000
           writetimeout: 5000
 
-# Email settings
+azure:
+  storage:
+    queue:
+      connection-string:
+      queue-name: ${AZURE_QUEUE_NAME:shipit-mail-queue}
+
 app:
   email:
     from: ${MAIL_FROM:devopsteam@altermanager.encipherhealth.com}
@@ -49,12 +53,6 @@ app:
   trivy:
     path: ${TRIVY_PATH:trivy}
     timeout: ${TRIVY_TIMEOUT:120}
-
-azure:
-  storage:
-    queue:
-      connection-string:
-      queue-name: "shipit-mail-queue"
 
 logging:
   level:

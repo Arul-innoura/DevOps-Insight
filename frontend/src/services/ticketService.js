@@ -10,9 +10,7 @@ export const REQUEST_TYPES = {
     NEW_ENVIRONMENT: "New Environment",
     ENVIRONMENT_UP: "Environment Up",
     ENVIRONMENT_DOWN: "Environment Down",
-    ISSUE_FIX: "Issue Fix",
     BUILD_REQUEST: "General Request",
-    OTHER_QUERIES: "Other Queries",
     CODE_CUT: "Code Cut"
 };
 
@@ -21,15 +19,15 @@ export const REQUEST_TYPE_TO_API_ENUM = {
     [REQUEST_TYPES.NEW_ENVIRONMENT]: "NEW_ENVIRONMENT",
     [REQUEST_TYPES.ENVIRONMENT_UP]: "ENVIRONMENT_UP",
     [REQUEST_TYPES.ENVIRONMENT_DOWN]: "ENVIRONMENT_DOWN",
-    [REQUEST_TYPES.ISSUE_FIX]: "ISSUE_FIX",
     [REQUEST_TYPES.BUILD_REQUEST]: "BUILD_REQUEST",
-    [REQUEST_TYPES.OTHER_QUERIES]: "OTHER_QUERIES",
     [REQUEST_TYPES.CODE_CUT]: "CODE_CUT"
 };
 
 /** Display label for legacy API values no longer offered in the create form */
 const LEGACY_REQUEST_TYPE_LABELS = {
-    RELEASE_DEPLOYMENT: "Release Deployment"
+    RELEASE_DEPLOYMENT: "Release Deployment",
+    ISSUE_FIX: "Issue Fix",
+    OTHER_QUERIES: "Other Queries"
 };
 
 // Ticket Statuses
@@ -47,8 +45,89 @@ export const TICKET_STATUS = {
     CLOSED: "Closed"
 };
 
+/**
+ * DevOps may open/send cost only after manager approval (first submit) or to resubmit while cost approval is pending.
+ * Blocks once cost is approved, or duplicate send from Manager Approved while cost is already pending.
+ */
 // Environment Options
 export const ENVIRONMENTS = ["Dev", "QA", "Stage", "Production"];
+
+/** Days used to derive a daily rate from the product monthly estimate (Environment Up proration). */
+export const PRORATION_DAYS_PER_MONTH = 30;
+
+/**
+ * Parse admin-entered monthly cost strings, e.g. "$150 / month", "150 USD", "₹12,000".
+ * @returns {{ amount: number|null, currency: string }}
+ */
+export function parseMonthlyCostEstimate(raw) {
+    if (raw == null) return { amount: null, currency: "USD" };
+    const s = String(raw).trim();
+    if (!s) return { amount: null, currency: "USD" };
+    let currency = "USD";
+    if (/₹|inr/i.test(s)) currency = "INR";
+    else if (/€|eur/i.test(s)) currency = "EUR";
+    else if (/£|gbp/i.test(s)) currency = "GBP";
+    else if (/\$|usd/i.test(s)) currency = "USD";
+
+    const compact = s.replace(/,/g, "");
+    const matches = compact.match(/(\d+(?:\.\d+)?)/g);
+    if (!matches || matches.length === 0) return { amount: null, currency };
+    const nums = matches.map((x) => parseFloat(x)).filter((n) => !Number.isNaN(n) && n > 0);
+    if (nums.length === 0) return { amount: null, currency };
+    const amount = nums.reduce((a, b) => Math.max(a, b), 0);
+    return { amount, currency };
+}
+
+/**
+ * Estimated run cost from product monthly estimate and run length in days.
+ */
+export function prorateMonthlyToPeriod(monthlyAmount, durationDays, daysPerMonth = PRORATION_DAYS_PER_MONTH) {
+    const m = Number(monthlyAmount);
+    const d = Number(durationDays);
+    if (!m || m <= 0 || !d || d <= 0 || !daysPerMonth || daysPerMonth <= 0) return null;
+    return Math.round((m / daysPerMonth) * d * 100) / 100;
+}
+
+function parseTicketInstant(value) {
+    if (value == null || value === "") return null;
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Run length in days for cost proration: prefers ticket.duration, else calendar span activation → shutdown (inclusive, UTC dates).
+ * @param {{ ignoreDuration?: boolean }} [opts] if ignoreDuration, only use activation/shutdown span.
+ */
+export function inferRunDaysFromTicketDates(ticket, opts = {}) {
+    if (!ticket) return 0;
+    if (!opts.ignoreDuration) {
+        const dur = ticket.duration;
+        if (dur != null && dur !== "") {
+            const n = typeof dur === "number" ? dur : parseInt(String(dur).replace(/[^\d]/g, "") || "0", 10);
+            if (Number.isFinite(n) && n > 0) return n;
+        }
+    }
+    const start = parseTicketInstant(ticket.activationDate);
+    const end = parseTicketInstant(ticket.shutdownDate);
+    if (start && end) {
+        const u1 = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate());
+        const u2 = Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), end.getUTCDate());
+        const diff = Math.round((u2 - u1) / 86400000);
+        return diff >= 0 ? diff + 1 : 0;
+    }
+    return 0;
+}
+
+/** Short display for API instants / ISO strings (cost tool summary). */
+export function formatTicketDateForDisplay(value) {
+    const d = parseTicketInstant(value);
+    if (!d) return "";
+    try {
+        return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
+    } catch {
+        return d.toISOString().slice(0, 10);
+    }
+}
 
 // DevOps availability statuses
 export const DEVOPS_AVAILABILITY_STATUS = {
@@ -60,17 +139,17 @@ export const DEVOPS_AVAILABILITY_STATUS = {
 
 // Status colors for UI
 export const STATUS_COLORS = {
-    [TICKET_STATUS.CREATED]: { bg: "#dbeafe", text: "#1e40af" },
-    [TICKET_STATUS.ACCEPTED]: { bg: "#e0f2fe", text: "#0369a1" },
-    [TICKET_STATUS.MANAGER_APPROVAL_PENDING]: { bg: "#fef3c7", text: "#92400e" },
-    [TICKET_STATUS.MANAGER_APPROVED]: { bg: "#dcfce7", text: "#166534" },
-    [TICKET_STATUS.COST_APPROVAL_PENDING]: { bg: "#ffedd5", text: "#9a3412" },
-    [TICKET_STATUS.COST_APPROVED]: { bg: "#d1fae5", text: "#065f46" },
-    [TICKET_STATUS.IN_PROGRESS]: { bg: "#ddd6fe", text: "#5b21b6" },
-    [TICKET_STATUS.ACTION_REQUIRED]: { bg: "#fee2e2", text: "#991b1b" },
-    [TICKET_STATUS.ON_HOLD]: { bg: "#f3f4f6", text: "#374151" },
-    [TICKET_STATUS.COMPLETED]: { bg: "#d1fae5", text: "#065f46" },
-    [TICKET_STATUS.CLOSED]: { bg: "#fee2e2", text: "#dc2626" }
+    [TICKET_STATUS.CREATED]:                  { bg: "#eff6ff", text: "#1d4ed8" },
+    [TICKET_STATUS.ACCEPTED]:                 { bg: "#ecfeff", text: "#0e7490" },
+    [TICKET_STATUS.MANAGER_APPROVAL_PENDING]: { bg: "#fffbeb", text: "#b45309" },
+    [TICKET_STATUS.MANAGER_APPROVED]:         { bg: "#f0fdf4", text: "#15803d" },
+    [TICKET_STATUS.COST_APPROVAL_PENDING]:    { bg: "#fff7ed", text: "#c2410c" },
+    [TICKET_STATUS.COST_APPROVED]:            { bg: "#ecfdf5", text: "#059669" },
+    [TICKET_STATUS.IN_PROGRESS]:              { bg: "#f5f3ff", text: "#6d28d9" },
+    [TICKET_STATUS.ACTION_REQUIRED]:          { bg: "#fef2f2", text: "#dc2626" },
+    [TICKET_STATUS.ON_HOLD]:                  { bg: "#f9fafb", text: "#4b5563" },
+    [TICKET_STATUS.COMPLETED]:                { bg: "#f0fdf4", text: "#15803d" },
+    [TICKET_STATUS.CLOSED]:                   { bg: "#f9fafb", text: "#6b7280" }
 };
 
 // Status workflow
@@ -120,7 +199,8 @@ export const getDynamicAllowedTransitions = (ticket) => {
     }
     if (status === TICKET_STATUS.MANAGER_APPROVED) {
         if (costRequired && !costApproved) {
-            return [TICKET_STATUS.COST_APPROVAL_PENDING, TICKET_STATUS.CLOSED];
+            // Requesters cannot advance to cost pending; DevOps submits the estimate.
+            return [TICKET_STATUS.CLOSED];
         }
         return [TICKET_STATUS.IN_PROGRESS, TICKET_STATUS.CLOSED];
     }
@@ -136,28 +216,69 @@ export const getDynamicAllowedTransitions = (ticket) => {
 const API_BASE_URL = resolveApiBaseUrl();
 const INACTIVE_STATUS = "INACTIVE";
 const DATA_CHANGE_EVENT = "portal-data-changed";
+const DATA_BROADCAST_NAME = "portal-data-changed";
 const MEMORY_CACHE = new Map();
 const CACHE_TTL_MS = 30 * 1000;
+const TICKET_CACHE_PREFIX = "tickets:";
+const CACHE_KEYS = {
+    TICKETS_ALL: `${TICKET_CACHE_PREFIX}all`,
+    TICKET_STATS: `${TICKET_CACHE_PREFIX}stats`,
+    DEVOPS_TEAM: "devops-team",
+    PROJECTS: "projects",
+    MANAGERS_TRUE: "managers:true",
+    MANAGERS_FALSE: "managers:false"
+};
+
+let broadcastChannelSingleton = null;
+function getDataBroadcastChannel() {
+    if (typeof BroadcastChannel === "undefined") return null;
+    if (!broadcastChannelSingleton) {
+        try {
+            broadcastChannelSingleton = new BroadcastChannel(DATA_BROADCAST_NAME);
+        } catch {
+            broadcastChannelSingleton = null;
+        }
+    }
+    return broadcastChannelSingleton;
+}
 
 const emitDataChange = (scope, action) => {
-    if (typeof window === "undefined" || typeof window.dispatchEvent !== "function") return;
-    if (scope === "devops-team" || scope === "projects" || scope === "managers") {
-        MEMORY_CACHE.delete(`devops-team`);
-        MEMORY_CACHE.delete(`projects`);
-        MEMORY_CACHE.delete(`managers:true`);
-        MEMORY_CACHE.delete(`managers:false`);
+    if (typeof window === "undefined") return;
+    if (scope === "tickets") {
+        [...MEMORY_CACHE.keys()]
+            .filter((k) => k.startsWith(TICKET_CACHE_PREFIX))
+            .forEach((k) => MEMORY_CACHE.delete(k));
     }
-    window.dispatchEvent(new CustomEvent(DATA_CHANGE_EVENT, {
-        detail: {
-            scope,
-            action,
-            timestamp: Date.now()
+    if (scope === "devops-team" || scope === "projects" || scope === "managers") {
+        MEMORY_CACHE.delete(CACHE_KEYS.DEVOPS_TEAM);
+        MEMORY_CACHE.delete(CACHE_KEYS.PROJECTS);
+        MEMORY_CACHE.delete(CACHE_KEYS.MANAGERS_TRUE);
+        MEMORY_CACHE.delete(CACHE_KEYS.MANAGERS_FALSE);
+    }
+    const detail = { scope, action, timestamp: Date.now() };
+    const bc = getDataBroadcastChannel();
+    if (bc) {
+        try {
+            bc.postMessage(detail);
+        } catch {
+            /* ignore */
         }
-    }));
+    } else if (typeof window.dispatchEvent === "function") {
+        window.dispatchEvent(new CustomEvent(DATA_CHANGE_EVENT, { detail }));
+    }
 };
 
 export const subscribeDataChanges = (listener) => {
-    if (typeof window === "undefined" || typeof window.addEventListener !== "function") {
+    if (typeof window === "undefined") {
+        return () => {};
+    }
+    const bc = getDataBroadcastChannel();
+    if (bc) {
+        const onMessage = (ev) => listener?.(ev.data || {});
+        bc.addEventListener("message", onMessage);
+        return () => bc.removeEventListener("message", onMessage);
+    }
+    if (typeof window.addEventListener !== "function") {
         return () => {};
     }
     const handler = (event) => listener?.(event?.detail || {});
@@ -189,7 +310,68 @@ const setCached = (key, value) => {
     return value;
 };
 
-const toDisplayStatus = (status) => {
+const userTicketsCacheKey = (email = "") => `${TICKET_CACHE_PREFIX}user:${String(email || "me").toLowerCase()}`;
+
+export const invalidateDataCache = ({ scope = "all", keys = [] } = {}) => {
+    const removed = [];
+    const remove = (key) => {
+        if (MEMORY_CACHE.has(key)) {
+            MEMORY_CACHE.delete(key);
+            removed.push(key);
+        }
+    };
+
+    if (Array.isArray(keys) && keys.length) {
+        keys.forEach(remove);
+        return removed;
+    }
+
+    if (scope === "all") {
+        [...MEMORY_CACHE.keys()].forEach(remove);
+        return removed;
+    }
+
+    if (scope === "tickets") {
+        [...MEMORY_CACHE.keys()]
+            .filter((key) => key.startsWith(TICKET_CACHE_PREFIX))
+            .forEach(remove);
+        return removed;
+    }
+
+    if (scope === "devops-team") {
+        remove(CACHE_KEYS.DEVOPS_TEAM);
+        return removed;
+    }
+
+    if (scope === "projects") {
+        remove(CACHE_KEYS.PROJECTS);
+        return removed;
+    }
+
+    if (scope === "managers") {
+        remove(CACHE_KEYS.MANAGERS_TRUE);
+        remove(CACHE_KEYS.MANAGERS_FALSE);
+        return removed;
+    }
+
+    return removed;
+};
+
+export const applyCacheInvalidationHint = (hint = {}) => {
+    if (!hint || typeof hint !== "object") {
+        return invalidateDataCache({ scope: "tickets" });
+    }
+    if (Array.isArray(hint.keys) && hint.keys.length) {
+        return invalidateDataCache({ keys: hint.keys });
+    }
+    if (hint.scope) {
+        return invalidateDataCache({ scope: hint.scope });
+    }
+    return invalidateDataCache({ scope: "tickets" });
+};
+
+/** Normalize API or legacy status strings to UI labels used in STATUS_TRANSITIONS / dropdowns. */
+export const toDisplayTicketStatus = (status) => {
     if (!status) return TICKET_STATUS.CREATED;
     const key = String(status).toUpperCase().replace(/\s+/g, "_");
     if (key === "REJECTED") return TICKET_STATUS.CLOSED;
@@ -231,10 +413,10 @@ const toApiRequestType = (displayType) => {
         [REQUEST_TYPES.NEW_ENVIRONMENT]: "NEW_ENVIRONMENT",
         [REQUEST_TYPES.ENVIRONMENT_UP]: "ENVIRONMENT_UP",
         [REQUEST_TYPES.ENVIRONMENT_DOWN]: "ENVIRONMENT_DOWN",
-        [REQUEST_TYPES.ISSUE_FIX]: "ISSUE_FIX",
         [REQUEST_TYPES.BUILD_REQUEST]: "BUILD_REQUEST",
-        [REQUEST_TYPES.OTHER_QUERIES]: "OTHER_QUERIES",
-        [REQUEST_TYPES.CODE_CUT]: "CODE_CUT"
+        [REQUEST_TYPES.CODE_CUT]: "CODE_CUT",
+        "Issue Fix": "ISSUE_FIX",
+        "Other Queries": "OTHER_QUERIES"
     };
     return map[displayType] || "NEW_ENVIRONMENT";
 };
@@ -316,7 +498,7 @@ const apiRequest = async (endpoint, options = {}) => {
 const mapTimeline = (timeline = []) =>
     (timeline || []).map((entry) => ({
         ...entry,
-        status: toDisplayStatus(entry.status)
+        status: toDisplayTicketStatus(entry.status)
     }));
 
 const mapTicket = (ticket) => {
@@ -359,7 +541,7 @@ const mapTicket = (ticket) => {
             requestTypeCode ||
             REQUEST_TYPES.BUILD_REQUEST,
         environment: ticket.environment ? (ticket.environment.charAt(0) + ticket.environment.slice(1).toLowerCase()) : "",
-        status: toDisplayStatus(ticket.status),
+        status: toDisplayTicketStatus(ticket.status),
         costApprovalRequired: !!ticket.costApprovalRequired,
         estimatedCost: ticket.estimatedCost ?? null,
         costCurrency: ticket.costCurrency || "",
@@ -426,13 +608,36 @@ export const createTicket = async (ticketData) => {
 };
 
 export const getAllTickets = async () => {
+    const cacheKey = CACHE_KEYS.TICKETS_ALL;
+    const cached = getCached(cacheKey);
+    if (cached) {
+        void apiRequest("/tickets")
+            .then((data) => setCached(cacheKey, mapTickets(data)))
+            .catch(() => {});
+        return cached;
+    }
     const data = await apiRequest("/tickets");
-    return mapTickets(data);
+    return setCached(cacheKey, mapTickets(data));
 };
 
-export const getTicketsByUser = async (_email) => {
+export const getTicketsByUser = async (_email, { force = false } = {}) => {
+    const cacheKey = userTicketsCacheKey(_email);
+    if (!force) {
+        const cached = getCached(cacheKey);
+        if (cached) {
+            void apiRequest("/tickets/my-tickets")
+                .then((data) => setCached(cacheKey, mapTickets(data)))
+                .catch(() => {});
+            return cached;
+        }
+    }
     const data = await apiRequest("/tickets/my-tickets");
-    return mapTickets(data);
+    return setCached(cacheKey, mapTickets(data));
+};
+
+export const getTicketById = async (ticketId) => {
+    const raw = await apiRequest(`/tickets/${encodeURIComponent(ticketId)}`);
+    return mapTicket(raw);
 };
 
 export const getActiveTicketsForDevOps = async () => {
@@ -486,15 +691,24 @@ export const forwardTicket = async (ticketId, newAssignee, newAssigneeEmail, _us
     return mapTicket(updated);
 };
 
-export const submitCostEstimation = async (ticketId, estimatedCost, currency = "USD", notes = "") => {
+export const submitCostEstimation = async (
+    ticketId,
+    estimatedCost,
+    currency = "USD",
+    notes = "",
+    costApproverEmail = ""
+) => {
+    const body = {
+        ticketId,
+        estimatedCost: Number(estimatedCost),
+        currency,
+        notes: notes || ""
+    };
+    const ca = String(costApproverEmail || "").trim();
+    if (ca) body.costApproverEmail = ca;
     const updated = await apiRequest("/tickets/cost-submission", {
         method: "POST",
-        body: JSON.stringify({
-            ticketId,
-            estimatedCost: Number(estimatedCost),
-            currency,
-            notes: notes || ""
-        })
+        body: JSON.stringify(body)
     });
     emitDataChange("tickets", "cost-submission");
     return mapTicket(updated);
@@ -538,11 +752,49 @@ export const toggleTicketActiveStatus = async (ticketId, user, isActive) => {
 export const filterTickets = async () => getAllTickets();
 
 export const getTicketStats = async () => {
+    const cacheKey = CACHE_KEYS.TICKET_STATS;
+    const cached = getCached(cacheKey);
+    if (cached) {
+        void (async () => {
+            try {
+                const statsPayload = await apiRequest("/tickets/stats");
+                const stats = statsPayload?.data || statsPayload || {};
+                const byStatus = {};
+                Object.entries(stats.byStatus || {}).forEach(([k, v]) => {
+                    const d = toDisplayTicketStatus(k);
+                    byStatus[d] = (byStatus[d] || 0) + Number(v);
+                });
+                const byRequestType = {};
+                Object.entries(stats.byRequestType || {}).forEach(([k, v]) => {
+                    byRequestType[REQUEST_TYPES[k] || REQUEST_TYPES.BUILD_REQUEST] = v;
+                });
+                const byEnvironment = {};
+                Object.entries(stats.byEnvironment || {}).forEach(([k, v]) => {
+                    byEnvironment[k.charAt(0) + k.slice(1).toLowerCase()] = v;
+                });
+                const myTickets = await getTicketsByUser(undefined, { force: true });
+                setCached(cacheKey, {
+                    total: myTickets.length,
+                    active: myTickets.filter((t) => t.isActive !== false && ![TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(t.status)).length,
+                    completed: myTickets.filter((t) => t.status === TICKET_STATUS.COMPLETED).length,
+                    pending: myTickets.filter((t) => t.status === TICKET_STATUS.CREATED).length,
+                    inactive: myTickets.filter((t) => t.isActive === false).length,
+                    byStatus,
+                    byRequestType,
+                    byEnvironment
+                });
+            } catch {
+                // Keep stale cached stats on background refresh failure.
+            }
+        })();
+        return cached;
+    }
+
     const statsPayload = await apiRequest("/tickets/stats");
     const stats = statsPayload?.data || statsPayload || {};
     const byStatus = {};
     Object.entries(stats.byStatus || {}).forEach(([k, v]) => {
-        const d = toDisplayStatus(k);
+        const d = toDisplayTicketStatus(k);
         byStatus[d] = (byStatus[d] || 0) + Number(v);
     });
     const byRequestType = {};
@@ -554,8 +806,8 @@ export const getTicketStats = async () => {
         byEnvironment[k.charAt(0) + k.slice(1).toLowerCase()] = v;
     });
 
-    const myTickets = await getTicketsByUser();
-    return {
+    const myTickets = await getTicketsByUser(undefined, { force: true });
+    return setCached(cacheKey, {
         total: myTickets.length,
         active: myTickets.filter((t) => t.isActive !== false && ![TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(t.status)).length,
         completed: myTickets.filter((t) => t.status === TICKET_STATUS.COMPLETED).length,
@@ -564,7 +816,7 @@ export const getTicketStats = async () => {
         byStatus,
         byRequestType,
         byEnvironment
-    };
+    });
 };
 
 // DevOps Team
@@ -727,6 +979,16 @@ export const addProject = async (projectName, projectTag = "", environments = []
     });
     emitDataChange("projects", "create");
     return created;
+};
+
+/** Replace product deployment environment list (admin workflow editor). */
+export const updateProjectEnvironments = async (projectId, environments = []) => {
+    const updated = await apiRequest(`/projects/${encodeURIComponent(projectId)}/environments`, {
+        method: "PATCH",
+        body: JSON.stringify({ environments: Array.isArray(environments) ? environments : [] })
+    });
+    emitDataChange("projects", "update-environments");
+    return updated;
 };
 
 // Standups

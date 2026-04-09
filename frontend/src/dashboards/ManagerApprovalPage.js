@@ -394,12 +394,12 @@ const spinKeyframes = `
 const styles = {
     container: {
         minHeight: '100vh',
-        background: 'linear-gradient(135deg, #f0f4f8 0%, #e2e8f0 100%)',
+        background: '#f0f4f8',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
         padding: '24px',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+        fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
     },
     card: {
         width: '100%',
@@ -417,7 +417,7 @@ const styles = {
         padding: '60px 20px'
     },
     header: {
-        background: 'linear-gradient(135deg, #0052CC 0%, #0747A6 100%)',
+        background: '#0052CC',
         padding: '32px 24px',
         display: 'flex',
         alignItems: 'center',
@@ -521,7 +521,7 @@ const styles = {
         width: '44px',
         height: '44px',
         borderRadius: '50%',
-        background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+        background: '#2563eb',
         color: '#ffffff',
         display: 'flex',
         alignItems: 'center',
@@ -624,11 +624,11 @@ const styles = {
         transition: 'all 0.2s ease'
     },
     submitApprove: {
-        background: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
+        background: '#16a34a',
         color: '#ffffff'
     },
     submitReject: {
-        background: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)',
+        background: '#dc2626',
         color: '#ffffff'
     },
     submitDisabled: {

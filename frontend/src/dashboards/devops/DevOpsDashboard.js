@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+﻿import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useMsal } from "@azure/msal-react";
 import { 
     LogOut, 
@@ -23,7 +23,6 @@ import {
     Plus,
     ArrowRight,
     X,
-    Send,
     User as UserIcon,
     Wifi,
     WifiOff,
@@ -37,7 +36,8 @@ import {
     Coffee,
     Moon,
     Shield,
-    Database
+    Database,
+    XCircle
 } from "lucide-react";
 import { 
     StatusBadge, 
@@ -51,7 +51,6 @@ import {
     addTicketNote,
     assignTicket,
     forwardTicket,
-    submitCostEstimation,
     getTicketStats,
     getUnassignedTickets,
     getActiveTickets,
@@ -68,8 +67,8 @@ import {
     getRotaSchedule,
     subscribeDataChanges
 } from "../../services/ticketService";
+import { openCostEstimateWindow } from "./openCostEstimateWindow";
 import { useRealTimeSync, useConnectionStatus } from "../../services/useRealTimeSync";
-import { useToast } from "../../services/ToastNotification";
 import { 
     playShortNotification, 
     playSuccessNotification,
@@ -79,9 +78,11 @@ import {
     setVolume,
     getVolume
 } from "../../services/notificationService";
-import MonitoringPanel from "../MonitoringPanel";
+import AnalyticsDashboard from "../admin/AnalyticsDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
+import DashboardProfilePage from "../../components/DashboardProfilePage";
+import { useTheme } from "../../services/ThemeContext";
 
 const DEVOPS_SIDEBAR_NAV_DEFAULTS = { queue: true, archive: true, team: true, account: true };
 
@@ -104,6 +105,14 @@ const STATUS_CONFIG = {
         description: 'Session inactive — dashboard locked'
     }
 };
+
+/** Sidebar menu order for availability picker */
+const AVAILABILITY_STATUS_ORDER = [
+    DEVOPS_AVAILABILITY_STATUS.AVAILABLE,
+    DEVOPS_AVAILABILITY_STATUS.AWAY,
+    DEVOPS_AVAILABILITY_STATUS.BUSY,
+    DEVOPS_AVAILABILITY_STATUS.OFFLINE
+];
 
 // Forward Ticket Modal Component
 const ForwardTicketModal = ({ ticket, onClose, onForward, currentUser }) => {
@@ -190,77 +199,9 @@ const ForwardTicketModal = ({ ticket, onClose, onForward, currentUser }) => {
     );
 };
 
-const CostApprovalModal = ({ ticket, onClose, onSubmit }) => {
-    const [estimatedCost, setEstimatedCost] = useState(ticket?.estimatedCost || "");
-    const [currency, setCurrency] = useState(ticket?.costCurrency || "USD");
-    const [notes, setNotes] = useState("");
-
-    const handleSubmit = () => {
-        if (!estimatedCost || Number(estimatedCost) <= 0) {
-            alert("Please enter a valid estimated cost");
-            return;
-        }
-        onSubmit(ticket.id, Number(estimatedCost), currency, notes);
-        onClose();
-    };
-
-    return (
-        <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-content forward-modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2><Database size={20} /> Submit Cost for Approval</h2>
-                    <button className="modal-close" onClick={onClose}><X size={20} /></button>
-                </div>
-                <div className="modal-body">
-                    <div className="forward-ticket-info">
-                        <p><strong>Ticket:</strong> {ticket.id}</p>
-                        <p><strong>Product:</strong> {ticket.productName}</p>
-                    </div>
-                    <div className="form-field">
-                        <label>Estimated Cost *</label>
-                        <input
-                            type="number"
-                            min="0.01"
-                            step="0.01"
-                            value={estimatedCost}
-                            onChange={(e) => setEstimatedCost(e.target.value)}
-                            placeholder="Enter estimated cost"
-                        />
-                    </div>
-                    <div className="form-field">
-                        <label>Currency *</label>
-                        <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-                            <option value="USD">USD</option>
-                            <option value="INR">INR</option>
-                            <option value="EUR">EUR</option>
-                            <option value="GBP">GBP</option>
-                        </select>
-                    </div>
-                    <div className="form-field">
-                        <label>Notes (Optional)</label>
-                        <textarea
-                            value={notes}
-                            onChange={(e) => setNotes(e.target.value)}
-                            placeholder="Cost breakdown or notes for manager..."
-                            rows={3}
-                        />
-                    </div>
-                    <div className="modal-actions">
-                        <button className="btn-secondary" onClick={onClose}>Cancel</button>
-                        <button className="btn-primary" onClick={handleSubmit}>
-                            <Send size={16} /> Send Cost Approval
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-};
-
 export const DevOpsDashboard = () => {
     const { instance, accounts } = useMsal();
-    const { addToast } = useToast();
-    
+    const { theme, setTheme, themes } = useTheme();
     const account = accounts[0];
     const userName = account?.name || "DevOps Engineer";
     const userEmail = account?.username || "devops@company.com";
@@ -274,7 +215,6 @@ export const DevOpsDashboard = () => {
     const [activeSection, setActiveSection] = useState('unassigned');
     const [stats, setStats] = useState({});
     const [forwardingTicket, setForwardingTicket] = useState(null);
-    const [costApprovalTicket, setCostApprovalTicket] = useState(null);
     const [myAvailability, setMyAvailability] = useState(DEVOPS_AVAILABILITY_STATUS.AVAILABLE);
     const [teamMembers, setTeamMembers] = useState([]);
     const [standupNotes, setStandupNotes] = useState([]);
@@ -300,10 +240,12 @@ export const DevOpsDashboard = () => {
     const { isConnected, syncMethod } = useConnectionStatus();
     
     const [showStatusSelector, setShowStatusSelector] = useState(false);
+    const statusRowRef = useRef(null);
 
     // Derived permission state
     const isReadOnly = myAvailability === DEVOPS_AVAILABILITY_STATUS.AWAY || myAvailability === DEVOPS_AVAILABILITY_STATUS.BUSY;
-    
+    const canSubmitCostEstimate = true;
+
     // Section counts
     const [sectionCounts, setSectionCounts] = useState({
         unassigned: 0,
@@ -429,6 +371,23 @@ export const DevOpsDashboard = () => {
         });
         return unsubscribe;
     }, [loadTickets]);
+
+    useEffect(() => {
+        if (!showStatusSelector) return;
+        const onPointerDown = (e) => {
+            if (statusRowRef.current?.contains(e.target)) return;
+            setShowStatusSelector(false);
+        };
+        const onKey = (e) => {
+            if (e.key === "Escape") setShowStatusSelector(false);
+        };
+        document.addEventListener("mousedown", onPointerDown);
+        document.addEventListener("keydown", onKey);
+        return () => {
+            document.removeEventListener("mousedown", onPointerDown);
+            document.removeEventListener("keydown", onKey);
+        };
+    }, [showStatusSelector]);
 
     // Manual refresh handler
     const handleManualRefresh = () => {
@@ -602,19 +561,6 @@ export const DevOpsDashboard = () => {
         }
     };
 
-    const handleSubmitCostApproval = async (ticketId, estimatedCost, currency, notes) => {
-        try {
-            setActionLoading("Submitting cost approval...");
-            const updated = await submitCostEstimation(ticketId, estimatedCost, currency, notes);
-            upsertTicketLocally(updated);
-            addToast("Cost approval email sent to manager", "success");
-        } catch (error) {
-            alert(`Error: ${error.message}`);
-        } finally {
-            setActionLoading("");
-        }
-    };
-
     const handleLogout = () => {
         instance.logoutRedirect({
             postLogoutRedirectUri: `${window.location.origin}/login`,
@@ -622,6 +568,7 @@ export const DevOpsDashboard = () => {
     };
 
     const handleAvailabilityChange = async (availability) => {
+        setShowStatusSelector(false);
         try {
             setActionLoading("Updating availability...");
             await updateDevOpsAvailability(userEmail, availability, userName);
@@ -652,228 +599,132 @@ export const DevOpsDashboard = () => {
         }
     };
     
-    // Quick action buttons for ticket management - disabled when read-only
     const QuickActions = ({ ticket }) => {
-        if (isReadOnly) return null; // No actions in read-only mode
-        const requiresCostApproval = !!ticket.costApprovalRequired || !!ticket.workflowConfiguration?.costApprovalRequired;
+        if (isReadOnly) return null;
 
-        // Unassigned ticket in a non-new state — show a quick "Assign Me" badge
-        if (!ticket.assignedTo && ticket.status !== TICKET_STATUS.CREATED) {
-            return (
-                <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    <button
-                        className="quick-btn accept"
-                        style={{ background: '#f0f9ff', color: '#0369a1', borderColor: '#bae6fd' }}
-                        onClick={() => handleAssignToSelf(ticket.id)}
-                    >
-                        <UserPlus size={14} />
-                        Assign Me
-                    </button>
-                </div>
-            );
-        }
-
-        // For unassigned tickets
         if (!ticket.assignedTo && ticket.status === TICKET_STATUS.CREATED) {
             return (
                 <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    <button 
-                        className="quick-btn accept"
-                        onClick={() => handleAcceptTicket(ticket.id)}
-                    >
-                        <UserPlus size={14} />
-                        Accept Ticket
+                    <button className="quick-btn accept" onClick={() => handleAcceptTicket(ticket.id)}>
+                        <UserPlus size={14} /> Accept
                     </button>
                 </div>
             );
         }
-        
+
+        if (!ticket.assignedTo && ticket.status !== TICKET_STATUS.CREATED) {
+            return (
+                <div className="quick-actions" onClick={e => e.stopPropagation()}>
+                    <button className="quick-btn accept" style={{ background: '#eff6ff', color: '#1d4ed8', borderColor: '#bfdbfe' }}
+                        onClick={() => handleAssignToSelf(ticket.id)}>
+                        <UserPlus size={14} /> Assign Me
+                    </button>
+                </div>
+            );
+        }
+
+        const actions = [];
+
         if (ticket.status === TICKET_STATUS.ACCEPTED) {
-            return (
-                <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    {ticket.managerApprovalRequired && (
-                        <button 
-                            className="quick-btn"
-                            onClick={() => handleApprovalTrigger(ticket)}
-                        >
-                            Request Approval
-                        </button>
-                    )}
-                    {!ticket.managerApprovalRequired && (
-                        <button
-                            className="quick-btn start"
-                            onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.IN_PROGRESS, 'Started working on ticket')}
-                        >
-                            <PlayCircle size={14} />
-                            Start
-                        </button>
-                    )}
-                    <button 
-                        className="quick-btn forward"
-                        onClick={() => setForwardingTicket(ticket)}
-                    >
-                        <Forward size={14} />
-                        Forward
+            if (ticket.managerApprovalRequired) {
+                actions.push(
+                    <button key="pending" className="quick-btn" onClick={() => handleApprovalTrigger(ticket)}>
+                        <Clock size={14} /> Pending
                     </button>
-                </div>
-            );
+                );
+            }
+            if (!ticket.managerApprovalRequired) {
+                actions.push(
+                    <button key="progress" className="quick-btn start" onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.IN_PROGRESS, 'Started working')}>
+                        <PlayCircle size={14} /> Progress
+                    </button>
+                );
+            }
         }
-        
-        if (ticket.status === TICKET_STATUS.MANAGER_APPROVAL_PENDING) {
-            return (
-                <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    <button className="quick-btn" disabled>
-                        <Clock size={14} />
-                        Waiting approval
-                    </button>
-                    <button 
-                        className="quick-btn forward"
-                        onClick={() => setForwardingTicket(ticket)}
-                    >
-                        <Forward size={14} />
-                        Forward
-                    </button>
-                </div>
+
+        if (ticket.status === TICKET_STATUS.MANAGER_APPROVED || ticket.status === TICKET_STATUS.COST_APPROVED) {
+            actions.push(
+                <button key="progress" className="quick-btn start" onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.IN_PROGRESS, 'Starting work')}>
+                    <PlayCircle size={14} /> Progress
+                </button>
             );
         }
 
-        if (ticket.status === TICKET_STATUS.MANAGER_APPROVED) {
-            return (
-                <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    {requiresCostApproval ? (
-                        <button
-                            className="quick-btn"
-                            onClick={() => setCostApprovalTicket(ticket)}
-                        >
-                            <Database size={14} />
-                            Raise Cost Approval
-                        </button>
-                    ) : (
-                        <>
-                            <button
-                                className="quick-btn"
-                                onClick={() => setCostApprovalTicket(ticket)}
-                            >
-                                <Database size={14} />
-                                Raise Cost Approval
-                            </button>
-                            <button
-                                className="quick-btn start"
-                                onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.IN_PROGRESS, 'No cost approval needed. Starting work.')}
-                            >
-                                <PlayCircle size={14} />
-                                Start Implementation
-                            </button>
-                        </>
-                    )}
-                </div>
+        if (canSubmitCostEstimate) {
+            actions.push(
+                <button
+                    key="cost"
+                    className="quick-btn"
+                    onClick={() => openCostEstimateWindow(ticket.id)}
+                    type="button"
+                >
+                    <Database size={14} /> Cost Estimate
+                </button>
             );
         }
 
-        if (ticket.status === TICKET_STATUS.COST_APPROVAL_PENDING) {
-            return (
-                <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    <button className="quick-btn" disabled>
-                        <Clock size={14} />
-                        Pending Cost Approval
-                    </button>
-                </div>
-            );
-        }
-
-        if (ticket.status === TICKET_STATUS.COST_APPROVED) {
-            return (
-                <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    <button
-                        className="quick-btn start"
-                        onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.IN_PROGRESS, 'Cost approved. Starting work.')}
-                    >
-                        <PlayCircle size={14} />
-                        Start Work
-                    </button>
-                </div>
-            );
-        }
-        
         if (ticket.status === TICKET_STATUS.IN_PROGRESS) {
-            return (
-                <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    <button 
-                        className="quick-btn complete"
-                        onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.COMPLETED, 'Work completed')}
-                    >
-                        <CheckCircle size={14} />
-                        Complete
-                    </button>
-                    <button 
-                        className="quick-btn"
-                        onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.ACTION_REQUIRED, 'Action required from requester')}
-                    >
-                        <AlertCircle size={14} />
-                        Need Info
-                    </button>
-                    <button 
-                        className="quick-btn forward"
-                        onClick={() => setForwardingTicket(ticket)}
-                    >
-                        <Forward size={14} />
-                        Forward
-                    </button>
-                </div>
+            actions.push(
+                <button key="close" className="quick-btn complete" onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.COMPLETED, 'Work completed')}>
+                    <CheckCircle size={14} /> Close
+                </button>
             );
         }
-        
-        if (ticket.status === TICKET_STATUS.ACTION_REQUIRED) {
-            return (
-                <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    <button 
-                        className="quick-btn start"
-                        onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.IN_PROGRESS, 'Resuming work')}
-                    >
-                        <PlayCircle size={14} />
-                        Resume
-                    </button>
-                </div>
-            );
-        }
-        
+
         if (ticket.status === TICKET_STATUS.COMPLETED) {
-            return (
-                <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    <button 
-                        className="quick-btn"
-                        onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.CLOSED, 'Ticket closed')}
-                    >
-                        Close Ticket
-                    </button>
-                </div>
+            actions.push(
+                <button key="close" className="quick-btn" onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.CLOSED, 'Ticket closed')}>
+                    Close
+                </button>
             );
         }
-        
-        return null;
+
+        if (ticket.status === TICKET_STATUS.ACTION_REQUIRED) {
+            actions.push(
+                <button key="progress" className="quick-btn start" onClick={() => handleStatusChange(ticket.id, TICKET_STATUS.IN_PROGRESS, 'Resuming work')}>
+                    <PlayCircle size={14} /> Progress
+                </button>
+            );
+        }
+
+        if (actions.length === 0) return null;
+
+        return (
+            <div className="quick-actions" onClick={e => e.stopPropagation()}>
+                {actions}
+            </div>
+        );
     };
 
     // Animated Status Selector component
     const StatusSelector = ({ compact = false }) => {
         return (
-            <div className={`status-selector ${compact ? 'compact' : ''}`}>
-                {Object.entries(STATUS_CONFIG).map(([status, config]) => {
+            <div className={`status-selector ${compact ? 'compact' : ''}`} role="listbox" aria-label="Set availability">
+                {AVAILABILITY_STATUS_ORDER.map((status) => {
+                    const config = STATUS_CONFIG[status];
+                    if (!config) return null;
                     const IconComponent = config.icon;
                     const isActive = myAvailability === status;
                     return (
                         <button
                             key={status}
+                            type="button"
                             className={`status-option ${isActive ? 'active' : ''}`}
                             onClick={() => handleAvailabilityChange(status)}
                             style={{
                                 '--status-color': config.color,
                                 '--status-bg': config.bg
                             }}
+                            role="option"
+                            aria-selected={isActive}
                         >
                             <div className={`status-dot-animated ${isActive ? 'pulse' : ''}`}
                                  style={{ backgroundColor: config.color }} />
-                            <IconComponent size={compact ? 14 : 18} />
-                            <span className="status-option-label">{config.label}</span>
+                            <IconComponent size={compact ? 14 : 18} aria-hidden />
+                            <span className="status-option-text">
+                                <span className="status-option-label">{config.label}</span>
+                                <span className="status-option-desc">{config.description}</span>
+                            </span>
                             {isActive && <div className="status-active-indicator" />}
                         </button>
                     );
@@ -900,191 +751,145 @@ export const DevOpsDashboard = () => {
         <div className={`dashboard-layout devops-dashboard ${isReadOnly ? 'is-readonly' : ''}`}>
 
 
-            <aside className="sidebar jira-style">
-                <div className="sidebar-brand">
-                    <div className="brand-logo" style={{ position: 'relative' }}>
-                        <Terminal size={28} />
-                        <div 
-                            title={isConnected ? 'Connected' : 'Disconnected'}
-                            style={{
-                                position: 'absolute',
-                                top: -2,
-                                right: -2,
-                                width: 12,
-                                height: 12,
-                                borderRadius: '50%',
-                                backgroundColor: isConnected ? '#36B37E' : '#FF5630',
-                                border: '2px solid #fff'
-                            }} 
-                        />
+            <aside className="shipit-sidebar">
+                {/* Brand */}
+                <div className="sb-brand">
+                    <div className="sb-brand-icon" style={{ background: '#0891b2' }}>
+                        <Terminal size={18} />
+                        <span className={`sb-conn-dot ${isConnected ? 'connected' : 'disconnected'}`}
+                              title={isConnected ? 'Live connection' : 'Disconnected'} />
                     </div>
-                    <div className="brand-text">
-                        <h2>CloudOps Hub</h2>
-                        <span className="brand-subtitle">Engineering Console</span>
+                    <div className="sb-brand-meta">
+                        <span className="sb-app-name">ShipIt</span>
+                        <span className="sb-app-subtitle">Engineering Console</span>
                     </div>
                 </div>
-                <nav className="sidebar-nav">
-                    <div className="nav-section">
-                        <NavSectionToggle
-                            label="Service Queue"
-                            open={navGroups.queue}
-                            onToggle={() => setNavGroups((p) => ({ ...p, queue: !p.queue }))}
-                        />
-                        {navGroups.queue && (
-                            <>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'unassigned' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); handleSectionChange('unassigned'); }}
-                                >
-                                    <Inbox size={18} /> 
-                                    New Requests
-                                    {sectionCounts.unassigned > 0 && (
-                                        <span className="nav-badge urgent">{sectionCounts.unassigned}</span>
-                                    )}
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'myTickets' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); handleSectionChange('myTickets'); }}
-                                >
-                                    <Ticket size={18} /> 
-                                    Assigned to Me
-                                    {sectionCounts.myTickets > 0 && (
-                                        <span className="nav-badge">{sectionCounts.myTickets}</span>
-                                    )}
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'active' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); handleSectionChange('active'); }}
-                                >
-                                    <Activity size={18} /> 
-                                    In Progress
-                                    {sectionCounts.active > 0 && (
-                                        <span className="nav-badge">{sectionCounts.active}</span>
-                                    )}
-                                </a>
-                            </>
-                        )}
+
+                {/* Navigation */}
+                <nav className="sb-nav">
+                    <div className="sb-group">
+                        <span className="sb-group-label">Service Queue</span>
+                        <a href="#" className={`sb-item ${activeSection === 'unassigned' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); handleSectionChange('unassigned'); }}>
+                            <span className="sb-item-icon"><Inbox size={15} /></span>
+                            <span className="sb-item-text">New Requests</span>
+                            {sectionCounts.unassigned > 0 && <span className="sb-badge urgent">{sectionCounts.unassigned}</span>}
+                        </a>
+                        <a href="#" className={`sb-item ${activeSection === 'myTickets' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); handleSectionChange('myTickets'); }}>
+                            <span className="sb-item-icon"><Ticket size={15} /></span>
+                            <span className="sb-item-text">Assigned to Me</span>
+                            {sectionCounts.myTickets > 0 && <span className="sb-badge">{sectionCounts.myTickets}</span>}
+                        </a>
+                        <a href="#" className={`sb-item ${activeSection === 'active' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); handleSectionChange('active'); }}>
+                            <span className="sb-item-icon"><Activity size={15} /></span>
+                            <span className="sb-item-text">In Progress</span>
+                            {sectionCounts.active > 0 && <span className="sb-badge">{sectionCounts.active}</span>}
+                        </a>
                     </div>
-                    <div className="nav-section">
-                        <NavSectionToggle
-                            label="Archive"
-                            open={navGroups.archive}
-                            onToggle={() => setNavGroups((p) => ({ ...p, archive: !p.archive }))}
-                        />
-                        {navGroups.archive && (
-                            <>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'history' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); handleSectionChange('history'); }}
-                                >
-                                    <History size={18} /> 
-                                    Completed
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'closed' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); handleSectionChange('closed'); }}
-                                >
-                                    <CheckCircle size={18} /> 
-                                    Closed
-                                </a>
-                            </>
-                        )}
+
+                    <div className="sb-group">
+                        <span className="sb-group-label">Archive</span>
+                        <a href="#" className={`sb-item ${activeSection === 'history' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); handleSectionChange('history'); }}>
+                            <span className="sb-item-icon"><History size={15} /></span>
+                            <span className="sb-item-text">Completed</span>
+                        </a>
+                        <a href="#" className={`sb-item ${activeSection === 'closed' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); handleSectionChange('closed'); }}>
+                            <span className="sb-item-icon"><CheckCircle size={15} /></span>
+                            <span className="sb-item-text">Closed</span>
+                        </a>
                     </div>
-                    <div className="nav-section">
-                        <NavSectionToggle
-                            label="Team"
-                            open={navGroups.team}
-                            onToggle={() => setNavGroups((p) => ({ ...p, team: !p.team }))}
-                        />
-                        {navGroups.team && (
-                            <>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'standup' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); handleSectionChange('standup'); }}
-                                >
-                                    <StickyNote size={18} /> 
-                                    Daily Sync
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'rota' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); handleSectionChange('rota'); }}
-                                >
-                                    <RotateCcw size={18} /> 
-                                    On-Call Schedule
-                                </a>
-                                <a 
-                                    href="#"
-                                    className={activeSection === 'monitoring' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); handleSectionChange('monitoring'); }}
-                                >
-                                    <BarChart3 size={18} /> Analytics
-                                </a>
-                            </>
-                        )}
+
+                    <div className="sb-group">
+                        <span className="sb-group-label">Team</span>
+                        <a href="#" className={`sb-item ${activeSection === 'standup' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); handleSectionChange('standup'); }}>
+                            <span className="sb-item-icon"><StickyNote size={15} /></span>
+                            <span className="sb-item-text">Daily Sync</span>
+                        </a>
+                        <a href="#" className={`sb-item ${activeSection === 'rota' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); handleSectionChange('rota'); }}>
+                            <span className="sb-item-icon"><RotateCcw size={15} /></span>
+                            <span className="sb-item-text">On-Call Schedule</span>
+                        </a>
+                        <a href="#" className={`sb-item ${activeSection === 'monitoring' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); handleSectionChange('monitoring'); }}>
+                            <span className="sb-item-icon"><BarChart3 size={15} /></span>
+                            <span className="sb-item-text">Analytics</span>
+                        </a>
                     </div>
-                    <div className="nav-section">
-                        <NavSectionToggle
-                            label="Account"
-                            open={navGroups.account}
-                            onToggle={() => setNavGroups((p) => ({ ...p, account: !p.account }))}
-                        />
-                        {navGroups.account && (
-                            <>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'settings' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); handleSectionChange('settings'); }}
-                                >
-                                    <Settings size={18} />
-                                    Preferences
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={`nav-profile-link ${activeSection === 'profile' ? 'active' : ''}`}
-                                    onClick={(e) => { e.preventDefault(); handleSectionChange('profile'); }}
-                                >
-                                    <ProfileIcon size={18} />
-                                    My Account
-                                </a>
-                            </>
-                        )}
+
+                    <div className="sb-group">
+                        <span className="sb-group-label">Account</span>
+                        <a href="#" className={`sb-item ${activeSection === 'settings' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); handleSectionChange('settings'); }}>
+                            <span className="sb-item-icon"><Settings size={15} /></span>
+                            <span className="sb-item-text">Preferences</span>
+                        </a>
+                        <a href="#" className={`sb-item ${activeSection === 'profile' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); handleSectionChange('profile'); }}>
+                            <span className="sb-item-icon"><ProfileIcon size={15} /></span>
+                            <span className="sb-item-text">My Account</span>
+                        </a>
                     </div>
                 </nav>
-                <div className="sidebar-footer">
-                    <div className="user-info">
-                        <span className="user-name">{userName}</span>
-                        <span className="user-email">{userEmail}</span>
-                        <span className="user-role badge-devops">
-                            Engineering Access
-                        </span>
-                        <div className="availability-control">
-                            <label htmlFor="devops-availability">My Status</label>
-                            <button
-                                className="status-trigger-btn"
-                                onClick={() => setShowStatusSelector(!showStatusSelector)}
-                                style={{ '--status-color': STATUS_CONFIG[myAvailability]?.color || '#6B778C' }}
+
+                {/* Footer */}
+                <div className="sb-footer">
+                    {/* My Status selector */}
+                    <div className="sb-status-row" ref={statusRowRef}>
+                        <button
+                            type="button"
+                            className="sb-status-btn"
+                            aria-expanded={showStatusSelector}
+                            aria-haspopup="listbox"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setShowStatusSelector((v) => !v);
+                            }}
+                        >
+                            {(() => {
+                                const cfg = STATUS_CONFIG[myAvailability] || STATUS_CONFIG[DEVOPS_AVAILABILITY_STATUS.OFFLINE];
+                                const StatusIcon = cfg.icon;
+                                return (
+                                    <>
+                                        <StatusIcon size={16} style={{ color: cfg.color, flexShrink: 0 }} aria-hidden />
+                                        <div className="sb-status-btn-text">
+                                            <span className="sb-status-btn-label">My status</span>
+                                            <span className="sb-status-btn-value">{cfg.label}</span>
+                                        </div>
+                                    </>
+                                );
+                            })()}
+                        </button>
+                        {showStatusSelector && (
+                            <div
+                                className="status-selector-popup sb-status-popup"
+                                onMouseDown={(e) => e.stopPropagation()}
                             >
-                                <div className={`status-dot-animated pulse`}
-                                     style={{ backgroundColor: STATUS_CONFIG[myAvailability]?.color || '#6B778C' }} />
-                                <span>{STATUS_CONFIG[myAvailability]?.label || myAvailability}</span>
-                            </button>
-                            {showStatusSelector && (
-                                <div className="status-selector-popup">
-                                    <StatusSelector compact />
-                                </div>
-                            )}
+                                <StatusSelector compact />
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="sb-user-row">
+                        <div className="sb-avatar" style={{ background: '#0e7490' }}>
+                            {(userName || '').split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase() || '?'}
+                        </div>
+                        <div className="sb-user-meta">
+                            <span className="sb-user-name">{userName}</span>
+                            <span className="sb-user-email">{userEmail}</span>
                         </div>
                     </div>
-                    <button className="logout-btn" onClick={handleLogout}>
-                        <LogOut size={16} /> Sign Out
-                    </button>
+                    <div className="sb-footer-actions">
+                        <span className="sb-role-badge devops">DevOps</span>
+                        <button className="sb-logout-btn" onClick={handleLogout}>
+                            <LogOut size={12} /> Sign Out
+                        </button>
+                    </div>
                 </div>
             </aside>
             
@@ -1137,18 +942,13 @@ export const DevOpsDashboard = () => {
                                 {activeSection === 'rota' && 'Night Shift Rota'}
                                 {activeSection === 'settings' && 'Settings'}
                             </h1>
-                            <p className="header-subtitle">
-                                {activeSection === 'unassigned' && 'New tickets waiting to be assigned to a DevOps engineer.'}
-                                {activeSection === 'myTickets' && 'Tickets currently assigned to you.'}
-                                {activeSection === 'active' && 'All tickets currently being worked on by the team.'}
-                                {activeSection === 'history' && 'Completed and closed tickets.'}
-                                {activeSection === 'closed' && 'Tickets with closed status only.'}
-                                {activeSection === 'monitoring' && 'Track product environment up/down activity and utilization metrics.'}
-                                {activeSection === 'profile' && 'Azure login details for your account.'}
-                                {activeSection === 'standup' && 'Date-wise sticky notes for daily standup updates by each DevOps member.'}
-                                {activeSection === 'rota' && 'Auto-assigned night shift rota in alphabetical order.'}
-                                {activeSection === 'settings' && 'Configure notifications and preferences.'}
-                            </p>
+                            {['unassigned', 'myTickets', 'active'].includes(activeSection) && (
+                                <p className="header-subtitle">
+                                    {activeSection === 'unassigned' && 'New tickets waiting to be assigned.'}
+                                    {activeSection === 'myTickets' && 'Tickets currently assigned to you.'}
+                                    {activeSection === 'active' && 'All active tickets being worked on.'}
+                                </p>
+                            )}
                         </div>
                         <div className="header-actions">
                             <div className="search-box-mini">
@@ -1216,13 +1016,43 @@ export const DevOpsDashboard = () => {
                                     </div>
                                 )}
                             </div>
-                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#F4F5F7', borderRadius: 8 }}>
-                                <h4 style={{ marginBottom: '0.5rem', color: '#172B4D' }}>Connection Status</h4>
-                                <p style={{ fontSize: '0.875rem', color: '#5E6C84' }}>
+                            <div className="sound-settings" style={{ marginTop: '1.5rem' }}>
+                                <div className="sound-settings-header">
+                                    <span className="sound-settings-title">
+                                        <Settings size={18} style={{ marginRight: 8 }} />
+                                        Theme
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
+                                    {themes.map((t) => (
+                                        <button
+                                            key={t}
+                                            onClick={() => setTheme(t)}
+                                            style={{
+                                                padding: '0.5rem 1.25rem',
+                                                borderRadius: 8,
+                                                border: theme === t ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
+                                                background: theme === t ? 'var(--accent-light)' : 'var(--card-bg)',
+                                                color: 'var(--text-main)',
+                                                fontWeight: theme === t ? 600 : 400,
+                                                cursor: 'pointer',
+                                                textTransform: 'capitalize',
+                                                fontSize: '0.875rem',
+                                                transition: 'all 0.2s ease'
+                                            }}
+                                        >
+                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : '🕹️ Retro'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#f9fafb', borderRadius: 8 }}>
+                                <h4 style={{ marginBottom: '0.5rem', color: '#111827' }}>Connection Status</h4>
+                                <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>
                                     Sync Method: <strong>WebSocket (Fastest)</strong>
                                 </p>
-                                <p style={{ fontSize: '0.875rem', color: '#5E6C84', marginTop: '0.25rem' }}>
-                                    Status: <strong style={{ color: isConnected ? '#36B37E' : '#FF5630' }}>
+                                <p style={{ fontSize: '0.875rem', color: '#4b5563', marginTop: '0.25rem' }}>
+                                    Status: <strong style={{ color: isConnected ? '#059669' : '#dc2626' }}>
                                         {isConnected ? 'Connected' : 'Connecting...'}
                                     </strong>
                                 </p>
@@ -1231,67 +1061,75 @@ export const DevOpsDashboard = () => {
                     </div>
                 ) : (
                 <>
-                {/* Professional Stats Cards */}
-                {!['profile', 'standup', 'rota', 'settings', 'monitoring'].includes(activeSection) && (
-                <div className="stats-grid">
-                    <div className={`stat-card jira-style ${activeSection === 'unassigned' ? 'highlight' : ''}`}
-                         onClick={() => handleSectionChange('unassigned')}>
-                        <div className="stat-icon orange">
-                            <Inbox size={24} />
-                        </div>
-                        <div className="stat-value">{sectionCounts.unassigned}</div>
-                        <span className="stat-label">Unassigned</span>
-                        {sectionCounts.unassigned > 0 && (
-                            <div className="stat-trend warning">
-                                <AlertCircle size={14} />
-                                Needs attention
-                            </div>
-                        )}
-                    </div>
-                    <div className={`stat-card jira-style ${activeSection === 'myTickets' ? 'highlight' : ''}`}
-                         onClick={() => handleSectionChange('myTickets')}>
-                        <div className="stat-icon blue">
-                            <Ticket size={24} />
-                        </div>
-                        <div className="stat-value">{sectionCounts.myTickets}</div>
-                        <span className="stat-label">My Tickets</span>
-                    </div>
-                    <div className={`stat-card jira-style ${activeSection === 'active' ? 'highlight' : ''}`}
-                         onClick={() => handleSectionChange('active')}>
-                        <div className="stat-icon purple">
-                            <PlayCircle size={24} />
-                        </div>
-                        <div className="stat-value">{sectionCounts.active}</div>
-                        <span className="stat-label">Active</span>
-                    </div>
-                    <div className={`stat-card jira-style ${activeSection === 'history' ? 'highlight' : ''}`}
-                         onClick={() => handleSectionChange('history')}>
-                        <div className="stat-icon green">
-                            <CheckCircle size={24} />
-                        </div>
-                        <div className="stat-value">{sectionCounts.history}</div>
-                        <span className="stat-label">Completed</span>
-                    </div>
+                {/* Compact Mini Stats Bar — only on ticket sections */}
+                {['unassigned', 'myTickets', 'active', 'history', 'closed'].includes(activeSection) && (
+                <div className="mini-stats-bar">
+                    <button
+                        className={`mini-stat ${activeSection === 'unassigned' ? 'active' : ''}`}
+                        onClick={() => handleSectionChange('unassigned')}
+                    >
+                        <span className="mini-stat-icon orange"><Inbox size={13} /></span>
+                        <span className="mini-stat-value">{sectionCounts.unassigned}</span>
+                        <span className="mini-stat-label">Unassigned</span>
+                        {sectionCounts.unassigned > 0 && <span className="mini-stat-badge">!</span>}
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button
+                        className={`mini-stat ${activeSection === 'myTickets' ? 'active' : ''}`}
+                        onClick={() => handleSectionChange('myTickets')}
+                    >
+                        <span className="mini-stat-icon blue"><Ticket size={13} /></span>
+                        <span className="mini-stat-value">{sectionCounts.myTickets}</span>
+                        <span className="mini-stat-label">My Tickets</span>
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button
+                        className={`mini-stat ${activeSection === 'active' ? 'active' : ''}`}
+                        onClick={() => handleSectionChange('active')}
+                    >
+                        <span className="mini-stat-icon purple"><PlayCircle size={13} /></span>
+                        <span className="mini-stat-value">{sectionCounts.active}</span>
+                        <span className="mini-stat-label">Active</span>
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button
+                        className={`mini-stat ${activeSection === 'history' ? 'active' : ''}`}
+                        onClick={() => handleSectionChange('history')}
+                    >
+                        <span className="mini-stat-icon green"><CheckCircle size={13} /></span>
+                        <span className="mini-stat-value">{sectionCounts.history}</span>
+                        <span className="mini-stat-label">Completed</span>
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button
+                        className={`mini-stat ${activeSection === 'closed' ? 'active' : ''}`}
+                        onClick={() => handleSectionChange('closed')}
+                    >
+                        <span className="mini-stat-icon red"><XCircle size={13} /></span>
+                        <span className="mini-stat-value">{sectionCounts.closed ?? 0}</span>
+                        <span className="mini-stat-label">Closed</span>
+                    </button>
                 </div>
                 )}
                  
                 {/* Content Sections */}
                 {activeSection === 'monitoring' ? (
-                    <MonitoringPanel />
+                    <AnalyticsDashboard
+                        tickets={tickets}
+                        devOpsMembers={teamMembers}
+                        showCost={true}
+                        userRole="devops"
+                    />
                 ) : activeSection === 'profile' ? (
-                    <div className="tickets-section">
-                        <div className="tickets-header">
-                            <h3>Profile</h3>
-                        </div>
-                        <div className="tickets-list">
-                            <div className="team-member-card">
-                                <div className="team-member-head"><strong>Name</strong><span>{userName}</span></div>
-                                <div className="team-member-head"><strong>Email</strong><span>{userEmail}</span></div>
-                                {userPrincipalName && (
-                                    <div className="team-member-head"><strong>Username</strong><span>{userPrincipalName}</span></div>
-                                )}
-                            </div>
-                        </div>
+                    <div className="tickets-section profile-section-wrap">
+                        <DashboardProfilePage
+                            userName={userName}
+                            userEmail={userEmail}
+                            userPrincipalName={userPrincipalName}
+                            roleKey="devops"
+                            onSignOut={handleLogout}
+                            avatarColor="#0e7490"
+                        />
                     </div>
                 ) : activeSection === 'standup' ? (
                     <div className="tickets-section">
@@ -1504,7 +1342,10 @@ export const DevOpsDashboard = () => {
                     onAddNote={handleAddNote}
                     user={{ name: userName, email: userEmail }}
                     canManage={true}
-                    onRequestCostApproval={(t) => setCostApprovalTicket(t)}
+                    canSubmitCostEstimate
+                    onRequestCostApproval={(t, opts) => {
+                        openCostEstimateWindow(t.id, opts?.costApproverEmail);
+                    }}
                     onForward={() => setForwardingTicket(selectedTicket)}
                 />
             )}
@@ -1516,14 +1357,6 @@ export const DevOpsDashboard = () => {
                     onClose={() => setForwardingTicket(null)}
                     onForward={handleForwardTicket}
                     currentUser={{ name: userName, email: userEmail }}
-                />
-            )}
-
-            {costApprovalTicket && (
-                <CostApprovalModal
-                    ticket={costApprovalTicket}
-                    onClose={() => setCostApprovalTicket(null)}
-                    onSubmit={handleSubmitCostApproval}
                 />
             )}
         </div>

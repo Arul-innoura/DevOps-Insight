@@ -5,12 +5,12 @@ import { getActivityLogs } from "../../services/activityLogService";
 // ─── Badge colour map ────────────────────────────────────────────────────────
 
 const ACTION_STYLES = {
-    TICKET_CREATED:  { bg: "#DBEAFE", color: "#1D4ED8", label: "Created" },
-    STATUS_CHANGED:  { bg: "#FEF3C7", color: "#B45309", label: "Status Changed" },
-    TICKET_ASSIGNED: { bg: "#EDE9FE", color: "#6D28D9", label: "Assigned" },
-    NOTE_ADDED:      { bg: "#F3F4F6", color: "#374151", label: "Note Added" },
-    TICKET_DELETED:  { bg: "#FEE2E2", color: "#B91C1C", label: "Deleted" },
-    COST_SUBMITTED:  { bg: "#D1FAE5", color: "#065F46", label: "Cost Submitted" },
+    TICKET_CREATED:  { bg: "#eff6ff", color: "#1d4ed8", label: "Created" },
+    STATUS_CHANGED:  { bg: "#fffbeb", color: "#b45309", label: "Status Changed" },
+    TICKET_ASSIGNED: { bg: "#f5f3ff", color: "#6d28d9", label: "Assigned" },
+    NOTE_ADDED:      { bg: "#f9fafb", color: "#4b5563", label: "Note Added" },
+    TICKET_DELETED:  { bg: "#fef2f2", color: "#dc2626", label: "Deleted" },
+    COST_SUBMITTED:  { bg: "#ecfdf5", color: "#059669", label: "Cost Submitted" },
 };
 
 const actionStyle = (action) =>
@@ -345,14 +345,15 @@ const btnStyle = (bg, color) => ({
     gap: "0.3rem",
     background: bg,
     color,
-    border: "none",
+    border: `1px solid ${color}33`,
     borderRadius: 7,
     padding: "6px 12px",
-    fontSize: "0.83rem",
+    fontSize: "0.8125rem",
     fontWeight: 500,
     cursor: "pointer",
     height: 34,
     whiteSpace: "nowrap",
+    fontFamily: "var(--font-sans)",
 });
 
 const tableHeaderStyle = {

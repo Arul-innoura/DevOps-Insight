@@ -321,6 +321,73 @@ export const playLongNotification = () => {
 };
 
 /**
+ * NEW TICKET ARRIVAL - Zoho Cliq inspired
+ * Distinctive 4-note ascending chime that is immediately recognizable
+ * as a new incoming ticket. Designed to cut through ambient noise.
+ */
+export const playNewTicketArrival = () => {
+    if (typeof window === "undefined" || !soundEnabled) return;
+    if (!canPlaySound("newTicketArrival", 800)) return;
+
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    if (ctx.state === "suspended") ctx.resume();
+
+    const adjustedVolume = 0.09 * volumeLevel;
+    const masterGain = ctx.createGain();
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-20, ctx.currentTime);
+    compressor.knee.setValueAtTime(30, ctx.currentTime);
+    compressor.ratio.setValueAtTime(10, ctx.currentTime);
+    masterGain.connect(compressor);
+    compressor.connect(ctx.destination);
+    masterGain.gain.setValueAtTime(adjustedVolume, ctx.currentTime);
+
+    const notes = [
+        { freq: 523.25, delay: 0, duration: 0.12 },
+        { freq: 659.25, delay: 0.1, duration: 0.12 },
+        { freq: 783.99, delay: 0.2, duration: 0.12 },
+        { freq: 1046.50, delay: 0.3, duration: 0.22 }
+    ];
+
+    notes.forEach(({ freq, delay, duration }) => {
+        const osc = ctx.createOscillator();
+        const noteGain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + delay);
+
+        const start = ctx.currentTime + delay;
+        const end = start + duration;
+        noteGain.gain.setValueAtTime(0.0001, start);
+        noteGain.gain.exponentialRampToValueAtTime(0.9, start + 0.015);
+        noteGain.gain.setValueAtTime(0.9, end - 0.06);
+        noteGain.gain.exponentialRampToValueAtTime(0.0001, end);
+
+        const harmonic = ctx.createOscillator();
+        const harmGain = ctx.createGain();
+        harmonic.type = "sine";
+        harmonic.frequency.setValueAtTime(freq * 2, start);
+        harmGain.gain.setValueAtTime(0.0001, start);
+        harmGain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
+        harmGain.gain.exponentialRampToValueAtTime(0.0001, end);
+
+        osc.connect(noteGain);
+        harmonic.connect(harmGain);
+        noteGain.connect(masterGain);
+        harmGain.connect(masterGain);
+        osc.start(start);
+        osc.stop(end + 0.05);
+        harmonic.start(start);
+        harmonic.stop(end + 0.05);
+    });
+
+    setTimeout(() => {
+        masterGain.disconnect();
+        compressor.disconnect();
+    }, 800);
+};
+
+/**
  * Success notification - Task completed
  * Satisfying upward resolution chord
  */
@@ -515,10 +582,11 @@ export const playCelebrationNotification = () => {
 
 // Aliases for backward compatibility
 export const playUpdateNotification = playShortNotification;
-export const playNewTicketNotification = playLongNotification;
+export const playNewTicketNotification = playNewTicketArrival;
 
 // Export notification types for use in components
 export const NOTIFICATION_TYPES = {
+    NEW_TICKET: 'newTicket',
     SHORT: 'short',
     LONG: 'long',
     POP: 'pop',
@@ -569,6 +637,9 @@ export const playNotification = (type) => {
             break;
         case NOTIFICATION_TYPES.CELEBRATION:
             playCelebrationNotification();
+            break;
+        case NOTIFICATION_TYPES.NEW_TICKET:
+            playNewTicketArrival();
             break;
         default:
             playShortNotification();

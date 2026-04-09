@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import realTimeService, { WS_MESSAGE_TYPES } from "./stompWebSocketService";
+import { applyCacheInvalidationHint } from "./ticketService";
 import { 
     playShortNotification, 
     playSuccessNotification,
@@ -46,7 +47,7 @@ export const useRealTimeSync = ({
             } finally {
                 setTimeout(() => { lockRef.current = false; }, 120);
             }
-        }, 10);
+        }, 1);
     }, []);
     
     useEffect(() => {
@@ -74,6 +75,10 @@ export const useRealTimeSync = ({
             // Trigger refresh
             debouncedRefresh();
         };
+
+        const handleCacheInvalidation = (hint) => {
+            applyCacheInvalidationHint(hint);
+        };
         
         // Handler for status change events
         const handleStatusChange = (data) => {
@@ -100,6 +105,7 @@ export const useRealTimeSync = ({
         realTimeService.on(WS_MESSAGE_TYPES.DEVOPS_UPDATED, handleTicketEvent);
         realTimeService.on(WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, handleTicketEvent);
         realTimeService.on(WS_MESSAGE_TYPES.SYNC_REQUIRED, handleTicketEvent);
+        realTimeService.on(WS_MESSAGE_TYPES.CACHE_INVALIDATE, handleCacheInvalidation);
         
         // Initial load
         onRefreshRef.current?.();
@@ -117,6 +123,7 @@ export const useRealTimeSync = ({
             realTimeService.off(WS_MESSAGE_TYPES.DEVOPS_UPDATED, handleTicketEvent);
             realTimeService.off(WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, handleTicketEvent);
             realTimeService.off(WS_MESSAGE_TYPES.SYNC_REQUIRED, handleTicketEvent);
+            realTimeService.off(WS_MESSAGE_TYPES.CACHE_INVALIDATE, handleCacheInvalidation);
             
             if (debounceRef.current) {
                 clearTimeout(debounceRef.current);

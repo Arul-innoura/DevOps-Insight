@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
@@ -46,6 +47,28 @@ public class ProjectServiceImpl implements ProjectService {
 
         Project saved = projectRepository.save(project);
         eventPublisher.publishProjectEvent("created", saved);
+        return saved;
+    }
+
+    @Override
+    public Project updateProjectEnvironments(String projectId, List<String> environments, String actorName) {
+        Project project = projectRepository.findById(projectId)
+                .orElseThrow(() -> new IllegalArgumentException("Project not found"));
+        LinkedHashSet<String> ordered = new LinkedHashSet<>();
+        if (environments != null) {
+            for (String e : environments) {
+                if (e == null) {
+                    continue;
+                }
+                String t = e.trim();
+                if (!t.isEmpty()) {
+                    ordered.add(t);
+                }
+            }
+        }
+        project.setEnvironments(List.copyOf(ordered));
+        Project saved = projectRepository.save(project);
+        eventPublisher.publishProjectEvent("updated", saved);
         return saved;
     }
 }

@@ -40,7 +40,8 @@ export const WS_MESSAGE_TYPES = {
     DEVOPS_AVAILABILITY_CHANGED: 'devops:availability_changed',
     SYNC_REQUIRED: 'sync:required',
     CONNECTED: 'connected',
-    DISCONNECTED: 'disconnected'
+    DISCONNECTED: 'disconnected',
+    CACHE_INVALIDATE: 'cache:invalidate'
 };
 
 class RealTimeService {
@@ -63,6 +64,8 @@ class RealTimeService {
         this.lastPongAt = 0;
         this.lastPingAt = 0;
         this.abnormalCloseTimestamps = [];
+        this.recentMessages = new Map();
+        this.messageDedupWindowMs = 500;
     }
 
     connect() {
@@ -109,6 +112,13 @@ class RealTimeService {
                         return;
                     }
                     if (message.type && message.type !== 'pong') {
+                        if (this.isDuplicateMessage(message)) {
+                            return;
+                        }
+                        const invalidateHint = this.getCacheInvalidationHint(message.type);
+                        if (invalidateHint) {
+                            this.emit(WS_MESSAGE_TYPES.CACHE_INVALIDATE, invalidateHint);
+                        }
                         console.log('[WS] 📨', message.type);
                         this.emit(message.type, message.data);
                     }
@@ -247,6 +257,52 @@ class RealTimeService {
                 }
             });
         }
+    }
+
+    getCacheInvalidationHint(eventType) {
+        if (!eventType) return null;
+        if (
+            eventType === WS_MESSAGE_TYPES.TICKET_CREATED ||
+            eventType === WS_MESSAGE_TYPES.TICKET_UPDATED ||
+            eventType === WS_MESSAGE_TYPES.TICKET_DELETED ||
+            eventType === WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED ||
+            eventType === WS_MESSAGE_TYPES.TICKET_ASSIGNED ||
+            eventType === WS_MESSAGE_TYPES.SYNC_REQUIRED
+        ) {
+            return { scope: 'tickets', reason: eventType };
+        }
+        if (
+            eventType === WS_MESSAGE_TYPES.DEVOPS_UPDATED ||
+            eventType === WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED
+        ) {
+            return { scope: 'devops-team', reason: eventType };
+        }
+        return null;
+    }
+
+    isDuplicateMessage(message) {
+        const type = message?.type || "unknown";
+        const payload = message?.data ?? null;
+        let payloadKey = "";
+        try {
+            payloadKey = JSON.stringify(payload);
+        } catch {
+            payloadKey = String(payload);
+        }
+        const key = `${type}|${payloadKey}`;
+        const now = Date.now();
+        const lastTs = this.recentMessages.get(key);
+        this.recentMessages.set(key, now);
+
+        if (this.recentMessages.size > 250) {
+            for (const [k, ts] of this.recentMessages.entries()) {
+                if (now - ts > this.messageDedupWindowMs * 5) {
+                    this.recentMessages.delete(k);
+                }
+            }
+        }
+
+        return typeof lastTs === "number" && (now - lastTs) <= this.messageDedupWindowMs;
     }
 
     getState() {

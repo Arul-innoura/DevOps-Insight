@@ -33,6 +33,9 @@ public class WorkflowConfiguration {
     @Builder.Default
     private NotificationPreferenceConfig notificationPreferences = NotificationPreferenceConfig.builder().build();
 
+    @Builder.Default
+    private InfrastructureConfig infrastructure = new InfrastructureConfig();
+
     public static WorkflowConfiguration emptyDefaults() {
         return WorkflowConfiguration.builder()
                 .emailRouting(EmailRoutingConfig.builder().build())
@@ -41,6 +44,7 @@ public class WorkflowConfiguration {
                 .costApprovalRequired(false)
                 .costApprovers(new ArrayList<>())
                 .notificationPreferences(NotificationPreferenceConfig.builder().build())
+                .infrastructure(new InfrastructureConfig())
                 .build();
     }
 }

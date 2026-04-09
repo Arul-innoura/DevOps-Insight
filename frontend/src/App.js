@@ -5,11 +5,13 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Login from './auth/login';
 import AdminDashboard from './dashboards/admin/AdminDashboard';
 import DevOpsDashboard from './dashboards/devops/DevOpsDashboard';
+import CostEstimateWindowPage from './dashboards/devops/CostEstimateWindowPage';
 import UserDashboard from './dashboards/user/UserDashboard';
 import ManagerApprovalPage from './dashboards/ManagerApprovalPage';
 import ProtectedRoute from './routes/ProtectedRoute';
 import { RoleRedirect, Unauthorized } from './routes/roleRoutes';
 import { ToastProvider } from './services/ToastNotification';
+import { ThemeProvider } from './services/ThemeContext';
 
 function App() {
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 992);
@@ -31,7 +33,7 @@ function App() {
           alignItems: "center",
           padding: "2rem",
           textAlign: "center",
-          background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)",
+          background: "#0f172a",
           color: "#fff"
         }}
       >
@@ -61,25 +63,26 @@ function App() {
   }
 
   return (
-    <ToastProvider>
-      <Router>
-        <div className="App">
-          <Routes>
-            {/* Public login page */}
-            <Route path="/login" element={<Login />} />
-            
-            {/* Public manager approval page (no login required) */}
-            <Route path="/manager-approval" element={<ManagerApprovalPage />} />
+    <ThemeProvider>
+      <ToastProvider>
+        <Router>
+          <div className="App">
+            <Routes>
+              {/* Public login page */}
+              <Route path="/login" element={<Login />} />
+              
+              {/* Public manager approval page (no login required) */}
+              <Route path="/manager-approval" element={<ManagerApprovalPage />} />
 
-            {/* Root '/' path - Redirects based on role or login status */}
-            <Route path="/" element={<RoleRedirect />} />
+              {/* Root '/' path - Redirects based on role or login status */}
+              <Route path="/" element={<RoleRedirect />} />
 
-            {/* Protected Dashboard Routes */}
-            <Route path="/admin" element={
-              <ProtectedRoute requiredRole="Admin">
-                <AdminDashboard />
-              </ProtectedRoute>
-            } />
+              {/* Protected Dashboard Routes */}
+              <Route path="/admin" element={
+                <ProtectedRoute requiredRole="Admin">
+                  <AdminDashboard />
+                </ProtectedRoute>
+              } />
 
               <Route path="/devops" element={
                 <ProtectedRoute requiredRole="DevOps Team">
@@ -87,19 +90,26 @@ function App() {
                 </ProtectedRoute>
               } />
 
-            <Route path="/user" element={
-              <ProtectedRoute requiredRole="User">
-                <UserDashboard />
-              </ProtectedRoute>
-            } />
+              <Route path="/devops/cost-estimate" element={
+                <ProtectedRoute requiredRole="DevOps Team">
+                  <CostEstimateWindowPage />
+                </ProtectedRoute>
+              } />
 
-            {/* Error and Unauthorized pages */}
-            <Route path="/unauthorized" element={<Unauthorized />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </div>
-      </Router>
-    </ToastProvider>
+              <Route path="/user" element={
+                <ProtectedRoute requiredRole="User">
+                  <UserDashboard />
+                </ProtectedRoute>
+              } />
+
+              {/* Error and Unauthorized pages */}
+              <Route path="/unauthorized" element={<Unauthorized />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </div>
+        </Router>
+      </ToastProvider>
+    </ThemeProvider>
   );
 }
 

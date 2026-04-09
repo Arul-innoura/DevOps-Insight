@@ -1,5 +1,6 @@
 package com.devops.backend.controller;
 
+import com.devops.backend.dto.ProjectEnvironmentsUpdateRequest;
 import com.devops.backend.dto.ProjectRequest;
 import com.devops.backend.model.Project;
 import com.devops.backend.service.ProjectService;
@@ -33,6 +34,20 @@ public class ProjectController {
                                               @AuthenticationPrincipal Jwt jwt) {
         String actor = extractUserName(jwt);
         return ResponseEntity.status(HttpStatus.CREATED).body(projectService.addProject(request, actor));
+    }
+
+    @PatchMapping("/{id}/environments")
+    @PreAuthorize("hasAuthority('APPROLE_Admin')")
+    public ResponseEntity<Project> updateProjectEnvironments(@PathVariable String id,
+                                                             @RequestBody ProjectEnvironmentsUpdateRequest body,
+                                                             @AuthenticationPrincipal Jwt jwt) {
+        String actor = extractUserName(jwt);
+        try {
+            return ResponseEntity.ok(projectService.updateProjectEnvironments(
+                    id, body != null ? body.getEnvironments() : List.of(), actor));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
     }
 
     private String extractUserName(Jwt jwt) {

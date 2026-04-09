@@ -78,9 +78,10 @@ import ProjectWorkflowEditor from "./ProjectWorkflowEditor";
 import ActivityLogsView from "./ActivityLogsView";
 import AnalyticsDashboard from "./AnalyticsDashboard";
 import MonitoringPanel from "../MonitoringPanel";
-import NameProductsView from "./NameProductsView";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
+import DashboardProfilePage from "../../components/DashboardProfilePage";
+import { useTheme } from "../../services/ThemeContext";
 
 const ADMIN_SIDEBAR_NAV_DEFAULTS = { operations: true, configuration: true, account: true };
 
@@ -156,24 +157,24 @@ const ProjectManagementView = ({
                     <Building size={20} />
                 </div>
                 <div>
-                    <h3>Register Service</h3>
-                    <p>Add a new service to enable request tracking and workflow automation</p>
+                    <h3>Register Product</h3>
+                    <p>Add a new product to enable request tracking and workflow automation</p>
                 </div>
             </div>
             <form className="workflow-form" onSubmit={handleAddProject}>
                 <div className="workflow-form-grid">
                     <div className="workflow-form-group">
-                        <label>Service Name</label>
+                        <label>Product Name</label>
                         <input
                             type="text"
-                            placeholder="Enter service name"
+                            placeholder="Enter product name"
                             value={newProductName}
                             onChange={(e) => setNewProductName(e.target.value)}
                             required
                         />
                     </div>
                     <div className="workflow-form-group">
-                        <label>Service ID <span className="optional-tag">Optional</span></label>
+                        <label>Product ID <span className="optional-tag">Optional</span></label>
                         <input
                             type="text"
                             placeholder="Unique identifier"
@@ -202,7 +203,7 @@ const ProjectManagementView = ({
                     </div>
                 </div>
                 <button type="submit" className="btn-primary workflow-submit">
-                    <Plus size={16} /> Register Service
+                    <Plus size={16} /> Register Product
                 </button>
             </form>
         </div>
@@ -225,7 +226,7 @@ const ProjectManagementView = ({
                         <Building size={48} />
                     </div>
                     <h4>No Services Configured</h4>
-                    <p>Register your first service above to begin configuring workflows</p>
+                    <p>Register your first product above to begin configuring workflows</p>
                 </div>
             ) : (
                 <div className="workflow-services-grid">
@@ -271,7 +272,7 @@ const ManagerManagementView = ({ newManager, setNewManager, handleAddManager, ma
     <div className="team-management-view">
         <div className="analytics-card">
             <h3><UserCog size={18} /> Add Approver</h3>
-            <p style={{ color: '#64748b', fontSize: '0.875rem', marginBottom: '1rem' }}>
+            <p style={{ color: '#6b7280', fontSize: '0.875rem', marginBottom: '1rem' }}>
                 Approvers authorize service requests and are automatically notified when approval is needed.
             </p>
             <form className="team-form" onSubmit={handleAddManager}>
@@ -297,7 +298,7 @@ const ManagerManagementView = ({ newManager, setNewManager, handleAddManager, ma
             <h3><UserCog size={18} /> Manager List</h3>
             <div className="team-members-grid">
                 {managers.length === 0 ? (
-                    <p style={{ color: '#64748b' }}>No managers added yet.</p>
+                    <p style={{ color: '#6b7280' }}>No managers added yet.</p>
                 ) : (
                     managers.map(manager => (
                         <div className="team-member-card" key={manager.id}>
@@ -657,6 +658,7 @@ const StatusTimelineView = ({ devOpsMembers, timelineStatusColors }) => {
 
 export const AdminDashboard = () => {
     const { instance, accounts } = useMsal();
+    const { theme, setTheme, themes } = useTheme();
     const { addToast } = useToast();
     
     const account = accounts[0];
@@ -1001,9 +1003,8 @@ export const AdminDashboard = () => {
                 TICKET_STATUS.ON_HOLD
             ].includes(t.status)
         ).length,
-        completed: tickets.filter(t => 
-            [TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(t.status)
-        ).length,
+        completed: tickets.filter(t => t.status === TICKET_STATUS.COMPLETED).length,
+        closed: tickets.filter(t => t.status === TICKET_STATUS.CLOSED).length,
         rejected: tickets.filter(t => t.status === TICKET_STATUS.REJECTED).length
     };
     
@@ -1013,160 +1014,98 @@ export const AdminDashboard = () => {
         <div className="dashboard-layout admin-dashboard">
 
 
-            <aside className="sidebar jira-style">
-                <div className="sidebar-brand">
-                    <div className="brand-logo" style={{ position: 'relative' }}>
-                        <ShieldCheck size={28} />
-                        <div 
-                            title={isConnected ? 'Connected' : 'Disconnected'}
-                            style={{
-                                position: 'absolute',
-                                top: -2,
-                                right: -2,
-                                width: 12,
-                                height: 12,
-                                borderRadius: '50%',
-                                backgroundColor: isConnected ? '#36B37E' : '#FF5630',
-                                border: '2px solid #fff'
-                            }} 
-                        />
+            <aside className="shipit-sidebar">
+                {/* Brand */}
+                <div className="sb-brand">
+                    <div className="sb-brand-icon">
+                        <ShieldCheck size={18} />
+                        <span className={`sb-conn-dot ${isConnected ? 'connected' : 'disconnected'}`}
+                              title={isConnected ? 'Live connection' : 'Disconnected'} />
                     </div>
-                    <div className="brand-text">
-                        <h2>CloudOps Hub</h2>
-                        <span className="brand-subtitle">Admin Console</span>
+                    <div className="sb-brand-meta">
+                        <span className="sb-app-name">ShipIt</span>
+                        <span className="sb-app-subtitle">Admin Console</span>
                     </div>
                 </div>
-                <nav className="sidebar-nav">
-                    <div className="nav-section">
-                        <NavSectionToggle
-                            label="Operations"
-                            open={navGroups.operations}
-                            onToggle={() => setNavGroups((p) => ({ ...p, operations: !p.operations }))}
-                        />
-                        {navGroups.operations && (
-                            <>
-                                <a 
-                                    href="#" 
-                                    className={viewMode === 'tickets' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('tickets'); }}
-                                >
-                                    <Ticket size={18} /> All Requests
-                                    {tabCounts.pending > 0 && <span className="nav-badge urgent">{tabCounts.pending}</span>}
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={viewMode === 'analytics' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('analytics'); }}
-                                >
-                                    <BarChart3 size={18} /> Analytics
-                                </a>
-                                <a
-                                    href="#"
-                                    className={viewMode === 'monitoring' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('monitoring'); }}
-                                >
-                                    <Activity size={18} /> System Monitor
-                                </a>
-                            </>
-                        )}
+
+                {/* Navigation */}
+                <nav className="sb-nav">
+                    <div className="sb-group">
+                        <span className="sb-group-label">Operations</span>
+                        <a href="#" className={`sb-item ${viewMode === 'tickets' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setViewMode('tickets'); }}>
+                            <span className="sb-item-icon"><Ticket size={15} /></span>
+                            <span className="sb-item-text">All Requests</span>
+                            {tabCounts.pending > 0 && <span className="sb-badge urgent">{tabCounts.pending}</span>}
+                        </a>
+                        <a href="#" className={`sb-item ${viewMode === 'analytics' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setViewMode('analytics'); }}>
+                            <span className="sb-item-icon"><BarChart3 size={15} /></span>
+                            <span className="sb-item-text">Analytics</span>
+                        </a>
                     </div>
-                    <div className="nav-section">
-                        <NavSectionToggle
-                            label="Configuration"
-                            open={navGroups.configuration}
-                            onToggle={() => setNavGroups((p) => ({ ...p, configuration: !p.configuration }))}
-                        />
-                        {navGroups.configuration && (
-                            <>
-                                <a 
-                                    href="#" 
-                                    className={viewMode === 'team' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('team'); }}
-                                >
-                                    <Users size={18} /> Engineering Team
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={viewMode === 'projects' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('projects'); }}
-                                >
-                                    <Building size={18} /> Services
-                                </a>
-                                <a
-                                    href="#"
-                                    className={viewMode === 'nameProducts' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('nameProducts'); }}
-                                >
-                                    <Layers size={18} /> Name Products
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={viewMode === 'managers' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('managers'); }}
-                                >
-                                    <UserCog size={18} /> Approvers
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={viewMode === 'rota' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('rota'); }}
-                                >
-                                    <RotateCcw size={18} /> On-Call Schedule
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={viewMode === 'statusTimeline' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('statusTimeline'); }}
-                                >
-                                    <Activity size={18} /> Activity Timeline
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={viewMode === 'activityLogs' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('activityLogs'); }}
-                                >
-                                    <Activity size={18} /> Activity Logs
-                                </a>
-                            </>
-                        )}
+
+                    <div className="sb-group">
+                        <span className="sb-group-label">Configuration</span>
+                        <a href="#" className={`sb-item ${viewMode === 'team' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setViewMode('team'); }}>
+                            <span className="sb-item-icon"><Users size={15} /></span>
+                            <span className="sb-item-text">Engineering Team</span>
+                        </a>
+                        <a href="#" className={`sb-item ${viewMode === 'projects' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setViewMode('projects'); }}>
+                            <span className="sb-item-icon"><Building size={15} /></span>
+                            <span className="sb-item-text">Products</span>
+                        </a>
+                        <a href="#" className={`sb-item ${viewMode === 'rota' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setViewMode('rota'); }}>
+                            <span className="sb-item-icon"><RotateCcw size={15} /></span>
+                            <span className="sb-item-text">On-Call Schedule</span>
+                        </a>
+                        <a href="#" className={`sb-item ${viewMode === 'statusTimeline' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setViewMode('statusTimeline'); }}>
+                            <span className="sb-item-icon"><Activity size={15} /></span>
+                            <span className="sb-item-text">Activity Timeline</span>
+                        </a>
+                        <a href="#" className={`sb-item ${viewMode === 'activityLogs' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setViewMode('activityLogs'); }}>
+                            <span className="sb-item-icon"><Activity size={15} /></span>
+                            <span className="sb-item-text">Activity Logs</span>
+                        </a>
                     </div>
-                    <div className="nav-section">
-                        <NavSectionToggle
-                            label="Account"
-                            open={navGroups.account}
-                            onToggle={() => setNavGroups((p) => ({ ...p, account: !p.account }))}
-                        />
-                        {navGroups.account && (
-                            <>
-                                <a 
-                                    href="#" 
-                                    className={viewMode === 'settings' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('settings'); }}
-                                >
-                                    <Settings size={18} /> Preferences
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={`nav-profile-link ${viewMode === 'profile' ? 'active' : ''}`}
-                                    onClick={(e) => { e.preventDefault(); setViewMode('profile'); }}
-                                >
-                                    <ProfileIcon size={18} /> My Account
-                                </a>
-                            </>
-                        )}
+
+                    <div className="sb-group">
+                        <span className="sb-group-label">Account</span>
+                        <a href="#" className={`sb-item ${viewMode === 'settings' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setViewMode('settings'); }}>
+                            <span className="sb-item-icon"><Settings size={15} /></span>
+                            <span className="sb-item-text">Preferences</span>
+                        </a>
+                        <a href="#" className={`sb-item ${viewMode === 'profile' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setViewMode('profile'); }}>
+                            <span className="sb-item-icon"><ProfileIcon size={15} /></span>
+                            <span className="sb-item-text">My Account</span>
+                        </a>
                     </div>
                 </nav>
-                <div className="sidebar-footer">
-                    <div className="user-info">
-                        <span className="user-name">{userName}</span>
-                        <span className="user-email">{userEmail}</span>
-                        <span className="user-role badge-admin">
-                            Admin Access
-                        </span>
+
+                {/* Footer */}
+                <div className="sb-footer">
+                    <div className="sb-user-row">
+                        <div className="sb-avatar">
+                            {(userName || '').split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase() || '?'}
+                        </div>
+                        <div className="sb-user-meta">
+                            <span className="sb-user-name">{userName}</span>
+                            <span className="sb-user-email">{userEmail}</span>
+                        </div>
                     </div>
-                    <button className="logout-btn" onClick={handleLogout}>
-                        <LogOut size={16} /> Sign Out
-                    </button>
+                    <div className="sb-footer-actions">
+                        <span className="sb-role-badge admin">Admin</span>
+                        <button className="sb-logout-btn" onClick={handleLogout}>
+                            <LogOut size={12} /> Sign Out
+                        </button>
+                    </div>
                 </div>
             </aside>
             
@@ -1182,8 +1121,7 @@ export const AdminDashboard = () => {
                                     {viewMode === 'analytics' && 'Analytics'}
                                     {viewMode === 'monitoring' && 'Monitor'}
                                     {viewMode === 'team' && 'Engineering'}
-                                    {viewMode === 'projects' && 'Services'}
-                                    {viewMode === 'nameProducts' && 'Name Products'}
+                                    {viewMode === 'projects' && 'Products'}
                                     {viewMode === 'managers' && 'Approvers'}
                                     {viewMode === 'statusTimeline' && 'Timeline'}
                                     {viewMode === 'rota' && 'Schedule'}
@@ -1193,12 +1131,11 @@ export const AdminDashboard = () => {
                                 </span>
                             </div>
                             <h1>
-                                {viewMode === 'tickets' && 'All Service Requests'}
+                                {viewMode === 'tickets' && 'All Requests'}
                                 {viewMode === 'analytics' && 'System Analytics'}
                                 {viewMode === 'monitoring' && 'Environment Monitoring'}
                                 {viewMode === 'team' && 'Engineering Team'}
-                                {viewMode === 'projects' && 'Configured Workflow Summary'}
-                                {viewMode === 'nameProducts' && 'Name Products'}
+                                {viewMode === 'projects' && 'Product Workflow Summary'}
                                 {viewMode === 'managers' && 'Approval Contacts'}
                                 {viewMode === 'rota' && 'On-Call Schedule'}
                                 {viewMode === 'statusTimeline' && 'Team Activity Timeline'}
@@ -1206,31 +1143,11 @@ export const AdminDashboard = () => {
                                 {viewMode === 'profile' && 'My Account'}
                                 {viewMode === 'settings' && 'Preferences'}
                             </h1>
-                            <p className="header-subtitle">
-                                {viewMode === 'tickets' 
-                                    ? 'Monitor and manage all service requests with full administrative access.'
-                                    : viewMode === 'analytics'
-                                        ? 'View system-wide analytics and performance metrics.'
-                                        : viewMode === 'monitoring'
-                                            ? 'Track monthly service environment availability and utilization.'
-                                        : viewMode === 'team'
-                                            ? 'Manage engineering team members and monitor current availability.'
-                                            : viewMode === 'projects'
-                                                ? 'Configure services and workflows for request routing.'
-                                                : viewMode === 'nameProducts'
-                                                    ? 'Set per-environment contacts, cloud tags, resource utilization, and cost estimates.'
-                                                : viewMode === 'managers'
-                                                    ? 'Manage approval contacts for workflow notifications.'
-                                                    : viewMode === 'rota'
-                                                        ? 'Configure on-call rotation and shift assignments.'
-                                                        : viewMode === 'statusTimeline'
-                                                            ? 'Track team member availability changes with visual timeline.'
-                                                            : viewMode === 'activityLogs'
-                                                                ? 'Full audit trail of all ticket and system actions.'
-                                                            : viewMode === 'settings'
-                                                                ? 'Configure notifications and preferences.'
-                                                            : 'Azure login details for your account.'}
-                            </p>
+                            {viewMode === 'tickets' && (
+                                <p className="header-subtitle">
+                                    Monitor and manage all requests with full administrative access.
+                                </p>
+                            )}
                         </div>
                         <div className="header-actions">
                             <div className="search-box-mini">
@@ -1299,13 +1216,43 @@ export const AdminDashboard = () => {
                                     </div>
                                 )}
                             </div>
-                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#F4F5F7', borderRadius: 8 }}>
-                                <h4 style={{ marginBottom: '0.5rem', color: '#172B4D' }}>Connection Status</h4>
-                                <p style={{ fontSize: '0.875rem', color: '#5E6C84' }}>
+                            <div className="sound-settings" style={{ marginTop: '1.5rem' }}>
+                                <div className="sound-settings-header">
+                                    <span className="sound-settings-title">
+                                        <Settings size={18} style={{ marginRight: 8 }} />
+                                        Theme
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
+                                    {themes.map((t) => (
+                                        <button
+                                            key={t}
+                                            onClick={() => setTheme(t)}
+                                            style={{
+                                                padding: '0.5rem 1.25rem',
+                                                borderRadius: 8,
+                                                border: theme === t ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
+                                                background: theme === t ? 'var(--accent-light)' : 'var(--card-bg)',
+                                                color: 'var(--text-main)',
+                                                fontWeight: theme === t ? 600 : 400,
+                                                cursor: 'pointer',
+                                                textTransform: 'capitalize',
+                                                fontSize: '0.875rem',
+                                                transition: 'all 0.2s ease'
+                                            }}
+                                        >
+                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : '🕹️ Retro'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#f9fafb', borderRadius: 8 }}>
+                                <h4 style={{ marginBottom: '0.5rem', color: '#111827' }}>Connection Status</h4>
+                                <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>
                                     Sync Method: <strong>WebSocket (Fastest)</strong>
                                 </p>
-                                <p style={{ fontSize: '0.875rem', color: '#5E6C84', marginTop: '0.25rem' }}>
-                                    Status: <strong style={{ color: isConnected ? '#36B37E' : '#FF5630' }}>
+                                <p style={{ fontSize: '0.875rem', color: '#4b5563', marginTop: '0.25rem' }}>
+                                    Status: <strong style={{ color: isConnected ? '#059669' : '#dc2626' }}>
                                         {isConnected ? 'Connected' : 'Connecting...'}
                                     </strong>
                                 </p>
@@ -1314,37 +1261,38 @@ export const AdminDashboard = () => {
                     </div>
                 ) : (
                 <>
-                {/* Professional Stats Cards */}
-                {!['profile', 'settings', 'monitoring', 'activityLogs'].includes(viewMode) && (
-                <div className="stats-grid">
-                    <div className="stat-card jira-style">
-                        <div className="stat-icon blue">
-                            <Ticket size={24} />
-                        </div>
-                        <div className="stat-value">{stats.total || 0}</div>
-                        <span className="stat-label">Total Tickets</span>
-                    </div>
-                    <div className="stat-card jira-style">
-                        <div className="stat-icon orange">
-                            <Clock size={24} />
-                        </div>
-                        <div className="stat-value">{tabCounts.pending}</div>
-                        <span className="stat-label">Pending</span>
-                    </div>
-                    <div className="stat-card jira-style">
-                        <div className="stat-icon purple">
-                            <PlayCircle size={24} />
-                        </div>
-                        <div className="stat-value">{tabCounts.active}</div>
-                        <span className="stat-label">Active</span>
-                    </div>
-                    <div className="stat-card jira-style">
-                        <div className="stat-icon green">
-                            <CheckCircle size={24} />
-                        </div>
-                        <div className="stat-value">{tabCounts.completed}</div>
-                        <span className="stat-label">Completed</span>
-                    </div>
+                {/* Compact Mini Stats Bar — tickets section only */}
+                {viewMode === 'tickets' && (
+                <div className="mini-stats-bar">
+                    <button className="mini-stat">
+                        <span className="mini-stat-icon blue"><Ticket size={13} /></span>
+                        <span className="mini-stat-value">{stats.total || 0}</span>
+                        <span className="mini-stat-label">Total</span>
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button className="mini-stat">
+                        <span className="mini-stat-icon orange"><Clock size={13} /></span>
+                        <span className="mini-stat-value">{tabCounts.pending}</span>
+                        <span className="mini-stat-label">Pending</span>
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button className="mini-stat">
+                        <span className="mini-stat-icon purple"><PlayCircle size={13} /></span>
+                        <span className="mini-stat-value">{tabCounts.active}</span>
+                        <span className="mini-stat-label">Active</span>
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button className="mini-stat">
+                        <span className="mini-stat-icon green"><CheckCircle size={13} /></span>
+                        <span className="mini-stat-value">{tabCounts.completed}</span>
+                        <span className="mini-stat-label">Completed</span>
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button className="mini-stat">
+                        <span className="mini-stat-icon red"><XCircle size={13} /></span>
+                        <span className="mini-stat-value">{tabCounts.closed ?? 0}</span>
+                        <span className="mini-stat-label">Closed</span>
+                    </button>
                 </div>
                 )}
                 
@@ -1356,6 +1304,8 @@ export const AdminDashboard = () => {
                         stats={stats}
                         devOpsMembers={devOpsMembers}
                         projects={projects}
+                        showCost={true}
+                        userRole="admin"
                     />
                 ) : viewMode === 'team' ? (
                     <TeamManagementView 
@@ -1387,12 +1337,15 @@ export const AdminDashboard = () => {
                         <ProjectWorkflowEditor
                             project={workflowProject}
                             onClose={() => setWorkflowProject(null)}
-                            onSaved={() => loadTickets(false)}
+                            onSaved={async () => {
+                                await loadTickets(false);
+                                try {
+                                    setProjects(await getProjects({ force: true }));
+                                } catch (_) { /* ignore */ }
+                            }}
                         />
                     )}
                     </>
-                ) : viewMode === 'nameProducts' ? (
-                    <NameProductsView />
                 ) : viewMode === 'managers' ? (
                     <ManagerManagementView 
                         newManager={newManager}
@@ -1423,19 +1376,15 @@ export const AdminDashboard = () => {
                 ) : viewMode === 'activityLogs' ? (
                     <ActivityLogsView />
                 ) : viewMode === 'profile' ? (
-                    <div className="tickets-section">
-                        <div className="tickets-header">
-                            <h3>Profile</h3>
-                        </div>
-                        <div className="tickets-list">
-                            <div className="team-member-card">
-                                <div className="team-member-head"><strong>Name</strong><span>{userName}</span></div>
-                                <div className="team-member-head"><strong>Email</strong><span>{userEmail}</span></div>
-                                {userPrincipalName && (
-                                    <div className="team-member-head"><strong>Username</strong><span>{userPrincipalName}</span></div>
-                                )}
-                            </div>
-                        </div>
+                    <div className="tickets-section profile-section-wrap">
+                        <DashboardProfilePage
+                            userName={userName}
+                            userEmail={userEmail}
+                            userPrincipalName={userPrincipalName}
+                            roleKey="admin"
+                            onSignOut={handleLogout}
+                            avatarColor="#1d4ed8"
+                        />
                     </div>
                 ) : (
                     <div className="tickets-section">
@@ -1543,3 +1492,4 @@ export const AdminDashboard = () => {
 };
 
 export default AdminDashboard;
+

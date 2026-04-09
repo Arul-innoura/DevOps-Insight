@@ -29,4 +29,10 @@ public class CostSubmissionRequest {
     private String currency;  // USD, INR, EUR, etc.
     
     private String notes;  // Optional notes about the cost breakdown
+
+    /**
+     * Optional: must match a configured workflow cost approver (case-insensitive).
+     * When omitted, the first configured cost approver is used.
+     */
+    private String costApproverEmail;
 }

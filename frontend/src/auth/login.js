@@ -61,8 +61,8 @@ const Login = () => {
             <div className="login-card animate-in">
                 <div className="login-brand">
                     <div className="brand-text">
-                        <h1>CloudOps Hub</h1>
-                        <span className="brand-tagline">Enterprise DevOps Platform</span>
+                        <h1>ShipIt</h1>
+                        <span className="brand-tagline">Ship Fast. Ship Smart.</span>
                     </div>
                 </div>
                 <p style={{ margin: "0 0 1rem 0", color: "#6b7280", fontSize: "0.95rem" }}>

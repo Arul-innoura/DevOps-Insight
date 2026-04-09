@@ -12,7 +12,9 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Data
 @Builder
@@ -28,6 +30,13 @@ public class ProjectWorkflowSettings {
     private String projectId;
 
     private WorkflowConfiguration defaultConfiguration;
+
+    /**
+     * Per-environment workflow configurations. Key = environment name (e.g. "Dev", "QA", "Production").
+     * Each environment can override the default workflow with its own approval chain, notifications, and infrastructure.
+     */
+    @Builder.Default
+    private Map<String, WorkflowConfiguration> environmentConfigurations = new HashMap<>();
 
     @Builder.Default
     private List<RequestTypeWorkflowOverride> requestTypeOverrides = new ArrayList<>();

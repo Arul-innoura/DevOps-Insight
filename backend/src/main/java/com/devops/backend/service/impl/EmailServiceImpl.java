@@ -217,7 +217,7 @@ public class EmailServiceImpl implements EmailService {
 
     @Override
     public String generateMessageId(String ticketId) {
-        return String.format("<%s.%d@devops.encipherhealth.com>", ticketId, System.currentTimeMillis());
+        return String.format("<%s.%d@shipit.encipherhealth.com>", ticketId, System.currentTimeMillis());
     }
 
     /**
@@ -693,7 +693,7 @@ public class EmailServiceImpl implements EmailService {
                 getEmailStyles() +
                 "</head><body>" +
                 "<div style='padding:16px'>" +
-                "<p style='margin:0 0 10px 0'><strong>DevOps Portal</strong></p>" +
+                "<p style='margin:0 0 10px 0'><strong>ShipIt</strong></p>" +
                 (safeTicket.isEmpty() ? "" : "<p style='margin:0 0 14px 0;color:#444'>Ticket: <strong>" + safeTicket + "</strong></p>") +
                 "<hr style='border:none;border-top:1px solid #e0e0e0;margin:12px 0'/>" +
                 innerHtml +
@@ -759,8 +759,8 @@ public class EmailServiceImpl implements EmailService {
         
         // Brand
         header.append("<div class='header-brand'>");
-        header.append("<div class='header-logo'>⚙️</div>");
-        header.append("<span class='header-title'>DevOps Portal</span>");
+        header.append("<div class='header-logo'>🚀</div>");
+        header.append("<span class='header-title'>ShipIt</span>");
         header.append("</div>");
         
         // Ticket ID badge
@@ -1060,8 +1060,8 @@ public class EmailServiceImpl implements EmailService {
      */
     private String buildEmailFooter() {
         return "<div class='email-footer'>" +
-                "<div class='footer-logo'>⚙️ DevOps Portal</div>" +
-                "<p class='footer-text'>Encipher Health - DevOps Team</p>" +
+                "<div class='footer-logo'>⚙️ ShipIt</div>" +
+                "<p class='footer-text'>Encipher Health - ShipIt Team</p>" +
                 "<p class='footer-text'>This is an automated notification. Please do not reply to this email.</p>" +
                 "<div class='footer-links'>" +
                 "<a href='#'>Help Center</a>" +

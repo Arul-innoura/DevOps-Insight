@@ -8,4 +8,9 @@ import java.util.List;
 public interface ProjectService {
     List<Project> getProjects();
     Project addProject(ProjectRequest request, String actorName);
+
+    /**
+     * Replace deployment environment names for a product (used from admin workflow UI).
+     */
+    Project updateProjectEnvironments(String projectId, java.util.List<String> environments, String actorName);
 }

@@ -79,4 +79,7 @@ public interface TicketRepository extends MongoRepository<Ticket, String> {
     
     // Find all ordered by created date
     List<Ticket> findAllByOrderByCreatedAtDesc();
+
+    // Count tickets whose ID starts with a given prefix (used for sequential ID generation)
+    long countByIdStartingWith(String prefix);
 }

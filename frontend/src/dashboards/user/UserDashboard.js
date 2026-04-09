@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+﻿import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useMsal } from "@azure/msal-react";
 import { 
     LogOut, 
@@ -20,6 +20,7 @@ import {
     Clock,
     CheckCircle,
     AlertCircle,
+    XCircle,
     Zap
 } from "lucide-react";
 import { 
@@ -35,7 +36,6 @@ import {
     addTicketNote,
     TICKET_STATUS,
     getDevOpsTeamMembers,
-    DEVOPS_AVAILABILITY_STATUS,
     getProjects,
     getManagers,
     subscribeDataChanges
@@ -47,15 +47,18 @@ import {
     getMyNotificationPreferences,
     saveMyNotificationPreferences
 } from "../../services/userNotificationService";
-import MonitoringPanel from "../MonitoringPanel";
+import AnalyticsDashboard from "../admin/AnalyticsDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
+import DashboardProfilePage from "../../components/DashboardProfilePage";
+import { useTheme } from "../../services/ThemeContext";
 
 const USER_SIDEBAR_NAV_DEFAULTS = { workspace: true, system: true, account: true };
 
 export const UserDashboard = () => {
     const { instance, accounts } = useMsal();
     const toast = useToast();
+    const { theme, setTheme, themes } = useTheme();
     
     const account = accounts[0];
     const userName = account?.name || "Standard User";
@@ -323,111 +326,82 @@ export const UserDashboard = () => {
         inProgress: tickets.filter(t => t.status === TICKET_STATUS.IN_PROGRESS).length,
         inactive: tickets.filter(t => t.isActive === false).length
     };
-    const availableCount = devOpsMembers.filter(
-        m => m.availability === DEVOPS_AVAILABILITY_STATUS.AVAILABLE
-    ).length;
-
     return (
         <div className="dashboard-layout">
-            {/* Enhanced Professional Sidebar */}
-            <aside className="sidebar">
-                <div className="sidebar-brand">
-                    <div className="brand-icon">
-                        <Zap size={24} />
+            {/* Unified ShipIt Sidebar */}
+            <aside className="shipit-sidebar">
+                {/* Brand */}
+                <div className="sb-brand">
+                    <div className="sb-brand-icon" style={{ background: '#7c3aed' }}>
+                        <Zap size={18} />
+                        <span className={`sb-conn-dot ${isConnected ? 'connected' : 'disconnected'}`}
+                              title={isConnected ? 'Live connection' : 'Reconnecting...'} />
                     </div>
-                    <div>
-                        <h2>CloudOps Hub</h2>
-                        <span>Service Portal</span>
-                    </div>
-                    <div 
-                        className={`sync-indicator ${isConnected ? 'connected' : 'disconnected'}`}
-                        style={{ marginLeft: 'auto', padding: '4px 8px', fontSize: '0.65rem' }}
-                        title={isConnected ? 'Live Connection' : 'Reconnecting...'}
-                    >
-                        {isConnected ? <Wifi size={12} /> : <WifiOff size={12} />}
+                    <div className="sb-brand-meta">
+                        <span className="sb-app-name">ShipIt</span>
+                        <span className="sb-app-subtitle">Request Portal</span>
                     </div>
                 </div>
-                <nav className="sidebar-nav">
-                    <div className="nav-section">
-                        <NavSectionToggle
-                            label="Workspace"
-                            open={navGroups.workspace}
-                            onToggle={() => setNavGroups((p) => ({ ...p, workspace: !p.workspace }))}
-                        />
-                        {navGroups.workspace && (
-                            <>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'dashboard' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setActiveSection('dashboard'); }}
-                                >
-                                    <LayoutDashboard size={18} /> Overview
-                                    {stats.pending > 0 && <span className="nav-badge">{stats.pending}</span>}
-                                </a>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'requests' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setActiveSection('requests'); }}
-                                >
-                                    <FileText size={18} /> Service Requests
-                                    {stats.active > 0 && <span className="nav-badge">{stats.active}</span>}
-                                </a>
-                            </>
-                        )}
+
+                {/* Navigation */}
+                <nav className="sb-nav">
+                    <div className="sb-group">
+                        <span className="sb-group-label">Workspace</span>
+                        <a href="#" className={`sb-item ${activeSection === 'dashboard' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setActiveSection('dashboard'); }}>
+                            <span className="sb-item-icon"><LayoutDashboard size={15} /></span>
+                            <span className="sb-item-text">Overview</span>
+                            {stats.pending > 0 && <span className="sb-badge">{stats.pending}</span>}
+                        </a>
+                        <a href="#" className={`sb-item ${activeSection === 'requests' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setActiveSection('requests'); }}>
+                            <span className="sb-item-icon"><FileText size={15} /></span>
+                            <span className="sb-item-text">My Requests</span>
+                            {stats.active > 0 && <span className="sb-badge">{stats.active}</span>}
+                        </a>
                     </div>
-                    <div className="nav-section">
-                        <NavSectionToggle
-                            label="System"
-                            open={navGroups.system}
-                            onToggle={() => setNavGroups((p) => ({ ...p, system: !p.system }))}
-                        />
-                        {navGroups.system && (
-                            <>
-                                <a 
-                                    href="#" 
-                                    className={activeSection === 'settings' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setActiveSection('settings'); }}
-                                >
-                                    <Settings size={18} /> Preferences
-                                </a>
-                                <a
-                                    href="#"
-                                    className={activeSection === 'monitoring' ? 'active' : ''}
-                                    onClick={(e) => { e.preventDefault(); setActiveSection('monitoring'); }}
-                                >
-                                    <BarChart3 size={18} /> Analytics
-                                </a>
-                            </>
-                        )}
+
+                    <div className="sb-group">
+                        <span className="sb-group-label">System</span>
+                        <a href="#" className={`sb-item ${activeSection === 'settings' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setActiveSection('settings'); }}>
+                            <span className="sb-item-icon"><Settings size={15} /></span>
+                            <span className="sb-item-text">Preferences</span>
+                        </a>
+                        <a href="#" className={`sb-item ${activeSection === 'monitoring' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setActiveSection('monitoring'); }}>
+                            <span className="sb-item-icon"><BarChart3 size={15} /></span>
+                            <span className="sb-item-text">Analytics</span>
+                        </a>
                     </div>
-                    <div className="nav-section">
-                        <NavSectionToggle
-                            label="Account"
-                            open={navGroups.account}
-                            onToggle={() => setNavGroups((p) => ({ ...p, account: !p.account }))}
-                        />
-                        {navGroups.account && (
-                            <a 
-                                href="#" 
-                                className={`nav-profile-link ${activeSection === 'profile' ? 'active' : ''}`}
-                                onClick={(e) => { e.preventDefault(); setActiveSection('profile'); }}
-                            >
-                                <UserCircle size={18} /> My Account
-                            </a>
-                        )}
+
+                    <div className="sb-group">
+                        <span className="sb-group-label">Account</span>
+                        <a href="#" className={`sb-item ${activeSection === 'profile' ? 'active' : ''}`}
+                           onClick={(e) => { e.preventDefault(); setActiveSection('profile'); }}>
+                            <span className="sb-item-icon"><UserCircle size={15} /></span>
+                            <span className="sb-item-text">My Account</span>
+                        </a>
                     </div>
                 </nav>
-                <div className="sidebar-footer">
-                    <div className="user-info">
-                        <span className="user-name">{userName}</span>
-                        <span className="user-email">{userEmail}</span>
-                        <span className="user-role badge-user">
-                            Standard Access
-                        </span>
+
+                {/* Footer */}
+                <div className="sb-footer">
+                    <div className="sb-user-row">
+                        <div className="sb-avatar" style={{ background: '#6d28d9' }}>
+                            {(userName || '').split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase() || '?'}
+                        </div>
+                        <div className="sb-user-meta">
+                            <span className="sb-user-name">{userName}</span>
+                            <span className="sb-user-email">{userEmail}</span>
+                        </div>
                     </div>
-                    <button className="logout-btn" onClick={handleLogout}>
-                        <LogOut size={16} /> Sign Out
-                    </button>
+                    <div className="sb-footer-actions">
+                        <span className="sb-role-badge user">Standard</span>
+                        <button className="sb-logout-btn" onClick={handleLogout}>
+                            <LogOut size={12} /> Sign Out
+                        </button>
+                    </div>
                 </div>
             </aside>
             
@@ -443,10 +417,10 @@ export const UserDashboard = () => {
                                 <span className="breadcrumb-separator">/</span>
                                 <span className="breadcrumb-current">My Requests</span>
                             </div>
-                            <h1 style={{ fontSize: '1.75rem', fontWeight: '700', color: '#172B4D', marginTop: '8px' }}>
-                                My Service Requests
+                            <h1 style={{ fontSize: '1.75rem', fontWeight: '700', color: '#111827', marginTop: '8px' }}>
+                                My Requests
                             </h1>
-                            <p style={{ color: '#5E6C84', marginTop: '0.5rem', fontSize: '0.9rem' }}>
+                            <p style={{ color: '#4b5563', marginTop: '0.5rem', fontSize: '0.9rem' }}>
                                 Create and track your infrastructure and deployment requests
                             </p>
                         </div>
@@ -523,12 +497,12 @@ export const UserDashboard = () => {
                                         Email notifications
                                     </span>
                                 </div>
-                                <p style={{ fontSize: "0.8rem", color: "#5E6C84", margin: "0 0 1rem" }}>
+                                <p style={{ fontSize: "0.8rem", color: "#4b5563", margin: "0 0 1rem" }}>
                                     Choose which ticket emails you receive on your account address. Project admins can mark
                                     some channels as mandatory in workflow settings; those messages are always sent.
                                 </p>
                                 {emailNotifLoading && (
-                                    <p style={{ color: "#5E6C84", fontSize: "0.875rem" }}>Loading preferences…</p>
+                                    <p style={{ color: "#4b5563", fontSize: "0.875rem" }}>Loading preferences…</p>
                                 )}
                                 {!emailNotifLoading && emailNotifPrefs && (
                                     <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
@@ -562,7 +536,7 @@ export const UserDashboard = () => {
                                                     gap: 10,
                                                     cursor: emailNotifSaving ? "default" : "pointer",
                                                     fontSize: "0.875rem",
-                                                    color: "#172B4D"
+                                                    color: "#111827"
                                                 }}
                                             >
                                                 <input
@@ -592,13 +566,43 @@ export const UserDashboard = () => {
                                 )}
                             </div>
 
-                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#F4F5F7', borderRadius: 8 }}>
-                                <h4 style={{ marginBottom: '0.5rem', color: '#172B4D' }}>Connection Status</h4>
-                                <p style={{ fontSize: '0.875rem', color: '#5E6C84' }}>
+                            <div className="sound-settings" style={{ marginTop: '1.5rem' }}>
+                                <div className="sound-settings-header">
+                                    <span className="sound-settings-title">
+                                        <Settings size={18} style={{ marginRight: 8 }} />
+                                        Theme
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
+                                    {themes.map((t) => (
+                                        <button
+                                            key={t}
+                                            onClick={() => setTheme(t)}
+                                            style={{
+                                                padding: '0.5rem 1.25rem',
+                                                borderRadius: 8,
+                                                border: theme === t ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
+                                                background: theme === t ? 'var(--accent-light)' : 'var(--card-bg)',
+                                                color: 'var(--text-main)',
+                                                fontWeight: theme === t ? 600 : 400,
+                                                cursor: 'pointer',
+                                                textTransform: 'capitalize',
+                                                fontSize: '0.875rem',
+                                                transition: 'all 0.2s ease'
+                                            }}
+                                        >
+                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : '🕹️ Retro'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#f9fafb', borderRadius: 8 }}>
+                                <h4 style={{ marginBottom: '0.5rem', color: '#111827' }}>Connection Status</h4>
+                                <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>
                                     Sync Method: <strong>WebSocket (Fastest)</strong>
                                 </p>
-                                <p style={{ fontSize: '0.875rem', color: '#5E6C84', marginTop: '0.25rem' }}>
-                                    Status: <strong style={{ color: isConnected ? '#36B37E' : '#FF5630' }}>
+                                <p style={{ fontSize: '0.875rem', color: '#4b5563', marginTop: '0.25rem' }}>
+                                    Status: <strong style={{ color: isConnected ? '#059669' : '#dc2626' }}>
                                         {isConnected ? 'Connected' : 'Connecting...'}
                                     </strong>
                                 </p>
@@ -606,137 +610,100 @@ export const UserDashboard = () => {
                         </div>
                     </div>
                 ) : activeSection === 'monitoring' ? (
-                    <MonitoringPanel />
+                    <AnalyticsDashboard
+                        tickets={tickets}
+                        devOpsMembers={devOpsMembers}
+                        projects={projects}
+                        showCost={false}
+                        userRole="user"
+                    />
                 ) : activeSection === 'profile' ? (
-                    <div className="tickets-section">
-                        <div className="tickets-header">
-                            <h3>Profile</h3>
-                        </div>
-                        <div className="tickets-list">
-                            <div className="team-member-card" style={{ maxWidth: 400 }}>
-                                <div className="activity-avatar" style={{ width: 64, height: 64, fontSize: 24, margin: '0 auto 1rem' }}>
-                                    {userName.charAt(0).toUpperCase()}
-                                </div>
-                                <div className="team-member-head"><strong>Name</strong><span>{userName}</span></div>
-                                <div className="team-member-head"><strong>Email</strong><span>{userEmail}</span></div>
-                                {userPrincipalName && (
-                                    <div className="team-member-head"><strong>Username</strong><span>{userPrincipalName}</span></div>
-                                )}
-                                <div className="team-member-head"><strong>Role</strong><span>Standard User</span></div>
-                            </div>
-                        </div>
+                    <div className="tickets-section profile-section-wrap">
+                        <DashboardProfilePage
+                            userName={userName}
+                            userEmail={userEmail}
+                            userPrincipalName={userPrincipalName}
+                            roleKey="user"
+                            onSignOut={handleLogout}
+                            avatarColor="#6d28d9"
+                        />
                     </div>
                 ) : (
                 <>
-                {/* Professional Stats Cards */}
-                <div className="stats-grid">
-                    <div className="stat-card jira-style" onClick={() => handleTabChange('all')}>
-                        <div className="stat-icon blue">
-                            <FileText size={24} />
-                        </div>
-                        <div className="stat-value">{stats.total}</div>
-                        <span className="stat-label">Total Requests</span>
-                    </div>
-                    <div className="stat-card jira-style" onClick={() => handleTabChange('active')}>
-                        <div className="stat-icon blue">
-                            <Clock size={24} />
-                        </div>
-                        <div className="stat-value">{stats.active}</div>
-                        <span className="stat-label">Active</span>
-                        {stats.pending > 0 && (
-                            <div className="stat-trend">
-                                <AlertCircle size={14} />
-                                {stats.pending} pending review
+                {/* Compact Stats Bar + DevOps availability inline */}
+                {['dashboard', 'requests'].includes(activeSection) && (
+                <div className="mini-stats-bar">
+                    <button className={`mini-stat ${activeTab === 'all' ? 'active' : ''}`} onClick={() => handleTabChange('all')}>
+                        <span className="mini-stat-icon blue"><FileText size={13} /></span>
+                        <span className="mini-stat-value">{stats.total}</span>
+                        <span className="mini-stat-label">Total</span>
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button className={`mini-stat ${activeTab === 'active' ? 'active' : ''}`} onClick={() => handleTabChange('active')}>
+                        <span className="mini-stat-icon blue"><Clock size={13} /></span>
+                        <span className="mini-stat-value">{stats.active}</span>
+                        <span className="mini-stat-label">Active</span>
+                        {stats.pending > 0 && <span className="mini-stat-badge">{stats.pending} pending</span>}
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button className={`mini-stat ${activeTab === 'completed' ? 'active' : ''}`} onClick={() => handleTabChange('completed')}>
+                        <span className="mini-stat-icon green"><CheckCircle size={13} /></span>
+                        <span className="mini-stat-value">{stats.completed}</span>
+                        <span className="mini-stat-label">Completed</span>
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button className="mini-stat">
+                        <span className="mini-stat-icon yellow"><TrendingUp size={13} /></span>
+                        <span className="mini-stat-value">{stats.inProgress}</span>
+                        <span className="mini-stat-label">In Progress</span>
+                    </button>
+                    <span className="mini-stat-sep" />
+                    <button className={`mini-stat ${activeTab === 'closed' ? 'active' : ''}`} onClick={() => handleTabChange('closed')}>
+                        <span className="mini-stat-icon red"><XCircle size={13} /></span>
+                        <span className="mini-stat-value">{stats.closed}</span>
+                        <span className="mini-stat-label">Closed</span>
+                    </button>
+
+                    {/* DevOps availability — compact avatar dots pushed to the right */}
+                    {devOpsMembers.length > 0 && (
+                        <>
+                            <span className="mini-stat-sep" style={{ marginLeft: 'auto' }} />
+                            <div className="devops-avail-strip" title="DevOps team availability">
+                                <span className="devops-avail-label">Team</span>
+                                {devOpsMembers.slice(0, 6).map((m) => {
+                                    const status = (m.availability || '').toLowerCase();
+                                    const color = status === 'available' ? '#22c55e'
+                                        : status === 'busy' ? '#f59e0b'
+                                        : status === 'away' ? '#f97316'
+                                        : '#94a3b8';
+                                    const initials = (m.name || m.email || '?').charAt(0).toUpperCase();
+                                    return (
+                                        <span
+                                            key={m.email}
+                                            className="devops-avail-dot"
+                                            title={`${m.name || m.email} — ${m.availability || 'Offline'}`}
+                                            style={{ '--dot-color': color }}
+                                        >
+                                            {initials}
+                                        </span>
+                                    );
+                                })}
+                                {devOpsMembers.length > 6 && (
+                                    <span className="devops-avail-dot more">+{devOpsMembers.length - 6}</span>
+                                )}
                             </div>
-                        )}
-                    </div>
-                    <div className="stat-card jira-style" onClick={() => handleTabChange('completed')}>
-                        <div className="stat-icon green">
-                            <CheckCircle size={24} />
-                        </div>
-                        <div className="stat-value">{stats.completed}</div>
-                        <span className="stat-label">Completed</span>
-                    </div>
-                    <div className="stat-card jira-style">
-                        <div className="stat-icon yellow">
-                            <TrendingUp size={24} />
-                        </div>
-                        <div className="stat-value">{stats.inProgress}</div>
-                        <span className="stat-label">In Progress</span>
-                    </div>
-                    <div className="stat-card jira-style">
-                        <div className="stat-icon green">
-                            <User size={24} />
-                        </div>
-                        <div className="stat-value">{availableCount}</div>
-                        <span className="stat-label">DevOps Available</span>
-                    </div>
+                        </>
+                    )}
                 </div>
+                )}
                 </>
                 )}
 
-                {activeSection !== 'settings' && activeSection !== 'profile' && activeSection !== 'monitoring' && (
+                {['dashboard', 'requests'].includes(activeSection) && (
                 <>
+                {/* Filters only */}
                 <div className="tickets-section">
                     <div className="tickets-header">
-                        <h3>DevOps Team Availability</h3>
-                    </div>
-                    <div className="tickets-list">
-                        {devOpsMembers.length === 0 ? (
-                            <p style={{ color: '#64748b' }}>No DevOps users found.</p>
-                        ) : (
-                            <div className="team-members-grid">
-                                {devOpsMembers.map(member => (
-                                    <div className="team-member-card" key={member.id || member.email}>
-                                        <div className="team-member-head">
-                                            <strong>{member.name}</strong>
-                                            <span className={`availability-badge availability-${(member.availability || DEVOPS_AVAILABILITY_STATUS.OFFLINE).toLowerCase().replace(/\s+/g, '-')}`}>
-                                                {member.availability || DEVOPS_AVAILABILITY_STATUS.OFFLINE}
-                                            </span>
-                                        </div>
-                                        <div className="team-member-email">{member.email}</div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
-                
-                {/* Tabs and Filters */}
-                <div className="tickets-section">
-                    <div className="tickets-header">
-                        <div className="tickets-tabs">
-                            <button 
-                                className={`tab-btn ${activeTab === 'active' ? 'active' : ''}`}
-                                onClick={() => handleTabChange('active')}
-                            >
-                                Active ({stats.active})
-                            </button>
-                            <button 
-                                className={`tab-btn ${activeTab === 'all' ? 'active' : ''}`}
-                                onClick={() => handleTabChange('all')}
-                            >
-                                All ({tickets.length})
-                            </button>
-                            <button 
-                                className={`tab-btn ${activeTab === 'completed' ? 'active' : ''}`}
-                                onClick={() => handleTabChange('completed')}
-                            >
-                                Completed ({stats.completed})
-                            </button>
-                            <button 
-                                className={`tab-btn ${activeTab === 'closed' ? 'active' : ''}`}
-                                onClick={() => handleTabChange('closed')}
-                            >
-                                Closed ({stats.closed})
-                            </button>
-                            <button 
-                                className={`tab-btn ${activeTab === 'inactive' ? 'active' : ''}`}
-                                onClick={() => handleTabChange('inactive')}
-                            >
-                                Inactive ({stats.inactive})
-                            </button>
-                        </div>
                         <button 
                             className={`btn-filter ${showFilters ? 'active' : ''}`}
                             onClick={() => setShowFilters(!showFilters)}
