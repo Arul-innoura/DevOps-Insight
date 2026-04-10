@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import { X } from "lucide-react";
+import { X, Lock } from "lucide-react";
 
 const defaultNormalize = (email) => String(email || "").trim().toLowerCase();
 
@@ -32,6 +32,7 @@ export default function EmailChipsInput({
   placeholder = "Type email and press Enter",
   mode = "string", // "string" | "array"
   className = "",
+  lockedEmails = [], // emails shown as mandatory/locked — cannot be removed by user
 }) {
   const [inputValue, setInputValue] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -71,6 +72,12 @@ export default function EmailChipsInput({
     emit(next);
   };
 
+  // Emails that are locked (mandatory) — normalized
+  const lockedNormalized = useMemo(
+    () => (lockedEmails || []).map(defaultNormalize).filter(Boolean),
+    [lockedEmails]
+  );
+
   const handleKeyDown = (e) => {
     if (e.key === "Enter" || e.key === "Tab" || e.key === "," || e.key === ";" || e.key === " ") {
       if (!inputValue) return;
@@ -107,6 +114,13 @@ export default function EmailChipsInput({
   return (
     <div className={`cc-email-input-container ${className}`.trim()}>
       <div className="cc-email-chips">
+        {/* Locked / mandatory chips — shown first, cannot be removed */}
+        {lockedNormalized.map((email) => (
+          <span key={`locked-${email}`} className="cc-email-chip cc-email-chip-locked" title="Mandatory — set by admin, cannot be removed">
+            <Lock size={10} />
+            {email}
+          </span>
+        ))}
         {emails.map((email, index) => (
           <span key={email} className="cc-email-chip">
             {email}

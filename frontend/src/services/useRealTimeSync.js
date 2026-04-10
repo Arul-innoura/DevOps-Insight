@@ -58,21 +58,19 @@ export const useRealTimeSync = ({
             return () => clearInterval(timer);
         }
         
-        // Handler for all ticket events
-        const handleTicketEvent = (data) => {
-            console.log('[RealTimeSync] Ticket event:', data);
-            
-            // Play sound (only after initial load)
-            if (didInitialLoad.current && playUpdateSound) {
-                // If it's a new ticket with no assignee, play the beautiful Jira-style chime
-                if (data && (!data.assignedTo && !data.ticket?.assignedTo)) {
-                    playNewTicketNotification();
-                } else {
-                    playShortNotification();
-                }
+        // New ticket created — always play the distinctive arrival chime
+        const handleNewTicket = (data) => {
+            if (didInitialLoad.current && playNewTicketSound) {
+                playNewTicketNotification();
             }
-            
-            // Trigger refresh
+            debouncedRefresh();
+        };
+
+        // Existing ticket updated (assignment, note, etc.)
+        const handleTicketEvent = (data) => {
+            if (didInitialLoad.current && playUpdateSound) {
+                playShortNotification();
+            }
             debouncedRefresh();
         };
 
@@ -97,7 +95,7 @@ export const useRealTimeSync = ({
         };
         
         // Subscribe to events
-        realTimeService.on(WS_MESSAGE_TYPES.TICKET_CREATED, handleTicketEvent);
+        realTimeService.on(WS_MESSAGE_TYPES.TICKET_CREATED, handleNewTicket);
         realTimeService.on(WS_MESSAGE_TYPES.TICKET_UPDATED, handleTicketEvent);
         realTimeService.on(WS_MESSAGE_TYPES.TICKET_DELETED, handleTicketEvent);
         realTimeService.on(WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, handleStatusChange);
@@ -115,7 +113,7 @@ export const useRealTimeSync = ({
         
         // Cleanup
         return () => {
-            realTimeService.off(WS_MESSAGE_TYPES.TICKET_CREATED, handleTicketEvent);
+            realTimeService.off(WS_MESSAGE_TYPES.TICKET_CREATED, handleNewTicket);
             realTimeService.off(WS_MESSAGE_TYPES.TICKET_UPDATED, handleTicketEvent);
             realTimeService.off(WS_MESSAGE_TYPES.TICKET_DELETED, handleTicketEvent);
             realTimeService.off(WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, handleStatusChange);
@@ -129,7 +127,7 @@ export const useRealTimeSync = ({
                 clearTimeout(debounceRef.current);
             }
         };
-    }, [enableWebSocket, playUpdateSound, debouncedRefresh]);
+    }, [enableWebSocket, playNewTicketSound, playUpdateSound, debouncedRefresh]);
     
     // Refresh on tab visibility
     useEffect(() => {

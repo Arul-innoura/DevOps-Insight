@@ -8,7 +8,6 @@ import {
     Plus,
     RefreshCw,
     Filter,
-    LayoutDashboard,
     Wifi,
     WifiOff,
     Bell,
@@ -52,6 +51,7 @@ import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
 import { useTheme } from "../../services/ThemeContext";
+import { LoadingScreen } from "../../components/LoadingScreen";
 
 const USER_SIDEBAR_NAV_DEFAULTS = { workspace: true, system: true, account: true };
 
@@ -72,7 +72,7 @@ export const UserDashboard = () => {
     const [selectedTicket, setSelectedTicket] = useState(null);
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('active');
-    const [activeSection, setActiveSection] = useState('dashboard');
+    const [activeSection, setActiveSection] = useState('requests');
     const [devOpsMembers, setDevOpsMembers] = useState([]);
     const [projects, setProjects] = useState([]);
     const [managers, setManagers] = useState([]);
@@ -84,6 +84,7 @@ export const UserDashboard = () => {
     const [emailNotifLoading, setEmailNotifLoading] = useState(false);
     const [emailNotifSaving, setEmailNotifSaving] = useState(false);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("user", USER_SIDEBAR_NAV_DEFAULTS);
+    const [isInitialLoading, setIsInitialLoading] = useState(true);
     
     const isLoadingRef = useRef(false);
     const filtersRef = useRef(filters);
@@ -161,6 +162,7 @@ export const UserDashboard = () => {
                 const latest = userTickets.find((t) => t.id === prev.id);
                 return latest || prev;
             });
+            setIsInitialLoading(false);
         } finally {
             isLoadingRef.current = false;
             if (!silent) setIsSyncing(false);
@@ -194,8 +196,11 @@ export const UserDashboard = () => {
         let result = [...ticketList];
         
         // Apply tab filter
-        if (tab === 'active') {
-            // Active tab shows only active tickets (not marked inactive)
+        if (tab === 'all') {
+            // All tab excludes closed — closed tickets have their own dedicated section
+            result = result.filter(t => t.status !== TICKET_STATUS.CLOSED);
+        } else if (tab === 'active') {
+            // Active tab shows only active tickets (not marked inactive, not terminal)
             result = result.filter(t => 
                 t.isActive !== false && 
                 ![TICKET_STATUS.COMPLETED, TICKET_STATUS.REJECTED, TICKET_STATUS.CLOSED].includes(t.status)
@@ -326,6 +331,8 @@ export const UserDashboard = () => {
         inProgress: tickets.filter(t => t.status === TICKET_STATUS.IN_PROGRESS).length,
         inactive: tickets.filter(t => t.isActive === false).length
     };
+    if (isInitialLoading) return <LoadingScreen role="user" />;
+
     return (
         <div className="dashboard-layout">
             {/* Unified ShipIt Sidebar */}
@@ -346,42 +353,62 @@ export const UserDashboard = () => {
                 {/* Navigation */}
                 <nav className="sb-nav">
                     <div className="sb-group">
-                        <span className="sb-group-label">Workspace</span>
-                        <a href="#" className={`sb-item ${activeSection === 'dashboard' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setActiveSection('dashboard'); }}>
-                            <span className="sb-item-icon"><LayoutDashboard size={15} /></span>
-                            <span className="sb-item-text">Overview</span>
-                            {stats.pending > 0 && <span className="sb-badge">{stats.pending}</span>}
-                        </a>
-                        <a href="#" className={`sb-item ${activeSection === 'requests' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setActiveSection('requests'); }}>
-                            <span className="sb-item-icon"><FileText size={15} /></span>
-                            <span className="sb-item-text">My Requests</span>
-                            {stats.active > 0 && <span className="sb-badge">{stats.active}</span>}
-                        </a>
+                        <NavSectionToggle
+                            open={navGroups.workspace}
+                            onToggle={() => setNavGroups(g => ({ ...g, workspace: !g.workspace }))}
+                            label="Workspace"
+                        />
+                        {navGroups.workspace && (
+                            <div className="sb-group-items">
+                                <a href="#" className={`sb-item ${activeSection === 'requests' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setActiveSection('requests'); }}>
+                                    <span className="sb-item-icon"><FileText size={15} /></span>
+                                    <span className="sb-item-text">My Requests</span>
+                                    {(stats.pending > 0 || stats.active > 0) && (
+                                        <span className="sb-badge">{stats.active || stats.pending}</span>
+                                    )}
+                                </a>
+                            </div>
+                        )}
                     </div>
 
                     <div className="sb-group">
-                        <span className="sb-group-label">System</span>
-                        <a href="#" className={`sb-item ${activeSection === 'settings' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setActiveSection('settings'); }}>
-                            <span className="sb-item-icon"><Settings size={15} /></span>
-                            <span className="sb-item-text">Preferences</span>
-                        </a>
-                        <a href="#" className={`sb-item ${activeSection === 'monitoring' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setActiveSection('monitoring'); }}>
-                            <span className="sb-item-icon"><BarChart3 size={15} /></span>
-                            <span className="sb-item-text">Analytics</span>
-                        </a>
+                        <NavSectionToggle
+                            open={navGroups.system}
+                            onToggle={() => setNavGroups(g => ({ ...g, system: !g.system }))}
+                            label="System"
+                        />
+                        {navGroups.system && (
+                            <div className="sb-group-items">
+                                <a href="#" className={`sb-item ${activeSection === 'settings' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setActiveSection('settings'); }}>
+                                    <span className="sb-item-icon"><Settings size={15} /></span>
+                                    <span className="sb-item-text">Preferences</span>
+                                </a>
+                                <a href="#" className={`sb-item ${activeSection === 'monitoring' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setActiveSection('monitoring'); }}>
+                                    <span className="sb-item-icon"><BarChart3 size={15} /></span>
+                                    <span className="sb-item-text">Analytics</span>
+                                </a>
+                            </div>
+                        )}
                     </div>
 
                     <div className="sb-group">
-                        <span className="sb-group-label">Account</span>
-                        <a href="#" className={`sb-item ${activeSection === 'profile' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setActiveSection('profile'); }}>
-                            <span className="sb-item-icon"><UserCircle size={15} /></span>
-                            <span className="sb-item-text">My Account</span>
-                        </a>
+                        <NavSectionToggle
+                            open={navGroups.account}
+                            onToggle={() => setNavGroups(g => ({ ...g, account: !g.account }))}
+                            label="Account"
+                        />
+                        {navGroups.account && (
+                            <div className="sb-group-items">
+                                <a href="#" className={`sb-item ${activeSection === 'profile' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setActiveSection('profile'); }}>
+                                    <span className="sb-item-icon"><UserCircle size={15} /></span>
+                                    <span className="sb-item-text">My Account</span>
+                                </a>
+                            </div>
+                        )}
                     </div>
                 </nav>
 
@@ -631,7 +658,7 @@ export const UserDashboard = () => {
                 ) : (
                 <>
                 {/* Compact Stats Bar + DevOps availability inline */}
-                {['dashboard', 'requests'].includes(activeSection) && (
+                {activeSection === 'requests' && (
                 <div className="mini-stats-bar">
                     <button className={`mini-stat ${activeTab === 'all' ? 'active' : ''}`} onClick={() => handleTabChange('all')}>
                         <span className="mini-stat-icon blue"><FileText size={13} /></span>
@@ -699,7 +726,7 @@ export const UserDashboard = () => {
                 </>
                 )}
 
-                {['dashboard', 'requests'].includes(activeSection) && (
+                {activeSection === 'requests' && (
                 <>
                 {/* Filters only */}
                 <div className="tickets-section">

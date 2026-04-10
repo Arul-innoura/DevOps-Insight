@@ -48,7 +48,7 @@ const maxVal = (entries) =>
     entries.length > 0 ? Math.max(...entries.map(e => e[1])) : 1;
 
 const fmtCurrency = (amount, currency = 'USD') => {
-    const symbols = { USD: '$', EUR: '€', GBP: '£', INR: '₹' };
+    const symbols = { USD: '$', INR: '₹' };
     const sym = symbols[currency] || currency + ' ';
     return `${sym}${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };

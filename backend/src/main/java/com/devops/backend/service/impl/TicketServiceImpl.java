@@ -892,6 +892,9 @@ public class TicketServiceImpl implements TicketService {
                 ticket.setWorkflowEmailTo(copyEmailList(wf.getEmailRouting().getTo()));
                 ticket.setWorkflowEmailCc(copyEmailList(wf.getEmailRouting().getCc()));
                 ticket.setWorkflowEmailBcc(copyEmailList(wf.getEmailRouting().getBcc()));
+                ticket.setWorkflowEmailToMandatory(copyEmailList(wf.getEmailRouting().getToMandatory()));
+                ticket.setWorkflowEmailCcMandatory(copyEmailList(wf.getEmailRouting().getCcMandatory()));
+                ticket.setWorkflowEmailBccMandatory(copyEmailList(wf.getEmailRouting().getBccMandatory()));
             }
             ticket.setTotalApprovalLevels(null);
             ticket.setCurrentApprovalLevel(null);

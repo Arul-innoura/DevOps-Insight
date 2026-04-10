@@ -2,21 +2,31 @@ import React, { useState, useEffect, useCallback } from "react";
 import {
     X, Plus, Trash2, Save, Layers, Mail, Bell, ArrowUp, ArrowDown,
     Users, DollarSign, Shield, CheckCircle, AlertCircle, MessageSquare,
-    Settings, Cloud, Cpu, Database, HardDrive, Globe, Server, ChevronDown, ChevronRight
+    Settings, Cloud, Cpu, Database, HardDrive, Globe, Server, ChevronDown, ChevronRight,
+    Lock
 } from "lucide-react";
 import { getProjectWorkflow, saveProjectWorkflow } from "../../services/projectWorkflowService";
-import { ENVIRONMENTS, updateProjectEnvironments } from "../../services/ticketService";
-import EmailChipsInput from "../../components/EmailChipsInput";
+import { ENVIRONMENTS, normalizeEnvironmentLabel, updateProjectEnvironments } from "../../services/ticketService";
 
 const ENV_COLORS = {
-    Dev:        { bg: "#dbeafe", text: "#1e40af", border: "#93c5fd", dot: "#3b82f6" },
-    QA:         { bg: "#fef3c7", text: "#92400e", border: "#fcd34d", dot: "#f59e0b" },
-    Stage:      { bg: "#ede9fe", text: "#5b21b6", border: "#c4b5fd", dot: "#8b5cf6" },
-    UAT:        { bg: "#d1fae5", text: "#065f46", border: "#6ee7b7", dot: "#10b981" },
-    Production: { bg: "#fee2e2", text: "#991b1b", border: "#fca5a5", dot: "#ef4444" }
+    Development:               { bg: "#dbeafe", text: "#1e40af", border: "#93c5fd", dot: "#3b82f6" },
+    "Quality Assurance":       { bg: "#fef3c7", text: "#92400e", border: "#fcd34d", dot: "#f59e0b" },
+    Staging:                   { bg: "#ede9fe", text: "#5b21b6", border: "#c4b5fd", dot: "#8b5cf6" },
+    "User Acceptance Testing": { bg: "#d1fae5", text: "#065f46", border: "#6ee7b7", dot: "#10b981" },
+    Production:                { bg: "#fee2e2", text: "#991b1b", border: "#fca5a5", dot: "#ef4444" }
 };
 
 const getEnvStyle = (env) => ENV_COLORS[env] || { bg: "#f3f4f6", text: "#374151", border: "#d1d5db", dot: "#6b7280" };
+
+const sortEnvCanonical = (list) =>
+    [...new Set(list)].sort((a, b) => {
+        const ia = ENVIRONMENTS.indexOf(a);
+        const ib = ENVIRONMENTS.indexOf(b);
+        if (ia === -1 && ib === -1) return String(a).localeCompare(String(b));
+        if (ia === -1) return 1;
+        if (ib === -1) return -1;
+        return ia - ib;
+    });
 
 const emptyNotif = () => ({
     ticketStatusChanges: true,
@@ -43,7 +53,7 @@ const emptyInfra = () => ({
 });
 
 const emptyWorkflow = () => ({
-    emailRouting: { to: [], cc: [], bcc: [] },
+    emailRouting: { to: [], cc: [], bcc: [], toMandatory: [], ccMandatory: [], bccMandatory: [] },
     approvalLevels: [],
     managers: [],
     costApprovalRequired: false,
@@ -72,10 +82,103 @@ const normalizeCfg = (raw) => ({
     infrastructure: { ...emptyInfra(), ...(raw?.infrastructure || {}) },
     approvalLevels: normalizeApprovalLevels(raw?.approvalLevels || []),
     notificationPreferences: { ...emptyNotif(), ...(raw?.notificationPreferences || {}) },
-    emailRouting: { to: [], cc: [], bcc: [], ...(raw?.emailRouting || {}) },
+    emailRouting: { to: [], cc: [], bcc: [], toMandatory: [], ccMandatory: [], bccMandatory: [], ...(raw?.emailRouting || {}) },
     managers: raw?.managers || [],
     costApprovers: raw?.costApprovers || []
 });
+
+// ─── Email Routing Row Editor ─────────────────────────────────────────────────
+const EmailRoutingField = ({ label, hint, fieldKey, cfg, setCfg }) => {
+    const [addInput, setAddInput] = useState("");
+    const mandatoryKey = `${fieldKey}Mandatory`;
+    const emails = cfg.emailRouting?.[fieldKey] || [];
+    const mandatory = cfg.emailRouting?.[mandatoryKey] || [];
+
+    const updateRouting = (newEmails, newMandatory) => {
+        setCfg({ ...cfg, emailRouting: { ...cfg.emailRouting, [fieldKey]: newEmails, [mandatoryKey]: newMandatory } });
+    };
+
+    const handleAddEmail = () => {
+        const email = addInput.trim().toLowerCase();
+        if (!email || !email.includes("@") || emails.includes(email)) {
+            setAddInput("");
+            return;
+        }
+        updateRouting([...emails, email], mandatory);
+        setAddInput("");
+    };
+
+    const handleRemove = (email) => {
+        updateRouting(emails.filter(e => e !== email), mandatory.filter(m => m !== email));
+    };
+
+    const toggleMandatory = (email, checked) => {
+        const newMandatory = checked
+            ? [...mandatory.filter(m => m !== email), email]
+            : mandatory.filter(m => m !== email);
+        updateRouting(emails, newMandatory);
+    };
+
+    return (
+        <div className="workflow-input-group">
+            <label>
+                <span className="label-text">{label}</span>
+                <span className="label-hint">{hint}</span>
+            </label>
+            <div className="email-routing-editor">
+                {emails.length === 0 && (
+                    <div className="email-routing-empty">No recipients added yet.</div>
+                )}
+                {emails.map((email) => {
+                    const isMandatory = mandatory.includes(email);
+                    return (
+                        <div key={email} className={`email-routing-row${isMandatory ? ' is-mandatory' : ''}`}>
+                            <label
+                                className={`email-mandatory-chk${isMandatory ? ' checked' : ''}`}
+                                title={isMandatory ? 'Mandatory — users cannot remove this email' : 'Click to make mandatory'}
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={isMandatory}
+                                    onChange={(e) => toggleMandatory(email, e.target.checked)}
+                                />
+                                <span className="email-mandatory-icon">
+                                    <Lock size={11} />
+                                </span>
+                                <span className="email-mandatory-label">{isMandatory ? 'Mandatory' : 'Optional'}</span>
+                            </label>
+                            <span className="email-routing-addr">{email}</span>
+                            <button
+                                type="button"
+                                className="email-routing-remove"
+                                onClick={() => handleRemove(email)}
+                                title="Remove email"
+                            >
+                                <X size={13} />
+                            </button>
+                        </div>
+                    );
+                })}
+                <div className="email-routing-add-row">
+                    <input
+                        type="email"
+                        className="email-routing-add-input"
+                        placeholder={`Add ${hint} email and press Enter…`}
+                        value={addInput}
+                        onChange={(e) => setAddInput(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); handleAddEmail(); }
+                        }}
+                        onBlur={handleAddEmail}
+                    />
+                    <button type="button" className="email-routing-add-btn" onClick={handleAddEmail} tabIndex={-1}>
+                        <Plus size={14} />
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
 
 // ─── Workflow Form ────────────────────────────────────────────────────────────
 const WorkflowForm = ({ cfg, setCfg }) => {
@@ -188,28 +291,13 @@ const WorkflowForm = ({ cfg, setCfg }) => {
                     </div>
                     <div className="workflow-section-title">
                         <h4>Email Routing</h4>
-                        <p>Configure notification recipients for this environment</p>
+                        <p>Configure notification recipients — <strong>lock</strong> an email to make it mandatory (users can't remove it)</p>
                     </div>
                 </div>
                 <div className="workflow-section-content">
-                    {[
-                        { key: "to", label: "Primary Recipients", hint: "To" },
-                        { key: "cc", label: "Copy Recipients", hint: "CC" },
-                        { key: "bcc", label: "Hidden Recipients", hint: "BCC" }
-                    ].map(({ key, label, hint }) => (
-                        <div className="workflow-input-group" key={key}>
-                            <label>
-                                <span className="label-text">{label}</span>
-                                <span className="label-hint">{hint}</span>
-                            </label>
-                            <EmailChipsInput
-                                mode="array"
-                                value={cfg.emailRouting?.[key] || []}
-                                onChange={(val) => setCfg({ ...cfg, emailRouting: { ...cfg.emailRouting, [key]: val } })}
-                                placeholder="Enter email address"
-                            />
-                        </div>
-                    ))}
+                    <EmailRoutingField fieldKey="to"  label="Primary Recipients" hint="To"  cfg={cfg} setCfg={setCfg} />
+                    <EmailRoutingField fieldKey="cc"  label="Copy Recipients"    hint="CC"  cfg={cfg} setCfg={setCfg} />
+                    <EmailRoutingField fieldKey="bcc" label="Hidden Recipients"  hint="BCC" cfg={cfg} setCfg={setCfg} />
                 </div>
             </div>
 
@@ -535,16 +623,23 @@ const ProjectWorkflowEditor = ({ project, onClose, onSaved }) => {
             setDefaultCfg(normalizeCfg(data.defaultConfiguration));
 
             const rawEnvCfgs = data.environmentConfigurations || {};
-            const fromProject = Array.isArray(project?.environments) ? project.environments.filter(Boolean) : [];
+            const fromProject = (Array.isArray(project?.environments) ? project.environments : [])
+                .filter(Boolean)
+                .map(normalizeEnvironmentLabel)
+                .filter(Boolean);
             const fromStored = Object.keys(rawEnvCfgs);
-            const merged = [...fromProject];
+            const mergedCanon = new Set(fromProject);
             for (const k of fromStored) {
-                if (k && !merged.includes(k)) merged.push(k);
+                if (k) mergedCanon.add(normalizeEnvironmentLabel(k));
             }
+            const merged = sortEnvCanonical([...mergedCanon]);
 
             const normalized = {};
-            for (const env of merged) {
-                normalized[env] = normalizeCfg(rawEnvCfgs[env] || null);
+            for (const canon of merged) {
+                const rawKey =
+                    fromStored.find((rk) => normalizeEnvironmentLabel(rk) === canon) ||
+                    (project?.environments || []).find((pe) => normalizeEnvironmentLabel(pe) === canon);
+                normalized[canon] = normalizeCfg(rawEnvCfgs[rawKey] || rawEnvCfgs[canon] || null);
             }
             setManagedEnvs(merged);
             setEnvCfgs(normalized);

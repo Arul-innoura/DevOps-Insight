@@ -49,8 +49,67 @@ export const TICKET_STATUS = {
  * DevOps may open/send cost only after manager approval (first submit) or to resubmit while cost approval is pending.
  * Blocks once cost is approved, or duplicate send from Manager Approved while cost is already pending.
  */
-// Environment Options
-export const ENVIRONMENTS = ["Dev", "QA", "Stage", "Production"];
+// ── Environments (full labels in UI; API uses DEV, QA, STAGE, UAT, PRODUCTION) ──
+export const ENVIRONMENTS = [
+    "Development",
+    "Quality Assurance",
+    "Staging",
+    "User Acceptance Testing",
+    "Production"
+];
+
+const ENV_API_TO_DISPLAY = {
+    DEV: "Development",
+    QA: "Quality Assurance",
+    STAGE: "Staging",
+    UAT: "User Acceptance Testing",
+    PRODUCTION: "Production"
+};
+
+const ENV_DISPLAY_TO_API = {
+    Development: "DEV",
+    "Quality Assurance": "QA",
+    Staging: "STAGE",
+    "User Acceptance Testing": "UAT",
+    Production: "PRODUCTION"
+};
+
+/** Map any legacy / API / short value to canonical display label used in dropdowns. */
+export function normalizeEnvironmentLabel(value) {
+    if (value == null || value === "") return "";
+    const s = String(value).trim();
+    const upper = s.toUpperCase();
+    if (ENV_API_TO_DISPLAY[upper]) return ENV_API_TO_DISPLAY[upper];
+    if (ENV_DISPLAY_TO_API[s]) return s;
+    const lower = s.toLowerCase();
+    const legacy = {
+        dev: "Development",
+        development: "Development",
+        qa: "Quality Assurance",
+        stage: "Staging",
+        staging: "Staging",
+        uat: "User Acceptance Testing",
+        production: "Production",
+        prod: "Production"
+    };
+    if (legacy[lower]) return legacy[lower];
+    const titled = s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+    const titledMap = {
+        Dev: "Development",
+        Qa: "Quality Assurance",
+        Stage: "Staging",
+        Uat: "User Acceptance Testing",
+        Production: "Production"
+    };
+    if (titledMap[titled]) return titledMap[titled];
+    return s;
+}
+
+function environmentApiToDisplay(apiValue) {
+    if (!apiValue) return "";
+    const k = String(apiValue).trim().toUpperCase();
+    return ENV_API_TO_DISPLAY[k] || normalizeEnvironmentLabel(apiValue);
+}
 
 /** Days used to derive a daily rate from the product monthly estimate (Environment Up proration). */
 export const PRORATION_DAYS_PER_MONTH = 30;
@@ -65,8 +124,6 @@ export function parseMonthlyCostEstimate(raw) {
     if (!s) return { amount: null, currency: "USD" };
     let currency = "USD";
     if (/₹|inr/i.test(s)) currency = "INR";
-    else if (/€|eur/i.test(s)) currency = "EUR";
-    else if (/£|gbp/i.test(s)) currency = "GBP";
     else if (/\$|usd/i.test(s)) currency = "USD";
 
     const compact = s.replace(/,/g, "");
@@ -422,8 +479,13 @@ const toApiRequestType = (displayType) => {
 };
 
 const toApiEnvironment = (displayEnv) => {
-    const map = { Dev: "DEV", QA: "QA", Stage: "STAGE", Production: "PRODUCTION" };
-    return map[displayEnv] || displayEnv?.toUpperCase?.() || "DEV";
+    const canon = normalizeEnvironmentLabel(displayEnv);
+    if (ENV_DISPLAY_TO_API[canon]) return ENV_DISPLAY_TO_API[canon];
+    const legacy = { Dev: "DEV", QA: "QA", Stage: "STAGE", Production: "PRODUCTION", Uat: "UAT" };
+    if (legacy[displayEnv]) return legacy[displayEnv];
+    const u = String(displayEnv || "").toUpperCase();
+    if (ENV_API_TO_DISPLAY[u]) return u;
+    return "DEV";
 };
 
 const toApiAvailability = (displayAvailability) => {
@@ -540,7 +602,7 @@ const mapTicket = (ticket) => {
             LEGACY_REQUEST_TYPE_LABELS[requestTypeCode] ||
             requestTypeCode ||
             REQUEST_TYPES.BUILD_REQUEST,
-        environment: ticket.environment ? (ticket.environment.charAt(0) + ticket.environment.slice(1).toLowerCase()) : "",
+        environment: environmentApiToDisplay(ticket.environment),
         status: toDisplayTicketStatus(ticket.status),
         costApprovalRequired: !!ticket.costApprovalRequired,
         estimatedCost: ticket.estimatedCost ?? null,
@@ -770,7 +832,8 @@ export const getTicketStats = async () => {
                 });
                 const byEnvironment = {};
                 Object.entries(stats.byEnvironment || {}).forEach(([k, v]) => {
-                    byEnvironment[k.charAt(0) + k.slice(1).toLowerCase()] = v;
+                    const label = environmentApiToDisplay(k);
+                    byEnvironment[label] = (byEnvironment[label] || 0) + Number(v);
                 });
                 const myTickets = await getTicketsByUser(undefined, { force: true });
                 setCached(cacheKey, {
@@ -803,7 +866,8 @@ export const getTicketStats = async () => {
     });
     const byEnvironment = {};
     Object.entries(stats.byEnvironment || {}).forEach(([k, v]) => {
-        byEnvironment[k.charAt(0) + k.slice(1).toLowerCase()] = v;
+        const label = environmentApiToDisplay(k);
+        byEnvironment[label] = (byEnvironment[label] || 0) + Number(v);
     });
 
     const myTickets = await getTicketsByUser(undefined, { force: true });

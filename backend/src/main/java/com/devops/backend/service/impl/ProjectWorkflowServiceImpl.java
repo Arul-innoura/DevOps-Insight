@@ -100,14 +100,12 @@ public class ProjectWorkflowServiceImpl implements ProjectWorkflowService {
         if (map == null || map.isEmpty() || env == null) {
             return null;
         }
-        String display = env.getDisplayName();
-        String constant = env.name();
         for (Map.Entry<String, WorkflowConfiguration> e : map.entrySet()) {
             String k = e.getKey();
             if (k == null || k.isBlank()) {
                 continue;
             }
-            if (k.equalsIgnoreCase(display) || k.equalsIgnoreCase(constant)) {
+            if (env.matchesWorkflowKey(k)) {
                 return e.getValue();
             }
         }

@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useMsal } from "@azure/msal-react";
 import { 
     LogOut, 
@@ -13,7 +13,6 @@ import {
     Users,
     Ticket,
     BarChart3,
-    Forward,
     UserPlus,
     History,
     RotateCcw,
@@ -37,7 +36,10 @@ import {
     Moon,
     Shield,
     Database,
-    XCircle
+    XCircle,
+    Send,
+    ArrowRightCircle,
+    LayoutDashboard
 } from "lucide-react";
 import { 
     StatusBadge, 
@@ -83,8 +85,9 @@ import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
 import { useTheme } from "../../services/ThemeContext";
+import { LoadingScreen } from "../../components/LoadingScreen";
 
-const DEVOPS_SIDEBAR_NAV_DEFAULTS = { queue: true, archive: true, team: true, account: true };
+const DEVOPS_SIDEBAR_NAV_DEFAULTS = { team: true, account: true };
 
 // Status visual configuration
 const STATUS_CONFIG = {
@@ -114,86 +117,143 @@ const AVAILABILITY_STATUS_ORDER = [
     DEVOPS_AVAILABILITY_STATUS.OFFLINE
 ];
 
-// Forward Ticket Modal Component
+// ── Forward Ticket Modal ─────────────────────────────────────────────────────
+const AVAIL_COLORS = {
+    [DEVOPS_AVAILABILITY_STATUS.AVAILABLE]: { dot: '#22c55e', label: 'Available' },
+    [DEVOPS_AVAILABILITY_STATUS.AWAY]:      { dot: '#f97316', label: 'Away' },
+    [DEVOPS_AVAILABILITY_STATUS.BUSY]:      { dot: '#ef4444', label: 'Busy' },
+    [DEVOPS_AVAILABILITY_STATUS.OFFLINE]:   { dot: '#94a3b8', label: 'Offline' },
+};
+
 const ForwardTicketModal = ({ ticket, onClose, onForward, currentUser }) => {
-    const [selectedEngineer, setSelectedEngineer] = useState('');
+    const [selectedMember, setSelectedMember] = useState(null);
     const [forwardNote, setForwardNote] = useState('');
-    const [availableEngineers, setAvailableEngineers] = useState([]);
-    
+    const [members, setMembers] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [forwarding, setForwarding] = useState(false);
+    const [success, setSuccess] = useState(null); // { name }
+
     useEffect(() => {
-        const loadEngineers = async () => {
-            const members = await getDevOpsTeamMembers();
-            const engineers = members
-                .filter(e => e.name !== currentUser.name)
-                .filter(e => e.availability !== DEVOPS_AVAILABILITY_STATUS.OFFLINE);
-            setAvailableEngineers(engineers);
-        };
-        loadEngineers();
-    }, [currentUser.name]);
-    
-    const handleForward = () => {
-        if (!selectedEngineer) {
-            alert('Please select an engineer to forward to');
-            return;
+        getDevOpsTeamMembers()
+            .then(all => setMembers(all.filter(m => m.email?.toLowerCase() !== currentUser.email?.toLowerCase())))
+            .finally(() => setLoading(false));
+    }, [currentUser.email]);
+
+    const handleForward = async () => {
+        if (!selectedMember) return;
+        setForwarding(true);
+        try {
+            await onForward(ticket.id, selectedMember.name, selectedMember.email || '', forwardNote);
+            setSuccess({ name: selectedMember.name });
+            setTimeout(() => onClose(), 2000);
+        } finally {
+            setForwarding(false);
         }
-        const engineer = availableEngineers.find(e => e.name === selectedEngineer);
-        onForward(ticket.id, selectedEngineer, engineer?.email || '', forwardNote);
-        onClose();
     };
-    
+
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-content forward-modal" onClick={e => e.stopPropagation()}>
-                <div className="modal-header">
-                    <h2><Forward size={20} /> Forward Ticket</h2>
-                    <button className="modal-close" onClick={onClose}>
-                        <X size={20} />
-                    </button>
+            <div className="fwd-modal" onClick={e => e.stopPropagation()}>
+                {/* Header */}
+                <div className="fwd-modal-header">
+                    <div className="fwd-modal-title">
+                        <ArrowRightCircle size={18} />
+                        <span>Forward Ticket</span>
+                    </div>
+                    <div className="fwd-modal-meta">
+                        <span className="fwd-modal-id">{ticket.id}</span>
+                        <StatusBadge status={ticket.status} size="small" />
+                    </div>
+                    <button className="fwd-modal-close" onClick={onClose}><X size={16} /></button>
                 </div>
-                <div className="modal-body">
-                    <div className="forward-ticket-info">
-                        <p><strong>Ticket:</strong> {ticket.id}</p>
-                        <p><strong>Current Status:</strong> <StatusBadge status={ticket.status} size="small" /></p>
-                        {ticket.assignedTo && (
-                            <p><strong>Currently Assigned:</strong> {ticket.assignedTo}</p>
+
+                {/* Success overlay */}
+                {success ? (
+                    <div className="fwd-success">
+                        <div className="fwd-success-icon">✅</div>
+                        <h3>Allocated successfully</h3>
+                        <p>Ticket forwarded to <strong>{success.name}</strong></p>
+                    </div>
+                ) : (
+                    <div className="fwd-modal-body">
+                        {/* Product + currently assigned */}
+                        <div className="fwd-ticket-info">
+                            <span className="fwd-info-row">
+                                <span className="fwd-info-label">Product</span>
+                                <span className="fwd-info-val">{ticket.productName || '—'}</span>
+                            </span>
+                            {ticket.assignedTo && (
+                                <span className="fwd-info-row">
+                                    <span className="fwd-info-label">Current assignee</span>
+                                    <span className="fwd-info-val">{ticket.assignedTo}</span>
+                                </span>
+                            )}
+                        </div>
+
+                        {/* Team member picker */}
+                        <p className="fwd-section-label">Select team member to forward to</p>
+                        {loading ? (
+                            <div className="fwd-loading">Loading team members…</div>
+                        ) : (
+                            <div className="fwd-member-list">
+                                {members.length === 0 && (
+                                    <div className="fwd-loading">No other team members found.</div>
+                                )}
+                                {members.map(m => {
+                                    const avail = AVAIL_COLORS[m.availability] || AVAIL_COLORS[DEVOPS_AVAILABILITY_STATUS.OFFLINE];
+                                    const isSelected = selectedMember?.email === m.email;
+                                    return (
+                                        <button
+                                            key={m.email || m.name}
+                                            type="button"
+                                            className={`fwd-member-row${isSelected ? ' selected' : ''}`}
+                                            onClick={() => setSelectedMember(m)}
+                                        >
+                                            <span className="fwd-member-avatar">
+                                                {(m.name || '?').charAt(0).toUpperCase()}
+                                            </span>
+                                            <span className="fwd-member-info">
+                                                <span className="fwd-member-name">{m.name || m.email}</span>
+                                                <span className="fwd-member-email">{m.email}</span>
+                                            </span>
+                                            <span className="fwd-member-avail">
+                                                <span className="fwd-avail-dot" style={{ background: avail.dot }} />
+                                                {avail.label}
+                                            </span>
+                                            {isSelected && <CheckCircle size={15} className="fwd-check" />}
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         )}
-                    </div>
-                    
-                    <div className="form-field">
-                        <label>Forward to Engineer *</label>
-                        <select 
-                            value={selectedEngineer}
-                            onChange={e => setSelectedEngineer(e.target.value)}
-                            required
-                        >
-                            <option value="">Select Engineer...</option>
-                            {availableEngineers.map(eng => (
-                                <option key={eng.email} value={eng.name}>
-                                    {eng.name}
-                                </option>
-                            ))}
-                        </select>
-                    </div>
-                    
-                    <div className="form-field">
-                        <label>Forward Note</label>
+
+                        {/* Notes */}
+                        <p className="fwd-section-label" style={{ marginTop: 14 }}>Note for the assignee <span style={{ fontWeight: 400, opacity: 0.6 }}>(optional)</span></p>
                         <textarea
+                            className="fwd-note"
+                            rows={3}
+                            placeholder="e.g. Needs urgent attention — DB migration blocked"
                             value={forwardNote}
                             onChange={e => setForwardNote(e.target.value)}
-                            placeholder="Add a note for the receiving engineer..."
-                            rows={3}
                         />
+
+                        {/* Actions */}
+                        <div className="fwd-modal-actions">
+                            <button className="fwd-cancel-btn" onClick={onClose}>Cancel</button>
+                            <button
+                                className="fwd-submit-btn"
+                                disabled={!selectedMember || forwarding}
+                                onClick={handleForward}
+                            >
+                                {forwarding ? (
+                                    <><span className="fwd-spinner" /> Forwarding…</>
+                                ) : (
+                                    <><Send size={14} /> Forward to {selectedMember ? selectedMember.name.split(' ')[0] : '…'}</>
+                                )}
+                            </button>
+                        </div>
                     </div>
-                    
-                    <div className="modal-actions">
-                        <button className="btn-secondary" onClick={onClose}>
-                            Cancel
-                        </button>
-                        <button className="btn-primary" onClick={handleForward}>
-                            <Forward size={16} /> Forward Ticket
-                        </button>
-                    </div>
-                </div>
+                )}
             </div>
         </div>
     );
@@ -212,7 +272,9 @@ export const DevOpsDashboard = () => {
     const [filters, setFilters] = useState({});
     const [showFilters, setShowFilters] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState(null);
-    const [activeSection, setActiveSection] = useState('unassigned');
+    const [activeSection, setActiveSection] = useState('requests');
+    /** Sub-view inside Request Dashboard (was sidebar: Service Queue + Archive). */
+    const [requestTab, setRequestTab] = useState('unassigned');
     const [stats, setStats] = useState({});
     const [forwardingTicket, setForwardingTicket] = useState(null);
     const [myAvailability, setMyAvailability] = useState(DEVOPS_AVAILABILITY_STATUS.AVAILABLE);
@@ -232,8 +294,10 @@ export const DevOpsDashboard = () => {
         volume: getVolume()
     });
     const [navGroups, setNavGroups] = usePersistedSidebarNav("devops", DEVOPS_SIDEBAR_NAV_DEFAULTS);
+    const [isInitialLoading, setIsInitialLoading] = useState(true);
     const isLoadingRef = useRef(false);
     const activeSectionRef = useRef(activeSection);
+    const requestTabRef = useRef(requestTab);
     const didUpsertSelfRef = useRef(false);
     
     // Real-time connection status
@@ -251,11 +315,13 @@ export const DevOpsDashboard = () => {
         unassigned: 0,
         myTickets: 0,
         active: 0,
-        history: 0
+        history: 0,
+        closed: 0
     });
     
     // Keep ref in sync
     useEffect(() => { activeSectionRef.current = activeSection; }, [activeSection]);
+    useEffect(() => { requestTabRef.current = requestTab; }, [requestTab]);
     
     useEffect(() => {
         if (didUpsertSelfRef.current) return;
@@ -269,21 +335,21 @@ export const DevOpsDashboard = () => {
 
     const recalcSectionCounts = useCallback((allTickets) => {
         const unassigned = allTickets.filter(t => !t.assignedTo && t.status === TICKET_STATUS.CREATED);
-        const myTickets = allTickets.filter(t => t.assignedTo === userName);
+        const myTickets = allTickets.filter(t => t.assignedTo === userName && t.status !== TICKET_STATUS.CLOSED);
         const active = allTickets.filter(t =>
             [TICKET_STATUS.ACCEPTED, TICKET_STATUS.MANAGER_APPROVAL_PENDING,
                 TICKET_STATUS.MANAGER_APPROVED, TICKET_STATUS.COST_APPROVAL_PENDING, TICKET_STATUS.COST_APPROVED,
                 TICKET_STATUS.IN_PROGRESS, TICKET_STATUS.ACTION_REQUIRED,
                 TICKET_STATUS.ON_HOLD].includes(t.status)
         );
-        const history = allTickets.filter(t =>
-            [TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(t.status)
-        );
+        const history = allTickets.filter(t => t.status === TICKET_STATUS.COMPLETED);
+        const closed = allTickets.filter(t => t.status === TICKET_STATUS.CLOSED);
         setSectionCounts({
             unassigned: unassigned.length,
             myTickets: myTickets.length,
             active: active.length,
-            history: history.length
+            history: history.length,
+            closed: closed.length
         });
     }, [userName]);
 
@@ -295,7 +361,9 @@ export const DevOpsDashboard = () => {
                 ? prev.map((t) => (t.id === updatedTicket.id ? updatedTicket : t))
                 : [updatedTicket, ...prev];
             recalcSectionCounts(next);
-            applySectionFilter(next, activeSectionRef.current);
+            if (activeSectionRef.current === 'requests') {
+                applySectionFilter(next, requestTabRef.current);
+            }
             return next;
         });
         setFilteredTickets((prev) => prev.map((t) => (t.id === updatedTicket.id ? updatedTicket : t)));
@@ -331,7 +399,10 @@ export const DevOpsDashboard = () => {
                 return latest || prev;
             });
         
-            applySectionFilter(allTickets, activeSectionRef.current);
+            if (activeSectionRef.current === 'requests') {
+                applySectionFilter(allTickets, requestTabRef.current);
+            }
+            setIsInitialLoading(false);
         } finally {
             isLoadingRef.current = false;
             if (!silent) setIsSyncing(false);
@@ -403,7 +474,8 @@ export const DevOpsDashboard = () => {
                 result = result.filter(t => !t.assignedTo && t.status === TICKET_STATUS.CREATED);
                 break;
             case 'myTickets':
-                result = result.filter(t => t.assignedTo === userName);
+                // My Tickets shows all assigned tickets except closed (closed go to Archive > Closed)
+                result = result.filter(t => t.assignedTo === userName && t.status !== TICKET_STATUS.CLOSED);
                 break;
             case 'active':
                 result = result.filter(t => 
@@ -414,9 +486,8 @@ export const DevOpsDashboard = () => {
                 );
                 break;
             case 'history':
-                result = result.filter(t => 
-                    [TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(t.status)
-                );
+                // Completed only — closed tickets have their own section
+                result = result.filter(t => t.status === TICKET_STATUS.COMPLETED);
                 break;
             case 'profile':
                 result = [];
@@ -459,12 +530,26 @@ export const DevOpsDashboard = () => {
     
     const handleFilterChange = (newFilters) => {
         setFilters(newFilters);
-        applySectionFilter(tickets, activeSection);
+        if (activeSection === 'requests') {
+            applySectionFilter(tickets, requestTab);
+        }
     };
     
+    const TICKET_TABS = ['unassigned', 'myTickets', 'active', 'history', 'closed'];
+
     const handleSectionChange = (section) => {
+        if (section === 'requests') {
+            setActiveSection('requests');
+            applySectionFilter(tickets, requestTabRef.current);
+            return;
+        }
+        if (TICKET_TABS.includes(section)) {
+            setActiveSection('requests');
+            setRequestTab(section);
+            applySectionFilter(tickets, section);
+            return;
+        }
         setActiveSection(section);
-        applySectionFilter(tickets, section);
     };
     
     const handleAcceptTicket = async (ticketId) => {
@@ -612,16 +697,7 @@ export const DevOpsDashboard = () => {
             );
         }
 
-        if (!ticket.assignedTo && ticket.status !== TICKET_STATUS.CREATED) {
-            return (
-                <div className="quick-actions" onClick={e => e.stopPropagation()}>
-                    <button className="quick-btn accept" style={{ background: '#eff6ff', color: '#1d4ed8', borderColor: '#bfdbfe' }}
-                        onClick={() => handleAssignToSelf(ticket.id)}>
-                        <UserPlus size={14} /> Assign Me
-                    </button>
-                </div>
-            );
-        }
+        // "Assign Me" removed — Accept already assigns the ticket to the user.
 
         const actions = [];
 
@@ -747,6 +823,8 @@ export const DevOpsDashboard = () => {
         </div>
     );
 
+    if (isInitialLoading) return <LoadingScreen role="devops" />;
+
     return (
         <div className={`dashboard-layout devops-dashboard ${isReadOnly ? 'is-readonly' : ''}`}>
 
@@ -768,72 +846,63 @@ export const DevOpsDashboard = () => {
                 {/* Navigation */}
                 <nav className="sb-nav">
                     <div className="sb-group">
-                        <span className="sb-group-label">Service Queue</span>
-                        <a href="#" className={`sb-item ${activeSection === 'unassigned' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); handleSectionChange('unassigned'); }}>
-                            <span className="sb-item-icon"><Inbox size={15} /></span>
-                            <span className="sb-item-text">New Requests</span>
-                            {sectionCounts.unassigned > 0 && <span className="sb-badge urgent">{sectionCounts.unassigned}</span>}
-                        </a>
-                        <a href="#" className={`sb-item ${activeSection === 'myTickets' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); handleSectionChange('myTickets'); }}>
-                            <span className="sb-item-icon"><Ticket size={15} /></span>
-                            <span className="sb-item-text">Assigned to Me</span>
-                            {sectionCounts.myTickets > 0 && <span className="sb-badge">{sectionCounts.myTickets}</span>}
-                        </a>
-                        <a href="#" className={`sb-item ${activeSection === 'active' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); handleSectionChange('active'); }}>
-                            <span className="sb-item-icon"><Activity size={15} /></span>
-                            <span className="sb-item-text">In Progress</span>
-                            {sectionCounts.active > 0 && <span className="sb-badge">{sectionCounts.active}</span>}
+                        <a
+                            href="#"
+                            className={`sb-item ${activeSection === 'requests' ? 'active' : ''}`}
+                            onClick={(e) => { e.preventDefault(); handleSectionChange('requests'); }}
+                        >
+                            <span className="sb-item-icon"><LayoutDashboard size={15} /></span>
+                            <span className="sb-item-text">Request Dashboard</span>
                         </a>
                     </div>
 
                     <div className="sb-group">
-                        <span className="sb-group-label">Archive</span>
-                        <a href="#" className={`sb-item ${activeSection === 'history' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); handleSectionChange('history'); }}>
-                            <span className="sb-item-icon"><History size={15} /></span>
-                            <span className="sb-item-text">Completed</span>
-                        </a>
-                        <a href="#" className={`sb-item ${activeSection === 'closed' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); handleSectionChange('closed'); }}>
-                            <span className="sb-item-icon"><CheckCircle size={15} /></span>
-                            <span className="sb-item-text">Closed</span>
-                        </a>
+                        <NavSectionToggle
+                            open={navGroups.team}
+                            onToggle={() => setNavGroups(g => ({ ...g, team: !g.team }))}
+                            label="Team"
+                        />
+                        {navGroups.team && (
+                            <div className="sb-group-items">
+                                <a href="#" className={`sb-item ${activeSection === 'standup' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); handleSectionChange('standup'); }}>
+                                    <span className="sb-item-icon"><StickyNote size={15} /></span>
+                                    <span className="sb-item-text">Daily Sync</span>
+                                </a>
+                                <a href="#" className={`sb-item ${activeSection === 'rota' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); handleSectionChange('rota'); }}>
+                                    <span className="sb-item-icon"><RotateCcw size={15} /></span>
+                                    <span className="sb-item-text">On-Call Schedule</span>
+                                </a>
+                                <a href="#" className={`sb-item ${activeSection === 'monitoring' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); handleSectionChange('monitoring'); }}>
+                                    <span className="sb-item-icon"><BarChart3 size={15} /></span>
+                                    <span className="sb-item-text">Analytics</span>
+                                </a>
+                            </div>
+                        )}
                     </div>
 
                     <div className="sb-group">
-                        <span className="sb-group-label">Team</span>
-                        <a href="#" className={`sb-item ${activeSection === 'standup' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); handleSectionChange('standup'); }}>
-                            <span className="sb-item-icon"><StickyNote size={15} /></span>
-                            <span className="sb-item-text">Daily Sync</span>
-                        </a>
-                        <a href="#" className={`sb-item ${activeSection === 'rota' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); handleSectionChange('rota'); }}>
-                            <span className="sb-item-icon"><RotateCcw size={15} /></span>
-                            <span className="sb-item-text">On-Call Schedule</span>
-                        </a>
-                        <a href="#" className={`sb-item ${activeSection === 'monitoring' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); handleSectionChange('monitoring'); }}>
-                            <span className="sb-item-icon"><BarChart3 size={15} /></span>
-                            <span className="sb-item-text">Analytics</span>
-                        </a>
-                    </div>
-
-                    <div className="sb-group">
-                        <span className="sb-group-label">Account</span>
-                        <a href="#" className={`sb-item ${activeSection === 'settings' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); handleSectionChange('settings'); }}>
-                            <span className="sb-item-icon"><Settings size={15} /></span>
-                            <span className="sb-item-text">Preferences</span>
-                        </a>
-                        <a href="#" className={`sb-item ${activeSection === 'profile' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); handleSectionChange('profile'); }}>
-                            <span className="sb-item-icon"><ProfileIcon size={15} /></span>
-                            <span className="sb-item-text">My Account</span>
-                        </a>
+                        <NavSectionToggle
+                            open={navGroups.account}
+                            onToggle={() => setNavGroups(g => ({ ...g, account: !g.account }))}
+                            label="Account"
+                        />
+                        {navGroups.account && (
+                            <div className="sb-group-items">
+                                <a href="#" className={`sb-item ${activeSection === 'settings' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); handleSectionChange('settings'); }}>
+                                    <span className="sb-item-icon"><Settings size={15} /></span>
+                                    <span className="sb-item-text">Preferences</span>
+                                </a>
+                                <a href="#" className={`sb-item ${activeSection === 'profile' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); handleSectionChange('profile'); }}>
+                                    <span className="sb-item-icon"><ProfileIcon size={15} /></span>
+                                    <span className="sb-item-text">My Account</span>
+                                </a>
+                            </div>
+                        )}
                     </div>
                 </nav>
 
@@ -918,11 +987,11 @@ export const DevOpsDashboard = () => {
                                 <span>DevOps Hub</span>
                                 <span className="breadcrumb-separator">/</span>
                                 <span>
-                                    {activeSection === 'unassigned' && 'Unassigned'}
-                                    {activeSection === 'myTickets' && 'My Tickets'}
-                                    {activeSection === 'active' && 'Active'}
-                                    {activeSection === 'history' && 'History'}
-                                    {activeSection === 'closed' && 'Closed'}
+                                    {activeSection === 'requests' && requestTab === 'unassigned' && 'Unassigned'}
+                                    {activeSection === 'requests' && requestTab === 'myTickets' && 'My Tickets'}
+                                    {activeSection === 'requests' && requestTab === 'active' && 'Active'}
+                                    {activeSection === 'requests' && requestTab === 'history' && 'Completed'}
+                                    {activeSection === 'requests' && requestTab === 'closed' && 'Closed'}
                                     {activeSection === 'monitoring' && 'Monitoring'}
                                     {activeSection === 'profile' && 'Profile'}
                                     {activeSection === 'standup' && 'Standup'}
@@ -931,22 +1000,24 @@ export const DevOpsDashboard = () => {
                                 </span>
                             </div>
                             <h1>
-                                {activeSection === 'unassigned' && 'Unassigned Requests'}
-                                {activeSection === 'myTickets' && 'My Tickets'}
-                                {activeSection === 'active' && 'Active Requests'}
-                                {activeSection === 'history' && 'Completed History'}
-                                {activeSection === 'closed' && 'Closed Tickets'}
+                                {activeSection === 'requests' && requestTab === 'unassigned' && 'Unassigned Requests'}
+                                {activeSection === 'requests' && requestTab === 'myTickets' && 'My Tickets'}
+                                {activeSection === 'requests' && requestTab === 'active' && 'Active Requests'}
+                                {activeSection === 'requests' && requestTab === 'history' && 'Completed Tickets'}
+                                {activeSection === 'requests' && requestTab === 'closed' && 'Closed Tickets'}
                                 {activeSection === 'monitoring' && 'Environment Monitoring'}
                                 {activeSection === 'profile' && 'My Profile'}
                                 {activeSection === 'standup' && 'Daily Standup Notes'}
                                 {activeSection === 'rota' && 'Night Shift Rota'}
                                 {activeSection === 'settings' && 'Settings'}
                             </h1>
-                            {['unassigned', 'myTickets', 'active'].includes(activeSection) && (
+                            {activeSection === 'requests' && (
                                 <p className="header-subtitle">
-                                    {activeSection === 'unassigned' && 'New tickets waiting to be assigned.'}
-                                    {activeSection === 'myTickets' && 'Tickets currently assigned to you.'}
-                                    {activeSection === 'active' && 'All active tickets being worked on.'}
+                                    {requestTab === 'unassigned' && 'New tickets waiting to be assigned.'}
+                                    {requestTab === 'myTickets' && 'Tickets currently assigned to you.'}
+                                    {requestTab === 'active' && 'All active tickets being worked on.'}
+                                    {requestTab === 'history' && 'Requests marked completed (not yet closed).'}
+                                    {requestTab === 'closed' && 'Requests that are fully closed.'}
                                 </p>
                             )}
                         </div>
@@ -1062,10 +1133,10 @@ export const DevOpsDashboard = () => {
                 ) : (
                 <>
                 {/* Compact Mini Stats Bar — only on ticket sections */}
-                {['unassigned', 'myTickets', 'active', 'history', 'closed'].includes(activeSection) && (
+                {activeSection === 'requests' && (
                 <div className="mini-stats-bar">
                     <button
-                        className={`mini-stat ${activeSection === 'unassigned' ? 'active' : ''}`}
+                        className={`mini-stat ${requestTab === 'unassigned' ? 'active' : ''}`}
                         onClick={() => handleSectionChange('unassigned')}
                     >
                         <span className="mini-stat-icon orange"><Inbox size={13} /></span>
@@ -1075,7 +1146,7 @@ export const DevOpsDashboard = () => {
                     </button>
                     <span className="mini-stat-sep" />
                     <button
-                        className={`mini-stat ${activeSection === 'myTickets' ? 'active' : ''}`}
+                        className={`mini-stat ${requestTab === 'myTickets' ? 'active' : ''}`}
                         onClick={() => handleSectionChange('myTickets')}
                     >
                         <span className="mini-stat-icon blue"><Ticket size={13} /></span>
@@ -1084,7 +1155,7 @@ export const DevOpsDashboard = () => {
                     </button>
                     <span className="mini-stat-sep" />
                     <button
-                        className={`mini-stat ${activeSection === 'active' ? 'active' : ''}`}
+                        className={`mini-stat ${requestTab === 'active' ? 'active' : ''}`}
                         onClick={() => handleSectionChange('active')}
                     >
                         <span className="mini-stat-icon purple"><PlayCircle size={13} /></span>
@@ -1093,7 +1164,7 @@ export const DevOpsDashboard = () => {
                     </button>
                     <span className="mini-stat-sep" />
                     <button
-                        className={`mini-stat ${activeSection === 'history' ? 'active' : ''}`}
+                        className={`mini-stat ${requestTab === 'history' ? 'active' : ''}`}
                         onClick={() => handleSectionChange('history')}
                     >
                         <span className="mini-stat-icon green"><CheckCircle size={13} /></span>
@@ -1102,11 +1173,11 @@ export const DevOpsDashboard = () => {
                     </button>
                     <span className="mini-stat-sep" />
                     <button
-                        className={`mini-stat ${activeSection === 'closed' ? 'active' : ''}`}
+                        className={`mini-stat ${requestTab === 'closed' ? 'active' : ''}`}
                         onClick={() => handleSectionChange('closed')}
                     >
                         <span className="mini-stat-icon red"><XCircle size={13} /></span>
-                        <span className="mini-stat-value">{sectionCounts.closed ?? 0}</span>
+                        <span className="mini-stat-value">{sectionCounts.closed}</span>
                         <span className="mini-stat-label">Closed</span>
                     </button>
                 </div>
@@ -1242,7 +1313,7 @@ export const DevOpsDashboard = () => {
                 ) : <div className="tickets-section">
                     <div className="tickets-header">
                         <div className="section-title">
-                            {activeSection === 'unassigned' && (
+                            {activeSection === 'requests' && requestTab === 'unassigned' && (
                                 <SectionHeader 
                                     title="Unassigned Queue" 
                                     description="Click 'Accept Ticket' to take ownership"
@@ -1250,7 +1321,7 @@ export const DevOpsDashboard = () => {
                                     icon={Inbox}
                                 />
                             )}
-                            {activeSection === 'myTickets' && (
+                            {activeSection === 'requests' && requestTab === 'myTickets' && (
                                 <SectionHeader 
                                     title="Your Assigned Tickets" 
                                     description="Tickets you are responsible for"
@@ -1258,7 +1329,7 @@ export const DevOpsDashboard = () => {
                                     icon={Ticket}
                                 />
                             )}
-                            {activeSection === 'active' && (
+                            {activeSection === 'requests' && requestTab === 'active' && (
                                 <SectionHeader 
                                     title="All Active Tickets" 
                                     description="Team-wide active requests"
@@ -1266,12 +1337,20 @@ export const DevOpsDashboard = () => {
                                     icon={Activity}
                                 />
                             )}
-                            {activeSection === 'history' && (
+                            {activeSection === 'requests' && requestTab === 'history' && (
                                 <SectionHeader 
-                                    title="Ticket History" 
-                                    description="Completed and closed requests"
+                                    title="Completed Tickets" 
+                                    description="Work finished — awaiting archive or follow-up"
                                     count={sectionCounts.history}
                                     icon={History}
+                                />
+                            )}
+                            {activeSection === 'requests' && requestTab === 'closed' && (
+                                <SectionHeader 
+                                    title="Closed Tickets" 
+                                    description="Fully closed requests (no further action)"
+                                    count={sectionCounts.closed}
+                                    icon={CheckCircle}
                                 />
                             )}
                         </div>
@@ -1295,36 +1374,34 @@ export const DevOpsDashboard = () => {
                     <div className="tickets-list enhanced">
                         {filteredTickets.length === 0 ? (
                             <div className="empty-state">
-                                {activeSection === 'unassigned' && <Inbox size={48} />}
-                                {activeSection === 'myTickets' && <Ticket size={48} />}
-                                {activeSection === 'active' && <Activity size={48} />}
-                                {activeSection === 'history' && <History size={48} />}
-                                {activeSection === 'closed' && <CheckCircle size={48} />}
+                                {requestTab === 'unassigned' && <Inbox size={48} />}
+                                {requestTab === 'myTickets' && <Ticket size={48} />}
+                                {requestTab === 'active' && <Activity size={48} />}
+                                {requestTab === 'history' && <History size={48} />}
+                                {requestTab === 'closed' && <CheckCircle size={48} />}
                                 <h3>
-                                    {activeSection === 'unassigned' && "No unassigned tickets"}
-                                    {activeSection === 'myTickets' && "No tickets assigned to you"}
-                                    {activeSection === 'active' && "No active tickets"}
-                                    {activeSection === 'history' && "No completed tickets yet"}
-                                    {activeSection === 'closed' && "No closed tickets yet"}
+                                    {requestTab === 'unassigned' && "No unassigned tickets"}
+                                    {requestTab === 'myTickets' && "No tickets assigned to you"}
+                                    {requestTab === 'active' && "No active tickets"}
+                                    {requestTab === 'history' && "No completed tickets yet"}
+                                    {requestTab === 'closed' && "No closed tickets yet"}
                                 </h3>
                                 <p>
-                                    {activeSection === 'unassigned' && "All tickets have been assigned. Great job, team!"}
-                                    {activeSection === 'myTickets' && "Accept tickets from the Unassigned queue to get started."}
-                                    {activeSection === 'active' && "No tickets are currently being processed."}
-                                    {activeSection === 'history' && "Completed tickets will appear here."}
-                                    {activeSection === 'closed' && "Closed tickets will appear in this separate section."}
+                                    {requestTab === 'unassigned' && "All tickets have been assigned. Great job, team!"}
+                                    {requestTab === 'myTickets' && "Accept tickets from the Unassigned queue to get started."}
+                                    {requestTab === 'active' && "No tickets are currently being processed."}
+                                    {requestTab === 'history' && "Completed tickets will appear here."}
+                                    {requestTab === 'closed' && "Closed tickets will appear in this separate section."}
                                 </p>
                             </div>
                         ) : (
                             filteredTickets.map(ticket => (
-                                <div key={ticket.id} className="ticket-card-wrapper">
-                                    <TicketCard
-                                        ticket={ticket}
-                                        onClick={() => setSelectedTicket(ticket)}
-                                        showActions={false}
-                                    />
-                                    <QuickActions ticket={ticket} />
-                                </div>
+                                <TicketCard
+                                    key={ticket.id}
+                                    ticket={ticket}
+                                    onClick={() => setSelectedTicket(ticket)}
+                                    showActions={false}
+                                />
                             ))
                         )}
                     </div>
@@ -1346,7 +1423,7 @@ export const DevOpsDashboard = () => {
                     onRequestCostApproval={(t, opts) => {
                         openCostEstimateWindow(t.id, opts?.costApproverEmail);
                     }}
-                    onForward={() => setForwardingTicket(selectedTicket)}
+                    onForward={!isReadOnly ? () => setForwardingTicket(selectedTicket) : undefined}
                 />
             )}
             

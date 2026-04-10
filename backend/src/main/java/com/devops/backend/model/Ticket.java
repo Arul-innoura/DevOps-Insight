@@ -48,6 +48,11 @@ public class Ticket {
     private java.util.List<String> workflowEmailCc;
     private java.util.List<String> workflowEmailBcc;
 
+    /** Mandatory subsets — users cannot remove these email addresses from ticket routing */
+    private java.util.List<String> workflowEmailToMandatory;
+    private java.util.List<String> workflowEmailCcMandatory;
+    private java.util.List<String> workflowEmailBccMandatory;
+
     @Indexed
     private Environment environment;
     

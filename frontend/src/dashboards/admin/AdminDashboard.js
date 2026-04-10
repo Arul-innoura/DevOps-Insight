@@ -82,6 +82,7 @@ import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
 import { useTheme } from "../../services/ThemeContext";
+import { LoadingScreen } from "../../components/LoadingScreen";
 
 const ADMIN_SIDEBAR_NAV_DEFAULTS = { operations: true, configuration: true, account: true };
 
@@ -696,6 +697,7 @@ export const AdminDashboard = () => {
         volume: getVolume()
     });
     const [navGroups, setNavGroups] = usePersistedSidebarNav("admin", ADMIN_SIDEBAR_NAV_DEFAULTS);
+    const [isInitialLoading, setIsInitialLoading] = useState(true);
     const isLoadingRef = useRef(false);
     const filtersRef = useRef(filters);
     const activeTabRef = useRef(activeTab);
@@ -750,6 +752,7 @@ export const AdminDashboard = () => {
             setRotaState(rotaMgmt);
             setRotaSchedule(rotaDays);
             applyFilters(allTickets, filtersRef.current, activeTabRef.current);
+            setIsInitialLoading(false);
         } finally {
             isLoadingRef.current = false;
             if (!silent) setIsSyncing(false);
@@ -774,7 +777,10 @@ export const AdminDashboard = () => {
         let result = [...ticketList];
         
         // Apply tab filter
-        if (tab === 'pending') {
+        if (tab === 'all') {
+            // All tab excludes closed — closed tickets have their own dedicated tab
+            result = result.filter(t => t.status !== TICKET_STATUS.CLOSED);
+        } else if (tab === 'pending') {
             result = result.filter(t => t.status === TICKET_STATUS.CREATED);
         } else if (tab === 'active') {
             result = result.filter(t => 
@@ -790,9 +796,10 @@ export const AdminDashboard = () => {
                 ].includes(t.status)
             );
         } else if (tab === 'completed') {
-            result = result.filter(t => 
-                [TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(t.status)
-            );
+            // Completed only — closed tickets are in the Closed tab
+            result = result.filter(t => t.status === TICKET_STATUS.COMPLETED);
+        } else if (tab === 'closed') {
+            result = result.filter(t => t.status === TICKET_STATUS.CLOSED);
         } else if (tab === 'rejected') {
             result = result.filter(t => t.status === TICKET_STATUS.REJECTED);
         }
@@ -1010,6 +1017,8 @@ export const AdminDashboard = () => {
     
 
 
+    if (isInitialLoading) return <LoadingScreen role="admin" />;
+
     return (
         <div className="dashboard-layout admin-dashboard">
 
@@ -1031,61 +1040,85 @@ export const AdminDashboard = () => {
                 {/* Navigation */}
                 <nav className="sb-nav">
                     <div className="sb-group">
-                        <span className="sb-group-label">Operations</span>
-                        <a href="#" className={`sb-item ${viewMode === 'tickets' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setViewMode('tickets'); }}>
-                            <span className="sb-item-icon"><Ticket size={15} /></span>
-                            <span className="sb-item-text">All Requests</span>
-                            {tabCounts.pending > 0 && <span className="sb-badge urgent">{tabCounts.pending}</span>}
-                        </a>
-                        <a href="#" className={`sb-item ${viewMode === 'analytics' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setViewMode('analytics'); }}>
-                            <span className="sb-item-icon"><BarChart3 size={15} /></span>
-                            <span className="sb-item-text">Analytics</span>
-                        </a>
+                        <NavSectionToggle
+                            open={navGroups.operations}
+                            onToggle={() => setNavGroups(g => ({ ...g, operations: !g.operations }))}
+                            label="Operations"
+                        />
+                        {navGroups.operations && (
+                            <div className="sb-group-items">
+                                <a href="#" className={`sb-item ${viewMode === 'tickets' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('tickets'); }}>
+                                    <span className="sb-item-icon"><Ticket size={15} /></span>
+                                    <span className="sb-item-text">All Requests</span>
+                                    {tabCounts.pending > 0 && <span className="sb-badge urgent">{tabCounts.pending}</span>}
+                                </a>
+                                <a href="#" className={`sb-item ${viewMode === 'analytics' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('analytics'); }}>
+                                    <span className="sb-item-icon"><BarChart3 size={15} /></span>
+                                    <span className="sb-item-text">Analytics</span>
+                                </a>
+                            </div>
+                        )}
                     </div>
 
                     <div className="sb-group">
-                        <span className="sb-group-label">Configuration</span>
-                        <a href="#" className={`sb-item ${viewMode === 'team' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setViewMode('team'); }}>
-                            <span className="sb-item-icon"><Users size={15} /></span>
-                            <span className="sb-item-text">Engineering Team</span>
-                        </a>
-                        <a href="#" className={`sb-item ${viewMode === 'projects' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setViewMode('projects'); }}>
-                            <span className="sb-item-icon"><Building size={15} /></span>
-                            <span className="sb-item-text">Products</span>
-                        </a>
-                        <a href="#" className={`sb-item ${viewMode === 'rota' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setViewMode('rota'); }}>
-                            <span className="sb-item-icon"><RotateCcw size={15} /></span>
-                            <span className="sb-item-text">On-Call Schedule</span>
-                        </a>
-                        <a href="#" className={`sb-item ${viewMode === 'statusTimeline' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setViewMode('statusTimeline'); }}>
-                            <span className="sb-item-icon"><Activity size={15} /></span>
-                            <span className="sb-item-text">Activity Timeline</span>
-                        </a>
-                        <a href="#" className={`sb-item ${viewMode === 'activityLogs' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setViewMode('activityLogs'); }}>
-                            <span className="sb-item-icon"><Activity size={15} /></span>
-                            <span className="sb-item-text">Activity Logs</span>
-                        </a>
+                        <NavSectionToggle
+                            open={navGroups.configuration}
+                            onToggle={() => setNavGroups(g => ({ ...g, configuration: !g.configuration }))}
+                            label="Configuration"
+                        />
+                        {navGroups.configuration && (
+                            <div className="sb-group-items">
+                                <a href="#" className={`sb-item ${viewMode === 'team' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('team'); }}>
+                                    <span className="sb-item-icon"><Users size={15} /></span>
+                                    <span className="sb-item-text">Engineering Team</span>
+                                </a>
+                                <a href="#" className={`sb-item ${viewMode === 'projects' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('projects'); }}>
+                                    <span className="sb-item-icon"><Building size={15} /></span>
+                                    <span className="sb-item-text">Products</span>
+                                </a>
+                                <a href="#" className={`sb-item ${viewMode === 'rota' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('rota'); }}>
+                                    <span className="sb-item-icon"><RotateCcw size={15} /></span>
+                                    <span className="sb-item-text">On-Call Schedule</span>
+                                </a>
+                                <a href="#" className={`sb-item ${viewMode === 'statusTimeline' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('statusTimeline'); }}>
+                                    <span className="sb-item-icon"><Activity size={15} /></span>
+                                    <span className="sb-item-text">Activity Timeline</span>
+                                </a>
+                                <a href="#" className={`sb-item ${viewMode === 'activityLogs' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('activityLogs'); }}>
+                                    <span className="sb-item-icon"><Activity size={15} /></span>
+                                    <span className="sb-item-text">Activity Logs</span>
+                                </a>
+                            </div>
+                        )}
                     </div>
 
                     <div className="sb-group">
-                        <span className="sb-group-label">Account</span>
-                        <a href="#" className={`sb-item ${viewMode === 'settings' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setViewMode('settings'); }}>
-                            <span className="sb-item-icon"><Settings size={15} /></span>
-                            <span className="sb-item-text">Preferences</span>
-                        </a>
-                        <a href="#" className={`sb-item ${viewMode === 'profile' ? 'active' : ''}`}
-                           onClick={(e) => { e.preventDefault(); setViewMode('profile'); }}>
-                            <span className="sb-item-icon"><ProfileIcon size={15} /></span>
-                            <span className="sb-item-text">My Account</span>
-                        </a>
+                        <NavSectionToggle
+                            open={navGroups.account}
+                            onToggle={() => setNavGroups(g => ({ ...g, account: !g.account }))}
+                            label="Account"
+                        />
+                        {navGroups.account && (
+                            <div className="sb-group-items">
+                                <a href="#" className={`sb-item ${viewMode === 'settings' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('settings'); }}>
+                                    <span className="sb-item-icon"><Settings size={15} /></span>
+                                    <span className="sb-item-text">Preferences</span>
+                                </a>
+                                <a href="#" className={`sb-item ${viewMode === 'profile' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('profile'); }}>
+                                    <span className="sb-item-icon"><ProfileIcon size={15} /></span>
+                                    <span className="sb-item-text">My Account</span>
+                                </a>
+                            </div>
+                        )}
                     </div>
                 </nav>
 
@@ -1394,7 +1427,7 @@ export const AdminDashboard = () => {
                                     className={`tab-btn ${activeTab === 'all' ? 'active' : ''}`}
                                     onClick={() => handleTabChange('all')}
                                 >
-                                    All ({tabCounts.all})
+                                    All ({tabCounts.all - tabCounts.closed})
                                 </button>
                                 <button 
                                     className={`tab-btn ${activeTab === 'pending' ? 'active' : ''}`}
@@ -1418,10 +1451,16 @@ export const AdminDashboard = () => {
                                     Completed ({tabCounts.completed})
                                 </button>
                                 <button 
+                                    className={`tab-btn ${activeTab === 'closed' ? 'active' : ''}`}
+                                    onClick={() => handleTabChange('closed')}
+                                >
+                                    <XCircle size={14} />
+                                    Closed ({tabCounts.closed})
+                                </button>
+                                <button 
                                     className={`tab-btn ${activeTab === 'rejected' ? 'active' : ''}`}
                                     onClick={() => handleTabChange('rejected')}
                                 >
-                                    <XCircle size={14} />
                                     Rejected ({tabCounts.rejected})
                                 </button>
                             </div>

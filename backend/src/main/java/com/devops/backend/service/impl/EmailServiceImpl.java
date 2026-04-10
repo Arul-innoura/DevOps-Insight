@@ -282,13 +282,18 @@ public class EmailServiceImpl implements EmailService {
     @Override
     public void sendTicketStatusEmail(Ticket ticket, TicketStatus previousStatus) {
         String statusMessage = getStatusChangeMessage(previousStatus, ticket.getStatus());
-        EmailMessage.EmailType emailType = isApprovalStageStatus(ticket.getStatus())
+        boolean pendingApproval = isApprovalStageStatus(ticket.getStatus());
+        EmailMessage.EmailType emailType = pendingApproval
                 ? EmailMessage.EmailType.APPROVAL_STAGE_UPDATE
                 : EmailMessage.EmailType.TICKET_STATUS_CHANGED;
 
+        // For approval-pending stages, notify only the requester (no CC).
+        // CC members are notified after the approval decision via sendManagerApprovalResponseEmail.
+        List<String> ccForStatus = pendingApproval ? null : buildCcList(ticket);
+
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
                 .to(ticket.getRequesterEmail())
-                .cc(buildCcList(ticket))
+                .cc(ccForStatus)
                 .subject(buildSubject(ticket, "Status Update: " + formatStatus(ticket.getStatus())))
                 .htmlBody(buildProfessionalEmailBody(ticket, EmailAction.STATUS_CHANGED, statusMessage))
                 .type(emailType)

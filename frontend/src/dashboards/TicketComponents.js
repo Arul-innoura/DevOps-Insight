@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { 
@@ -34,7 +34,8 @@ import {
     ShieldCheck,
     DollarSign,
     Loader2,
-    Ban
+    Ban,
+    Forward
 } from 'lucide-react';
 import { 
     TICKET_STATUS, 
@@ -42,6 +43,7 @@ import {
     REQUEST_TYPES,
     REQUEST_TYPE_TO_API_ENUM,
     ENVIRONMENTS,
+    normalizeEnvironmentLabel,
     getDynamicAllowedTransitions,
     STATUS_TRANSITIONS,
     createTicket,
@@ -374,7 +376,7 @@ const maskCostText = (text) => {
         .replace(/(Cost estimation submitted:\s*)([A-Z]{3}\s*)?[\d,]+(?:\.\d+)?/gi, "$1***")
         .replace(/(Cost approved:\s*)([A-Z]{3}\s*)?[\d,]+(?:\.\d+)?/gi, "$1***")
         .replace(/(Cost approval declined; ticket closed\.\s*)([A-Z]{3}\s*)?[\d,]+(?:\.\d+)?/gi, "$1***")
-        .replace(/\b(USD|EUR|INR|GBP)\s*[\d,]+(?:\.\d+)?\b/gi, "***");
+        .replace(/\b(USD|INR)\s*[\d,]+(?:\.\d+)?\b/gi, "***");
 };
 
 export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
@@ -509,14 +511,18 @@ export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChang
         <div
             className={`jira-ticket-card ${isActionRequired ? 'status-glow' : ''}`}
             onClick={onClick}
-            style={{ borderLeftColor: accent.border, borderLeftWidth: 6, background: accent.bg }}
+            style={{
+                borderLeftColor: accent.border,
+                borderLeftWidth: 4,
+                background: `linear-gradient(135deg, ${accent.bg} 0%, ${accent.bg}88 35%, rgba(255,255,255,0.15) 65%, transparent 100%), #ffffff`
+            }}
         >
             {/* ── Main row ── */}
             <div className="jtc-row">
 
                 {/* Left: type icon */}
-                <div className="jtc-icon" style={{ background: accent.bg, color: accent.icon }}>
-                    {getRequestTypeIcon(ticket.requestType, 14)}
+                <div className="jtc-icon" style={{ background: `${accent.icon}18`, color: accent.icon }}>
+                    {getRequestTypeIcon(ticket.requestType, 13)}
                 </div>
 
                 {/* Centre: title + meta chips */}
@@ -524,23 +530,17 @@ export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChang
                     <h3 className="jtc-title">{ticket.productName || '(No product)'}</h3>
                     <div className="jtc-meta">
                         <span className="jtc-type-badge" style={{ color: accent.icon, borderColor: `${accent.icon}44`, background: `${accent.icon}14` }}>
-                            {getRequestTypeIcon(ticket.requestType, 10)} {ticket.requestType || "General Request"}
+                            {ticket.requestType || "General Request"}
                         </span>
                         <span className="jtc-id">{ticket.id}</span>
                         {ticket.environment && (
-                            <span className="jtc-chip env">
-                                <Globe size={9} /> {ticket.environment}
-                            </span>
+                            <span className="jtc-chip env">{ticket.environment}</span>
                         )}
                         {serviceDetail && (
-                            <span className="jtc-chip service">
-                                <Cpu size={9} /> {serviceDetail}
-                            </span>
+                            <span className="jtc-chip service">{serviceDetail}</span>
                         )}
                         {ticket.managerApprovalRequired && (
-                            <span className="jtc-chip approval">
-                                <UserCheck size={9} /> Approval
-                            </span>
+                            <span className="jtc-chip approval">Approval</span>
                         )}
                     </div>
                 </div>
@@ -684,7 +684,9 @@ export const TicketDetailsModal = ({
     /** Only DevOps: cost approver picker, cost estimate window, and cost-related status transitions */
     canSubmitCostEstimate = false,
     onToggleActiveStatus,
-    onRequestCostApproval
+    onRequestCostApproval,
+    /** DevOps: open forward-to-teammate flow (parent shows picker modal). */
+    onForward
 }) => {
     const [note, setNote] = useState('');
     const [selectedStatus, setSelectedStatus] = useState('');
@@ -1015,6 +1017,11 @@ export const TicketDetailsModal = ({
             })();
             return { id: `${entry?.timestamp || "x"}-${idx}`, label, tone, user: entry?.user || '', timestamp: entry?.timestamp || '', notes: entry?.notes ? normalizeFlowNotes(entry.notes).slice(0, 80) : '' };
         });
+    const canForwardTicket =
+        typeof onForward === "function" &&
+        !!ticket.assignedTo &&
+        ![TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(ticket.status);
+
     const runtimeBarTone = (() => {
         const st = timelineStatusKey(ticket.status);
         if (st === "CLOSED" || st === "REJECTED")          return { color: "#6b7280", bg: "#f9fafb", label: "Closed" };
@@ -1378,6 +1385,25 @@ export const TicketDetailsModal = ({
                                     </div>
                                 </div>
                             )}
+                            {canForwardTicket && (
+                                <button
+                                    type="button"
+                                    className="jdm-btn-ghost"
+                                    style={{
+                                        width: "100%",
+                                        marginTop: 10,
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                        gap: 8,
+                                        fontWeight: 600
+                                    }}
+                                    onClick={() => onForward()}
+                                >
+                                    <Forward size={14} aria-hidden />
+                                    Forward to teammate
+                                </button>
+                            )}
                             {ticket.managerName && (
                                 <div className="jdm-sidebar-field">
                                     <div className="jdm-sidebar-label"><Building size={12} /> Approver</div>
@@ -1732,9 +1758,20 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
 
     const selectedProjectId = (projects || []).find((p) => p.name === formData.productName)?.id;
     const selectedProject = (projects || []).find((p) => p.name === formData.productName);
-    const availableEnvironments = selectedProject
-        ? (Array.isArray(selectedProject.environments) ? selectedProject.environments.filter(Boolean) : [])
-        : [];
+    const availableEnvironments = useMemo(() => {
+        const raw = selectedProject && Array.isArray(selectedProject.environments)
+            ? selectedProject.environments.filter(Boolean)
+            : [];
+        const canon = [...new Set(raw.map(normalizeEnvironmentLabel).filter(Boolean))];
+        return canon.sort((a, b) => {
+            const ia = ENVIRONMENTS.indexOf(a);
+            const ib = ENVIRONMENTS.indexOf(b);
+            if (ia === -1 && ib === -1) return String(a).localeCompare(String(b));
+            if (ia === -1) return 1;
+            if (ib === -1) return -1;
+            return ia - ib;
+        });
+    }, [selectedProject]);
     const availableEnvironmentsKey = availableEnvironments.join("|");
 
     useEffect(() => {
@@ -1770,7 +1807,8 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
     useEffect(() => {
         if (!isOpen || !formData.productName) return;
         const allowed = availableEnvironments;
-        if (formData.environment && (allowed.length === 0 || !allowed.includes(formData.environment))) {
+        const envCanon = normalizeEnvironmentLabel(formData.environment);
+        if (formData.environment && (allowed.length === 0 || !allowed.includes(envCanon))) {
             setFormData((prev) => ({ ...prev, environment: "" }));
         }
     }, [isOpen, formData.productName, formData.environment, availableEnvironmentsKey]);
@@ -1787,13 +1825,20 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             .sort((a, b) => (a.level || 0) - (b.level || 0))
             .find((lvl) => Array.isArray(lvl.approvers) && lvl.approvers.length > 0);
         const firstApprover = firstLevel?.approvers?.[0];
+        // Mandatory CC emails are locked — backend adds them automatically, don't put in user-editable field
+        const mandatoryCcSet = new Set(
+            (workflowPreview.emailRouting?.ccMandatory || [])
+                .map((e) => String(e).trim().toLowerCase())
+                .filter(Boolean)
+        );
         const routingCc = (workflowPreview.emailRouting?.cc || [])
             .filter((e) => e && String(e).trim())
-            .map((e) => String(e).trim().toLowerCase());
+            .map((e) => String(e).trim().toLowerCase())
+            .filter((e) => !mandatoryCcSet.has(e)); // exclude mandatory ones from editable field
         const existingCc = (formData.ccEmail || "")
             .split(",")
             .map((e) => e.trim().toLowerCase())
-            .filter(Boolean);
+            .filter((e) => Boolean(e) && !mandatoryCcSet.has(e)); // also strip mandatory from prior value
         const mergedCc = [...new Set([...routingCc, ...existingCc])];
 
         setFormData((prev) => ({
@@ -2076,7 +2121,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                 </div>
                                 
                                 <div className="form-row">
-                                    <FormField label="To (Approver)">
+                                    <FormField label="To">
                                         <select 
                                             value={formData.managerEmail || ''}
                                             onChange={handleManagerSelect}
@@ -2118,7 +2163,14 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                             value={formData.ccEmail}
                                             onChange={(ccEmail) => setFormData({ ...formData, ccEmail })}
                                             savedEmails={savedEmails}
+                                            lockedEmails={(workflowPreview?.emailRouting?.ccMandatory || []).map(e => String(e).trim().toLowerCase()).filter(Boolean)}
                                         />
+                                        {(workflowPreview?.emailRouting?.ccMandatory || []).length > 0 && (
+                                            <small style={{ color: '#6d28d9', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                                                <span style={{ fontSize: '0.7rem' }}>🔒</span>
+                                                Locked emails are mandatory and set by your admin — they cannot be removed.
+                                            </small>
+                                        )}
                                         <small style={{ color: '#64748b', fontSize: '0.75rem' }}>
                                             Type email and press Enter. Paste multiple emails to add all at once.
                                         </small>

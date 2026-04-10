@@ -321,9 +321,9 @@ export const playLongNotification = () => {
 };
 
 /**
- * NEW TICKET ARRIVAL - Zoho Cliq inspired
- * Distinctive 4-note ascending chime that is immediately recognizable
- * as a new incoming ticket. Designed to cut through ambient noise.
+ * NEW TICKET ARRIVAL — Zoho Cliq-style double-pop chime.
+ * Bright, punchy, immediately recognisable: two quick pops followed by a
+ * warm tail note, totalling ~450 ms.
  */
 export const playNewTicketArrival = () => {
     if (typeof window === "undefined" || !soundEnabled) return;
@@ -333,58 +333,64 @@ export const playNewTicketArrival = () => {
     if (!ctx) return;
     if (ctx.state === "suspended") ctx.resume();
 
-    const adjustedVolume = 0.09 * volumeLevel;
-    const masterGain = ctx.createGain();
-    const compressor = ctx.createDynamicsCompressor();
-    compressor.threshold.setValueAtTime(-20, ctx.currentTime);
-    compressor.knee.setValueAtTime(30, ctx.currentTime);
-    compressor.ratio.setValueAtTime(10, ctx.currentTime);
-    masterGain.connect(compressor);
-    compressor.connect(ctx.destination);
-    masterGain.gain.setValueAtTime(adjustedVolume, ctx.currentTime);
+    const vol = 0.11 * volumeLevel;
+    const now = ctx.currentTime;
 
-    const notes = [
-        { freq: 523.25, delay: 0, duration: 0.12 },
-        { freq: 659.25, delay: 0.1, duration: 0.12 },
-        { freq: 783.99, delay: 0.2, duration: 0.12 },
-        { freq: 1046.50, delay: 0.3, duration: 0.22 }
+    const compressor = ctx.createDynamicsCompressor();
+    compressor.threshold.setValueAtTime(-18, now);
+    compressor.knee.setValueAtTime(20, now);
+    compressor.ratio.setValueAtTime(10, now);
+    compressor.attack.setValueAtTime(0.002, now);
+    compressor.release.setValueAtTime(0.1, now);
+    compressor.connect(ctx.destination);
+
+    const master = ctx.createGain();
+    master.gain.setValueAtTime(vol, now);
+    master.connect(compressor);
+
+    // Three-part shape: pop1 (bright) → pop2 (brighter) → tail (warm, longer)
+    const parts = [
+        { freq: 880,  delay: 0,    dur: 0.10, peak: 1.0,  wave: "sine" },
+        { freq: 1100, delay: 0.11, dur: 0.10, peak: 1.0,  wave: "sine" },
+        { freq: 1320, delay: 0.22, dur: 0.22, peak: 0.75, wave: "sine" }
     ];
 
-    notes.forEach(({ freq, delay, duration }) => {
+    parts.forEach(({ freq, delay, dur, peak, wave }) => {
+        const start = now + delay;
+        const end = start + dur;
+
+        // Main tone
         const osc = ctx.createOscillator();
-        const noteGain = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(freq, ctx.currentTime + delay);
-
-        const start = ctx.currentTime + delay;
-        const end = start + duration;
-        noteGain.gain.setValueAtTime(0.0001, start);
-        noteGain.gain.exponentialRampToValueAtTime(0.9, start + 0.015);
-        noteGain.gain.setValueAtTime(0.9, end - 0.06);
-        noteGain.gain.exponentialRampToValueAtTime(0.0001, end);
-
-        const harmonic = ctx.createOscillator();
-        const harmGain = ctx.createGain();
-        harmonic.type = "sine";
-        harmonic.frequency.setValueAtTime(freq * 2, start);
-        harmGain.gain.setValueAtTime(0.0001, start);
-        harmGain.gain.exponentialRampToValueAtTime(0.12, start + 0.015);
-        harmGain.gain.exponentialRampToValueAtTime(0.0001, end);
-
-        osc.connect(noteGain);
-        harmonic.connect(harmGain);
-        noteGain.connect(masterGain);
-        harmGain.connect(masterGain);
+        const g = ctx.createGain();
+        osc.type = wave;
+        osc.frequency.setValueAtTime(freq, start);
+        g.gain.setValueAtTime(0.0001, start);
+        g.gain.exponentialRampToValueAtTime(peak, start + 0.010); // hard attack
+        g.gain.setValueAtTime(peak * 0.6, end - 0.04);
+        g.gain.exponentialRampToValueAtTime(0.0001, end);
+        osc.connect(g);
+        g.connect(master);
         osc.start(start);
-        osc.stop(end + 0.05);
-        harmonic.start(start);
-        harmonic.stop(end + 0.05);
+        osc.stop(end + 0.02);
+
+        // Subtle 2nd-harmonic shimmer for brightness
+        const osc2 = ctx.createOscillator();
+        const g2 = ctx.createGain();
+        osc2.type = "sine";
+        osc2.frequency.setValueAtTime(freq * 2, start);
+        g2.gain.setValueAtTime(0.0001, start);
+        g2.gain.exponentialRampToValueAtTime(peak * 0.18, start + 0.010);
+        g2.gain.exponentialRampToValueAtTime(0.0001, end);
+        osc2.connect(g2);
+        g2.connect(master);
+        osc2.start(start);
+        osc2.stop(end + 0.02);
     });
 
     setTimeout(() => {
-        masterGain.disconnect();
+        master.disconnect();
         compressor.disconnect();
-    }, 800);
+    }, 600);
 };
 
 /**
