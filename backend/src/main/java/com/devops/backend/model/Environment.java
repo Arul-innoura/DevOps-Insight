@@ -32,7 +32,8 @@ public enum Environment {
         }
         String k = key.trim();
         try {
-            return Environment.valueOf(k.toUpperCase(Locale.ROOT).replace(' ', '_').replace('-', '_"));
+            String normalized = k.toUpperCase(Locale.ROOT).replace(" ", "_").replace("-", "_");
+            return Environment.valueOf(normalized);
         } catch (IllegalArgumentException ignored) {
             // fall through — not an enum constant name
         }
