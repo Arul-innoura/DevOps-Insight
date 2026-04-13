@@ -6,6 +6,8 @@
  * - Auto-reconnect with exponential backoff
  */
 
+import { resolveApiBaseUrl } from "../config/apiBaseUrl";
+
 const resolveWsCandidates = () => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
@@ -22,7 +24,16 @@ const resolveWsCandidates = () => {
         candidates.push(`${protocol}//localhost:8080/ws/tickets`);
         candidates.push(`${protocol}//localhost:8080/api/ws/tickets`);
     } else {
-        // Production first through nginx websocket proxy, then direct backend path.
+        // Match REST API origin (REACT_APP_API_URL may be absolute or /api on same host).
+        const apiBase = resolveApiBaseUrl().replace(/\/$/, "");
+        if (apiBase.startsWith("http://") || apiBase.startsWith("https://")) {
+            const wsApiBase = apiBase.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+            candidates.push(`${wsApiBase}/ws/tickets`);
+            const withoutApiSuffix = wsApiBase.replace(/\/api$/i, "");
+            if (withoutApiSuffix !== wsApiBase) {
+                candidates.push(`${withoutApiSuffix}/ws/tickets`);
+            }
+        }
         candidates.push(`${protocol}//${host}/api/ws/tickets`);
         candidates.push(`${protocol}//${host}/ws/tickets`);
     }

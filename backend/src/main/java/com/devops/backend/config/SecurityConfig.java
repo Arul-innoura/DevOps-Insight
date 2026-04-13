@@ -37,7 +37,7 @@ public class SecurityConfig {
             .addFilterBefore(sseTokenFilter, BearerTokenAuthenticationFilter.class)
             .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/api/public/**").permitAll() // Public endpoints
-                .requestMatchers("/ws/**").permitAll() // WebSocket endpoints don't use JWT
+                .requestMatchers("/ws/**", "/api/ws/**").permitAll() // WebSocket handshake (no JWT)
                 .anyRequest().authenticated() // Everything else needs a generic authenticated JWT
             )
             .oauth2ResourceServer(oauth2 -> oauth2

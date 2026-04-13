@@ -25,7 +25,9 @@ public class WebSocketConfig implements WebSocketConfigurer {
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
-        registry.addHandler(ticketWebSocketHandler, "/ws/tickets")
+        // REST controllers live under /api; some gateways forward the browser path unchanged
+        // (e.g. wss://host/api/ws/tickets → /api/ws/tickets on Spring). Register both paths.
+        registry.addHandler(ticketWebSocketHandler, "/ws/tickets", "/api/ws/tickets")
                 .setAllowedOriginPatterns("*");
     }
 
