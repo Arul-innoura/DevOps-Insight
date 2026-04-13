@@ -903,33 +903,26 @@ public class TicketServiceImpl implements TicketService {
     // Helper methods
     
     private String generateTicketId(CreateTicketRequest request) {
-        String typeShort = requestTypeShortCode(request.getRequestType());
-        String projectShort = projectShortCode(request.getProductName());
-        String prefix = "EH-" + typeShort + "-" + projectShort + "-";
-        long seq = ticketRepository.countByIdStartingWith(prefix) + 1;
-        String seqStr = String.format("%04d", seq);
-        return prefix + seqStr;
-    }
+        long nextSequence = ticketRepository.findAll().stream()
+                .map(Ticket::getId)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(id -> !id.isEmpty())
+                .mapToLong(id -> {
+                    Matcher matcher = Pattern.compile("(\\d+)$").matcher(id);
+                    if (matcher.find()) {
+                        try {
+                            return Long.parseLong(matcher.group(1));
+                        } catch (NumberFormatException ignored) {
+                            return 0L;
+                        }
+                    }
+                    return 0L;
+                })
+                .max()
+                .orElse(0L) + 1L;
 
-    private String requestTypeShortCode(RequestType type) {
-        if (type == null) return "GEN";
-        switch (type) {
-            case NEW_ENVIRONMENT:    return "NEWENV";
-            case ENVIRONMENT_UP:     return "ENVUP";
-            case ENVIRONMENT_DOWN:   return "ENVDN";
-            case RELEASE_DEPLOYMENT: return "RELDEP";
-            case BUILD_REQUEST:      return "GENREQ";
-            case CODE_CUT:           return "CDCUT";
-            case ISSUE_FIX:          return "ISFIX";
-            case OTHER_QUERIES:      return "OTHER";
-            default:                 return "GEN";
-        }
-    }
-
-    private String projectShortCode(String productName) {
-        if (productName == null || productName.isBlank()) return "PROJ";
-        String cleaned = productName.toUpperCase().replaceAll("[^A-Z0-9]", "");
-        return cleaned.isEmpty() ? "PROJ" : cleaned.substring(0, Math.min(8, cleaned.length()));
+        return String.format("EH-%06d", nextSequence);
     }
 
 

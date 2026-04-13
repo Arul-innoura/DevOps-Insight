@@ -139,6 +139,4 @@ public interface TicketRepository extends MongoRepository<Ticket, String> {
     @Query(value = "{ 'requesterEmail': ?0, 'deleted': { $ne: true } }", count = true)
     long countActiveByRequesterEmail(String requesterEmail);
 
-    // Count tickets whose ID starts with a given prefix (used for sequential ID generation)
-    long countByIdStartingWith(String prefix);
 }
