@@ -15164,15 +15164,22 @@ button.btn-primary {
 
 /* Title: bold primary text — like sb-user-name */
 .jtc-title {
-    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    max-width: fit-content;
+    font-size: 0.68rem;
     font-weight: 800;
     color: #1d4ed8;
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 4px;
+    padding: 2px 8px !important;
     margin: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
     line-height: 1.25;
-    padding: 0 !important;
+    letter-spacing: 0.02em;
 }
 
 /* Meta row: ID + chips — like sb-app-subtitle */
