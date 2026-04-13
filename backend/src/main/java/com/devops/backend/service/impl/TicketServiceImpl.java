@@ -118,6 +118,7 @@ public class TicketServiceImpl implements TicketService {
                 .build();
 
         applyProjectWorkflow(ticket, request);
+        mergeUserProvidedRoutingIntoTicket(ticket, request);
         
         // Add initial timeline entry
         ticket.addTimelineEntry(TicketStatus.CREATED, userName, userEmail, "Ticket created");
@@ -944,6 +945,19 @@ public class TicketServiceImpl implements TicketService {
                 .count();
     }
 
+    private static List<String> parseEmailCsv(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        return Arrays.stream(raw.split("[,;]"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(String::toLowerCase)
+                .filter(s -> s.contains("@"))
+                .distinct()
+                .collect(Collectors.toList());
+    }
+
     private static void mergeWorkflowCcIntoTicket(Ticket ticket, WorkflowConfiguration wf) {
         LinkedHashSet<String> cc = new LinkedHashSet<>();
         if (ticket.getCcEmail() != null && !ticket.getCcEmail().isBlank()) {
@@ -963,6 +977,43 @@ public class TicketServiceImpl implements TicketService {
         if (!cc.isEmpty()) {
             ticket.setCcEmail(String.join(", ", cc));
         }
+    }
+
+    private static void mergeUserProvidedRoutingIntoTicket(Ticket ticket, CreateTicketRequest request) {
+        LinkedHashSet<String> to = new LinkedHashSet<>();
+        if (ticket.getWorkflowEmailTo() != null) {
+            ticket.getWorkflowEmailTo().stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .map(String::toLowerCase)
+                    .forEach(to::add);
+        }
+        parseEmailCsv(request.getToEmail()).forEach(to::add);
+        if (!to.isEmpty()) {
+            ticket.setWorkflowEmailTo(new ArrayList<>(to));
+        }
+
+        LinkedHashSet<String> cc = new LinkedHashSet<>();
+        if (ticket.getCcEmail() != null && !ticket.getCcEmail().isBlank()) {
+            parseEmailCsv(ticket.getCcEmail()).forEach(cc::add);
+        }
+        parseEmailCsv(request.getCcEmail()).forEach(cc::add);
+        if (!cc.isEmpty()) {
+            ticket.setCcEmail(String.join(", ", cc));
+        }
+
+        LinkedHashSet<String> bcc = new LinkedHashSet<>();
+        if (ticket.getWorkflowEmailBcc() != null) {
+            ticket.getWorkflowEmailBcc().stream()
+                    .filter(Objects::nonNull)
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .map(String::toLowerCase)
+                    .forEach(bcc::add);
+        }
+        parseEmailCsv(request.getBccEmail()).forEach(bcc::add);
+        ticket.setWorkflowEmailBcc(bcc.isEmpty() ? ticket.getWorkflowEmailBcc() : new ArrayList<>(bcc));
     }
 
     private List<WorkflowStageView> buildWorkflowStages(Ticket ticket, WorkflowConfiguration wf) {

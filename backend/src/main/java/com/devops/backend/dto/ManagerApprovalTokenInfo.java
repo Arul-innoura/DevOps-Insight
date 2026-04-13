@@ -18,6 +18,8 @@ public class ManagerApprovalTokenInfo {
     private String productName;
     private String requestType;
     private String environment;
+    /** Ticket purpose / business reason (shown on approval page and in approval email). */
+    private String purpose;
     private String description;
     private String requesterName;
     private String requesterEmail;

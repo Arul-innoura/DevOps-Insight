@@ -2,6 +2,8 @@ import React, { useState, useEffect } from "react";
 import { Database, Calendar, Send, X } from "lucide-react";
 import {
     REQUEST_TYPES,
+    COST_CURRENCIES,
+    convertCurrency,
     parseMonthlyCostEstimate,
     prorateMonthlyToPeriod,
     PRORATION_DAYS_PER_MONTH,
@@ -29,6 +31,9 @@ export default function CostEstimateForm({
     const [costPerDay, setCostPerDay] = useState("");
     const [days, setDays] = useState("");
     const [autoMode, setAutoMode] = useState(true);
+    const [convertToCurrency, setConvertToCurrency] = useState("USD");
+    const [convertedPreview, setConvertedPreview] = useState("");
+    const [converting, setConverting] = useState(false);
 
     const infraInfo = ticket?.workflowConfiguration?.infrastructure;
     const monthlyRaw = infraInfo?.monthlyCostEstimate || "";
@@ -104,6 +109,24 @@ export default function CostEstimateForm({
         }
         const ca = String(selectedCostApproverEmail || "").trim();
         onSubmit(ticket.id, Number(estimatedCost), currency, notes, ca || undefined);
+    };
+
+    const handleConvert = async () => {
+        const amount = Number(estimatedCost);
+        if (!amount || amount <= 0) return;
+        if (!convertToCurrency || convertToCurrency === currency) {
+            setConvertedPreview(`${currency} ${amount.toFixed(2)}`);
+            return;
+        }
+        try {
+            setConverting(true);
+            const r = await convertCurrency(amount, currency, convertToCurrency);
+            setConvertedPreview(`${r.toCurrency} ${Number(r.convertedAmount || 0).toFixed(2)} (rate: ${Number(r.exchangeRate || 0).toFixed(6)})`);
+        } catch {
+            setConvertedPreview("Conversion failed");
+        } finally {
+            setConverting(false);
+        }
     };
 
     const costNotifyLabel = (() => {
@@ -324,9 +347,24 @@ export default function CostEstimateForm({
                 <div className="form-field">
                     <label>Currency *</label>
                     <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
-                        <option value="USD">USD ($)</option>
-                        <option value="INR">INR (₹)</option>
+                        {COST_CURRENCIES.map((c) => (
+                            <option key={c.code} value={c.code}>{c.label}</option>
+                        ))}
                     </select>
+                </div>
+                <div className="form-field">
+                    <label>Convert amount (real-time)</label>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <select value={convertToCurrency} onChange={(e) => setConvertToCurrency(e.target.value)}>
+                            {COST_CURRENCIES.map((c) => (
+                                <option key={`to-${c.code}`} value={c.code}>{c.code}</option>
+                            ))}
+                        </select>
+                        <button type="button" className="btn-secondary" onClick={handleConvert} disabled={converting || !estimatedCost}>
+                            {converting ? "Converting..." : "Convert"}
+                        </button>
+                        {convertedPreview && <span style={{ fontSize: "0.85rem", color: "#374151" }}>{convertedPreview}</span>}
+                    </div>
                 </div>
                 <div className="form-field">
                     <label>Notes (Optional)</label>

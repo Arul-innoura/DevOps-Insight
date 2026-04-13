@@ -30,6 +30,7 @@ import {
     Calendar,
     Coffee,
     Moon,
+    Pencil,
     GitBranch,
     ChevronLeft,
     ChevronRight,
@@ -64,6 +65,7 @@ import {
     ENVIRONMENTS
 } from "../../services/ticketService";
 import { getStatusTimeline } from "../../services/devopsStatusService";
+import RotaCalendarModal from "./RotaCalendarModal";
 import { useRealTimeSync, useConnectionStatus } from "../../services/useRealTimeSync";
 import { useToast } from "../../services/ToastNotification";
 import { 
@@ -78,11 +80,13 @@ import ProjectWorkflowEditor from "./ProjectWorkflowEditor";
 import ActivityLogsView from "./ActivityLogsView";
 import AnalyticsDashboard from "./AnalyticsDashboard";
 import MonitoringPanel from "../MonitoringPanel";
+import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
 import { useTheme } from "../../services/ThemeContext";
 import { LoadingScreen } from "../../components/LoadingScreen";
+import { signOutRedirectToLogin } from "../../auth/logoutHelper";
 
 const ADMIN_SIDEBAR_NAV_DEFAULTS = { operations: true, configuration: true, account: true };
 
@@ -326,71 +330,177 @@ const ManagerManagementView = ({ newManager, setNewManager, handleAddManager, ma
     </div>
 );
 
-const RotaManagementView = ({ leaveDate, setLeaveDate, devOpsMembers, rotaState, handleToggleDateLeave, manualDate, setManualDate, manualEmails, setManualEmails, handleApplyManualAssignment, rotaSchedule }) => (
-    <div className="team-management-view">
-        <div className="analytics-card">
-            <h3><RotateCcw size={18} /> Date-wise Leave Management</h3>
-            <div className="team-form" style={{ marginBottom: '0.75rem' }}>
-                <input type="date" value={leaveDate} onChange={(e) => setLeaveDate(e.target.value)} />
+function rotaFormatShortDate(dateStr) {
+    if (!dateStr) return '';
+    const s = String(dateStr);
+    const d = s.length <= 10 ? new Date(`${s}T12:00:00`) : new Date(s);
+    if (Number.isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function RotaDayCard({ day }) {
+    const names = (day.members || []).map((m) => m.name).filter(Boolean);
+    return (
+        <div className={`rota-day-card${day.isManual ? ' rota-day-card--manual' : ''}`}>
+            <div className="rota-day-card__meta">
+                <span className="rota-day-card__dow">{day.dayName || '—'}</span>
+                <span className="rota-day-card__date">{rotaFormatShortDate(day.date)}</span>
             </div>
-            <div className="team-members-grid">
-                {devOpsMembers.map(member => {
-                    const isLeave = (rotaState.leaveByDate?.[leaveDate] || []).includes((member.email || '').toLowerCase());
-                    return (
-                        <div className="team-member-card" key={member.email}>
-                            <div className="team-member-head">
+            {names.length > 0 ? (
+                <div className="rota-chip-row">
+                    {names.map((n, i) => (
+                        <span className="rota-chip" key={`${day.date}-${i}`}>{n}</span>
+                    ))}
+                </div>
+            ) : (
+                <div className="rota-empty-shift">No assignee</div>
+            )}
+            {day.isManual && <span className="rota-manual-pill">Manual</span>}
+        </div>
+    );
+}
+
+function RotaManagementView({
+    leaveDate,
+    setLeaveDate,
+    devOpsMembers,
+    rotaState,
+    handleToggleDateLeave,
+    manualDate,
+    setManualDate,
+    manualEmails,
+    setManualEmails,
+    handleApplyManualAssignment,
+    rotaSchedule,
+    refreshRota,
+}) {
+    const [calOpen, setCalOpen] = useState(false);
+    const [calEdit, setCalEdit] = useState(false);
+    const [calMonth, setCalMonth] = useState(() => new Date());
+
+    const modeLabel = String(rotaState.rotationMode || "DAILY").toUpperCase() === "WEEKLY"
+        ? "Weekly (Mon–Sun)"
+        : "Daily";
+
+    return (
+    <div className="rota-page">
+        <div className="rota-actions-bar">
+            <div className="rota-actions-bar__left">
+                <span className="rota-mode-badge">Shift: {modeLabel}</span>
+                <span className="rota-actions-hint">Open the calendar to see who is on duty or edit assignments by day.</span>
+            </div>
+            <div className="rota-actions-bar__btns">
+                <button type="button" className="rota-icon-btn" onClick={() => { setCalEdit(false); setCalOpen(true); }}>
+                    <Calendar size={18} aria-hidden /> Calendar
+                </button>
+                <button type="button" className="rota-icon-btn rota-icon-btn--primary" onClick={() => { setCalEdit(true); setCalOpen(true); }}>
+                    <Pencil size={18} aria-hidden /> Edit calendar
+                </button>
+            </div>
+        </div>
+        <RotaCalendarModal
+            open={calOpen}
+            onClose={() => setCalOpen(false)}
+            isAdmin
+            initialEdit={calEdit}
+            calMonth={calMonth}
+            onCalMonthChange={setCalMonth}
+            devOpsMembers={devOpsMembers}
+            rotationMode={rotaState.rotationMode}
+            leaveByDate={rotaState.leaveByDate || {}}
+            onUpdated={refreshRota}
+        />
+        <div className="rota-toolbar-row">
+            <section className="rota-section" aria-labelledby="rota-leave-heading">
+                <h3 id="rota-leave-heading" className="rota-section__title">
+                    <Calendar size={18} aria-hidden /> Leave by date
+                </h3>
+                <p className="rota-section__lede">Pick a date, then mark who is on leave. The schedule below updates after save.</p>
+                <label className="rota-field-label" htmlFor="rota-leave-date">Date</label>
+                <input
+                    id="rota-leave-date"
+                    className="rota-date-input"
+                    type="date"
+                    value={leaveDate}
+                    onChange={(e) => setLeaveDate(e.target.value)}
+                />
+                <div className="rota-leave-grid">
+                    {devOpsMembers.map((member) => {
+                        const isLeave = (rotaState.leaveByDate?.[leaveDate] || []).includes((member.email || '').toLowerCase());
+                        return (
+                            <div className="rota-member-row" key={member.email}>
                                 <strong>{member.name}</strong>
-                                <label>
+                                <label className="rota-checkbox">
                                     <input
                                         type="checkbox"
                                         checked={isLeave}
                                         onChange={(e) => handleToggleDateLeave(member.email, e.target.checked)}
-                                    /> Leave on selected date
+                                    />
+                                    On leave
                                 </label>
                             </div>
-                        </div>
-                    );
-                })}
-            </div>
-        </div>
+                        );
+                    })}
+                </div>
+            </section>
 
-        <div className="analytics-card">
-            <h3><Users size={18} /> Manual Assignment (Max 2 Members)</h3>
-            <form className="team-form" onSubmit={handleApplyManualAssignment}>
-                <input type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} required />
-                <select
-                    multiple
-                    value={manualEmails}
-                    onChange={(e) => {
-                        const selected = Array.from(e.target.selectedOptions).map(o => o.value).slice(0, 2);
-                        setManualEmails(selected);
-                    }}
-                >
-                    {devOpsMembers.map(member => (
-                        <option key={member.email} value={member.email}>{member.name}</option>
-                    ))}
-                </select>
-                <button type="submit" className="btn-primary">Apply Assignment</button>
-            </form>
-        </div>
-
-        <div className="analytics-card">
-            <h3><RotateCcw size={18} /> Rota Preview (14 Days)</h3>
-            <div className="team-members-grid">
-                {rotaSchedule.map(day => (
-                    <div className="team-member-card" key={day.date}>
-                        <div className="team-member-head">
-                            <strong>{day.date}</strong>
-                            <span>{day.dayName}</span>
+            <section className="rota-section" aria-labelledby="rota-manual-heading">
+                <h3 id="rota-manual-heading" className="rota-section__title">
+                    <Users size={18} aria-hidden /> Manual on-call (up to 4)
+                </h3>
+                <p className="rota-section__lede">Override the rotation for a specific night. Hold Ctrl/Cmd to pick up to four people (primary + coverage).</p>
+                <form className="rota-manual-form" onSubmit={handleApplyManualAssignment}>
+                    <div className="rota-manual-row">
+                        <div className="rota-manual-field">
+                            <label className="rota-field-label" htmlFor="rota-manual-date">Date</label>
+                            <input
+                                id="rota-manual-date"
+                                type="date"
+                                value={manualDate}
+                                onChange={(e) => setManualDate(e.target.value)}
+                                required
+                            />
                         </div>
-                        <p>{day.members.length > 0 ? day.members.map(m => m.name).join(', ') : 'No member assigned'}</p>
-                        {day.isManual && <span className="availability-badge availability-busy">Manual</span>}
+                        <div className="rota-manual-field rota-manual-field--grow">
+                            <label className="rota-field-label" htmlFor="rota-manual-members">Members</label>
+                            <select
+                                id="rota-manual-members"
+                                className="rota-multiselect"
+                                multiple
+                                size={5}
+                                value={manualEmails}
+                                onChange={(e) => {
+                                    const selected = Array.from(e.target.selectedOptions).map((o) => o.value).slice(0, 4);
+                                    setManualEmails(selected);
+                                }}
+                            >
+                                {devOpsMembers.map((member) => (
+                                    <option key={member.email} value={member.email}>{member.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <button type="submit" className="btn-primary rota-apply-btn">Apply</button>
                     </div>
+                </form>
+            </section>
+        </div>
+
+        <section className="rota-section rota-section--schedule" aria-labelledby="rota-schedule-heading">
+            <div className="rota-schedule-head">
+                <h3 id="rota-schedule-heading" className="rota-section__title">
+                    <RotateCcw size={18} aria-hidden /> 14-day on-call preview
+                </h3>
+                <p>Calendar order is week-based (7 columns). Manual rows are highlighted.</p>
+            </div>
+            <div className="rota-schedule-grid">
+                {(rotaSchedule || []).map((day) => (
+                    <RotaDayCard key={day.date} day={day} />
                 ))}
             </div>
-        </div>
+        </section>
     </div>
-);
+    );
+}
 
 const StatusTimelineView = ({ devOpsMembers, timelineStatusColors }) => {
     const [timelineDate, setTimelineDate] = useState(new Date().toISOString().split('T')[0]);
@@ -860,10 +970,10 @@ export const AdminDashboard = () => {
         }
     };
     
-    const handleAddNote = async (ticketId, notes) => {
+    const handleAddNote = async (ticketId, notes, attachments = []) => {
         try {
             setActionLoading("Adding ticket note...");
-            await addTicketNote(ticketId, { name: userName, email: userEmail }, notes);
+            await addTicketNote(ticketId, { name: userName, email: userEmail }, notes, attachments);
             await loadTickets();
             
             if (selectedTicket && selectedTicket.id === ticketId) {
@@ -910,9 +1020,7 @@ export const AdminDashboard = () => {
     };
 
     const handleLogout = () => {
-        instance.logoutRedirect({
-            postLogoutRedirectUri: `${window.location.origin}/login`,
-        });
+        signOutRedirectToLogin(instance);
     };
 
     const handleAddProject = async (e) => {
@@ -993,6 +1101,15 @@ export const AdminDashboard = () => {
             setActionLoading("");
         }
     };
+
+    const refreshRota = useCallback(async () => {
+        const [state, schedule] = await Promise.all([
+            getRotaManagementState(),
+            getRotaSchedule(14, new Date()),
+        ]);
+        setRotaState(state);
+        setRotaSchedule(schedule);
+    }, []);
     
     // Calculate tab counts
     const tabCounts = {
@@ -1274,12 +1391,12 @@ export const AdminDashboard = () => {
                                                 transition: 'all 0.2s ease'
                                             }}
                                         >
-                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : '🕹️ Retro'}
+                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : t === 'retro' ? '🕹️ Retro' : '🎬 DevOps'}
                                         </button>
                                     ))}
                                 </div>
                             </div>
-                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#f9fafb', borderRadius: 8 }}>
+                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'var(--surface-subtle, #f9fafb)', borderRadius: 8 }}>
                                 <h4 style={{ marginBottom: '0.5rem', color: '#111827' }}>Connection Status</h4>
                                 <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>
                                     Sync Method: <strong>WebSocket (Fastest)</strong>
@@ -1330,7 +1447,12 @@ export const AdminDashboard = () => {
                 )}
                 
                 {viewMode === 'monitoring' ? (
-                    <MonitoringPanel adminMode />
+                    <EnvMonitoringDashboard
+                        tickets={tickets}
+                        projects={projects}
+                        devOpsMembers={devOpsMembers}
+                        userRole="admin"
+                    />
                 ) : viewMode === 'analytics' ? (
                     <AnalyticsDashboard
                         tickets={tickets}
@@ -1400,6 +1522,7 @@ export const AdminDashboard = () => {
                         setManualEmails={setManualEmails}
                         handleApplyManualAssignment={handleApplyManualAssignment}
                         rotaSchedule={rotaSchedule}
+                        refreshRota={refreshRota}
                     />
                 ) : viewMode === 'statusTimeline' ? (
                     <StatusTimelineView 
@@ -1531,4 +1654,3 @@ export const AdminDashboard = () => {
 };
 
 export default AdminDashboard;
-

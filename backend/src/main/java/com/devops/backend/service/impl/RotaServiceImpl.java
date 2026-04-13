@@ -2,6 +2,7 @@ package com.devops.backend.service.impl;
 
 import com.devops.backend.dto.RotaLeaveUpdateRequest;
 import com.devops.backend.dto.RotaManualAssignmentRequest;
+import com.devops.backend.dto.RotaRotationModeRequest;
 import com.devops.backend.dto.RotaScheduleDayResponse;
 import com.devops.backend.model.DevOpsMember;
 import com.devops.backend.model.RotaState;
@@ -11,10 +12,12 @@ import com.devops.backend.service.RotaService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.time.DayOfWeek;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -80,7 +83,7 @@ public class RotaServiceImpl implements RotaService {
                 .map(this::normalizeEmail)
                 .filter(s -> !s.isBlank())
                 .distinct()
-                .limit(2)
+                .limit(4)
                 .toList();
 
         Map<String, List<String>> manual = new HashMap<>(safeMap(state.getManualAssignments()));
@@ -97,6 +100,19 @@ public class RotaServiceImpl implements RotaService {
     }
 
     @Override
+    public RotaState setRotationMode(RotaRotationModeRequest request, String actor) {
+        String raw = request.getRotationMode() == null ? "" : request.getRotationMode().trim().toUpperCase(Locale.ROOT);
+        if (!"DAILY".equals(raw) && !"WEEKLY".equals(raw)) {
+            throw new IllegalArgumentException("rotationMode must be DAILY or WEEKLY");
+        }
+        RotaState state = ensureState();
+        state.setRotationMode(raw);
+        state.setUpdatedBy(actor);
+        state.setUpdatedAt(Instant.now());
+        return rotaStateRepository.save(state);
+    }
+
+    @Override
     public List<RotaScheduleDayResponse> getRotaSchedule(int days, String startDate) {
         int safeDays = days <= 0 ? 14 : Math.min(days, 90);
         LocalDate start = (startDate == null || startDate.isBlank()) ? LocalDate.now() : LocalDate.parse(startDate, DATE_FMT);
@@ -106,7 +122,13 @@ public class RotaServiceImpl implements RotaService {
                 .collect(Collectors.toMap(m -> normalizeEmail(m.getEmail()), m -> m, (a, b) -> a, LinkedHashMap::new));
 
         List<String> workingOrder = new ArrayList<>(state.getOrderEmails() == null ? List.of() : state.getOrderEmails());
+        String mode = state.getRotationMode() == null || state.getRotationMode().isBlank()
+                ? "DAILY"
+                : state.getRotationMode().trim().toUpperCase(Locale.ROOT);
+
         List<RotaScheduleDayResponse> out = new ArrayList<>();
+        LocalDate lastWeekMonday = null;
+        String weekPrimaryEmail = null;
 
         for (int i = 0; i < safeDays; i++) {
             LocalDate day = start.plusDays(i);
@@ -116,27 +138,46 @@ public class RotaServiceImpl implements RotaService {
                     .map(this::normalizeEmail)
                     .collect(Collectors.toSet());
 
-            List<String> eligible = workingOrder.stream()
-                    .map(this::normalizeEmail)
-                    .filter(membersByEmail::containsKey)
-                    .filter(email -> !leaveSet.contains(email))
-                    .toList();
+            List<String> eligible = eligibleForDate(day, workingOrder, membersByEmail, state.getLeaveByDate());
 
             List<String> manualRaw = safeMap(state.getManualAssignments()).getOrDefault(dateKey, List.of()).stream()
                     .map(this::normalizeEmail)
                     .filter(eligible::contains)
-                    .limit(2)
+                    .limit(4)
                     .toList();
 
-            List<String> assigned = manualRaw.isEmpty()
-                    ? (eligible.isEmpty() ? List.of() : List.of(eligible.get(0)))
-                    : manualRaw;
+            List<String> assigned;
+            if ("WEEKLY".equals(mode)) {
+                LocalDate monday = day.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+                if (lastWeekMonday == null || !monday.equals(lastWeekMonday)) {
+                    if (lastWeekMonday != null && weekPrimaryEmail != null && !weekPrimaryEmail.isBlank()) {
+                        rotateEmailToEnd(workingOrder, weekPrimaryEmail);
+                    }
+                    lastWeekMonday = monday;
+                    List<String> eligibleMon = eligibleForDate(monday, workingOrder, membersByEmail, state.getLeaveByDate());
+                    weekPrimaryEmail = eligibleMon.isEmpty() ? null : eligibleMon.get(0);
+                }
+                if (!manualRaw.isEmpty()) {
+                    assigned = manualRaw;
+                } else {
+                    List<String> eligibleToday = eligibleForDate(day, workingOrder, membersByEmail, state.getLeaveByDate());
+                    if (weekPrimaryEmail != null && eligibleToday.contains(weekPrimaryEmail)) {
+                        assigned = List.of(weekPrimaryEmail);
+                    } else if (!eligibleToday.isEmpty()) {
+                        assigned = List.of(eligibleToday.get(0));
+                    } else {
+                        assigned = List.of();
+                    }
+                }
+            } else {
+                assigned = manualRaw.isEmpty()
+                        ? (eligible.isEmpty() ? List.of() : List.of(eligible.get(0)))
+                        : manualRaw;
+            }
 
-            for (String email : assigned) {
-                int idx = workingOrder.indexOf(email);
-                if (idx >= 0) {
-                    workingOrder.remove(idx);
-                    workingOrder.add(email);
+            if ("DAILY".equals(mode) || !manualRaw.isEmpty()) {
+                for (String email : assigned) {
+                    rotateEmailToEnd(workingOrder, email);
                 }
             }
 
@@ -154,6 +195,29 @@ public class RotaServiceImpl implements RotaService {
         }
 
         return out;
+    }
+
+    private List<String> eligibleForDate(LocalDate day, List<String> workingOrder,
+                                         Map<String, DevOpsMember> membersByEmail,
+                                         Map<String, List<String>> leaveByDate) {
+        String dateKey = day.format(DATE_FMT);
+        Set<String> leaveSet = safeMap(leaveByDate).getOrDefault(dateKey, List.of()).stream()
+                .map(this::normalizeEmail)
+                .collect(Collectors.toSet());
+        return workingOrder.stream()
+                .map(this::normalizeEmail)
+                .filter(membersByEmail::containsKey)
+                .filter(email -> !leaveSet.contains(email))
+                .toList();
+    }
+
+    private void rotateEmailToEnd(List<String> workingOrder, String email) {
+        String norm = normalizeEmail(email);
+        int idx = workingOrder.indexOf(norm);
+        if (idx >= 0) {
+            workingOrder.remove(idx);
+            workingOrder.add(norm);
+        }
     }
 
     private RotaState ensureState() {
@@ -195,6 +259,9 @@ public class RotaServiceImpl implements RotaService {
         state.setOrderEmails(kept);
         if (state.getLeaveByDate() == null) state.setLeaveByDate(new HashMap<>());
         if (state.getManualAssignments() == null) state.setManualAssignments(new HashMap<>());
+        if (state.getRotationMode() == null || state.getRotationMode().isBlank()) {
+            state.setRotationMode("DAILY");
+        }
         if (state.getStartDate() == null || state.getStartDate().isBlank()) {
             state.setStartDate(LocalDate.now().format(DATE_FMT));
         }

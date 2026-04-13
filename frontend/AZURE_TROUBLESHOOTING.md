@@ -140,7 +140,7 @@ REACT_APP_TENANT_ID=cd775fb1-40c4-42dc-8ddf-2ca152bec472
 
 For production:
 ```env
-REACT_APP_REDIRECT_URI=https://your-production-domain.com
+REACT_APP_REDIRECT_URI=https://shipit.encipherhealth.com
 ```
 
 ## Quick Test Script

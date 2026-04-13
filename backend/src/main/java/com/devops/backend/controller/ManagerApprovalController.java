@@ -92,6 +92,7 @@ public class ManagerApprovalController {
                 .productName(ticket.getProductName())
                 .requestType(ticket.getRequestType() != null ? ticket.getRequestType().name() : null)
                 .environment(ticket.getEnvironment() != null ? ticket.getEnvironment().name() : null)
+                .purpose(ticket.getPurpose())
                 .description(ticket.getDescription())
                 .requesterName(ticket.getRequestedBy())
                 .requesterEmail(ticket.getRequesterEmail())

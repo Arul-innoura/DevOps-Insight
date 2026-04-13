@@ -14,6 +14,15 @@ export const REQUEST_TYPES = {
     CODE_CUT: "Code Cut"
 };
 
+export const COST_CURRENCIES = [
+    { code: "USD", label: "USD ($)" },
+    { code: "INR", label: "INR (₹)" },
+    { code: "AED", label: "AED (د.إ)" },
+    { code: "QAR", label: "Riyal / QAR (ر.ق)" },
+    { code: "EUR", label: "EUR (€)" },
+    { code: "SAR", label: "SAR (﷼)" }
+];
+
 /** Maps UI request type label to backend RequestType enum name (workflow API). */
 export const REQUEST_TYPE_TO_API_ENUM = {
     [REQUEST_TYPES.NEW_ENVIRONMENT]: "NEW_ENVIRONMENT",
@@ -33,7 +42,7 @@ const LEGACY_REQUEST_TYPE_LABELS = {
 // Ticket Statuses
 export const TICKET_STATUS = {
     CREATED: "Ticket Raised",
-    ACCEPTED: "DevOps Accepted",
+    ACCEPTED: "Assigned",
     MANAGER_APPROVAL_PENDING: "Waiting for Manager Approval",
     MANAGER_APPROVED: "Manager Approved",
     COST_APPROVAL_PENDING: "Cost Approval Pending",
@@ -124,6 +133,10 @@ export function parseMonthlyCostEstimate(raw) {
     if (!s) return { amount: null, currency: "USD" };
     let currency = "USD";
     if (/₹|inr/i.test(s)) currency = "INR";
+    else if (/aed|د\.إ/i.test(s)) currency = "AED";
+    else if (/qar|riyal|rial|ر\.ق/i.test(s)) currency = "QAR";
+    else if (/sar|﷼/i.test(s)) currency = "SAR";
+    else if (/€|eur/i.test(s)) currency = "EUR";
     else if (/\$|usd/i.test(s)) currency = "USD";
 
     const compact = s.replace(/,/g, "");
@@ -208,6 +221,24 @@ export const STATUS_COLORS = {
     [TICKET_STATUS.COMPLETED]:                { bg: "#f0fdf4", text: "#15803d" },
     [TICKET_STATUS.CLOSED]:                   { bg: "#f9fafb", text: "#6b7280" }
 };
+
+/** Muted translucent badges for dark + DevOps cinema themes (readable on #555 / slate cards). */
+export const STATUS_COLORS_DARK = {
+    [TICKET_STATUS.CREATED]:                  { bg: "rgba(59, 130, 246, 0.22)", text: "#93c5fd" },
+    [TICKET_STATUS.ACCEPTED]:                 { bg: "rgba(20, 184, 166, 0.22)", text: "#5eead4" },
+    [TICKET_STATUS.MANAGER_APPROVAL_PENDING]: { bg: "rgba(245, 158, 11, 0.22)", text: "#fcd34d" },
+    [TICKET_STATUS.MANAGER_APPROVED]:         { bg: "rgba(34, 197, 94, 0.2)", text: "#86efac" },
+    [TICKET_STATUS.COST_APPROVAL_PENDING]:    { bg: "rgba(249, 115, 22, 0.22)", text: "#fdba74" },
+    [TICKET_STATUS.COST_APPROVED]:            { bg: "rgba(16, 185, 129, 0.2)", text: "#6ee7b7" },
+    [TICKET_STATUS.IN_PROGRESS]:              { bg: "rgba(139, 92, 246, 0.22)", text: "#c4b5fd" },
+    [TICKET_STATUS.ACTION_REQUIRED]:          { bg: "rgba(239, 68, 68, 0.22)", text: "#fca5a5" },
+    [TICKET_STATUS.ON_HOLD]:                  { bg: "rgba(148, 163, 184, 0.2)", text: "#cbd5e1" },
+    [TICKET_STATUS.COMPLETED]:                { bg: "rgba(34, 197, 94, 0.2)", text: "#86efac" },
+    [TICKET_STATUS.CLOSED]:                   { bg: "rgba(255, 255, 255, 0.08)", text: "#a1a1aa" }
+};
+
+export const getStatusColors = (theme) =>
+    theme === "dark" || theme === "devops" ? STATUS_COLORS_DARK : STATUS_COLORS;
 
 // Status workflow
 export const STATUS_TRANSITIONS = {
@@ -430,6 +461,7 @@ export const applyCacheInvalidationHint = (hint = {}) => {
 /** Normalize API or legacy status strings to UI labels used in STATUS_TRANSITIONS / dropdowns. */
 export const toDisplayTicketStatus = (status) => {
     if (!status) return TICKET_STATUS.CREATED;
+    if (status === "DevOps Accepted") return TICKET_STATUS.ACCEPTED;
     const key = String(status).toUpperCase().replace(/\s+/g, "_");
     if (key === "REJECTED") return TICKET_STATUS.CLOSED;
     const map = {
@@ -637,7 +669,9 @@ const mapCreateTicketPayload = (ticketData) => ({
     managerName: ticketData.managerName || "",
     managerEmail: ticketData.managerEmail || "",
     managerApprovalRequired: !!ticketData.managerApprovalRequired,
+    toEmail: ticketData.toEmail || "",
     ccEmail: ticketData.ccEmail || "",
+    bccEmail: ticketData.bccEmail || "",
     databaseType: ticketData.databaseType || "",
     purpose: ticketData.purpose || "",
     activationDate: ticketData.activationDate ? new Date(ticketData.activationDate).toISOString() : null,
@@ -731,6 +765,35 @@ export const addTicketNote = async (ticketId, _user, notes, attachments = []) =>
     return mapTicket(updated);
 };
 
+/**
+ * Upload files for a note attachment to Azure Blob Storage via backend.
+ * Each file must be ≤ 5 MB. Returns { uploaded: [{url, name, type, size}], errors: [] }.
+ */
+export const uploadNoteAttachments = async (ticketId, files) => {
+    const formData = new FormData();
+    Array.from(files).forEach((file) => formData.append("files", file));
+
+    let token = await getAuthToken();
+    const doUpload = async (t) =>
+        fetch(`${API_BASE_URL}/tickets/${ticketId}/attachments/upload`, {
+            method: "POST",
+            headers: t ? { Authorization: `Bearer ${t}` } : {},
+            body: formData
+        });
+
+    let response = await doUpload(token);
+    if (response.status === 401) {
+        token = await refreshAuthToken();
+        if (token) response = await doUpload(token);
+    }
+
+    if (!response.ok) {
+        const msg = await response.text().catch(() => "Upload error");
+        throw new Error(msg);
+    }
+    return response.json();
+};
+
 export const assignTicket = async (ticketId, assignee, user) => {
     const updated = await apiRequest(`/tickets/${ticketId}/assign`, {
         method: "PUT",
@@ -774,6 +837,13 @@ export const submitCostEstimation = async (
     });
     emitDataChange("tickets", "cost-submission");
     return mapTicket(updated);
+};
+
+export const convertCurrency = async (amount, from, to) => {
+    const data = await apiRequest(
+        `/currency/convert?amount=${encodeURIComponent(Number(amount || 0))}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`
+    );
+    return data;
 };
 
 export const getUnassignedTickets = async () => mapTickets(await apiRequest("/tickets/unassigned"));
@@ -1080,9 +1150,18 @@ export const setRotaLeaveForDate = async (date, email, isLeave) => {
 export const setRotaManualAssignment = async (date, emails = []) => {
     const updated = await apiRequest("/rota/manual", {
         method: "PUT",
-        body: JSON.stringify({ date, emails: (emails || []).slice(0, 2) })
+        body: JSON.stringify({ date, emails: (emails || []).slice(0, 4) })
     });
     emitDataChange("rota", "manual-update");
+    return updated;
+};
+
+export const setRotaRotationMode = async (rotationMode) => {
+    const updated = await apiRequest("/rota/rotation-mode", {
+        method: "POST",
+        body: JSON.stringify({ rotationMode: String(rotationMode || "DAILY").toUpperCase() })
+    });
+    emitDataChange("rota", "rotation-mode");
     return updated;
 };
 export const getRotaSchedule = async (days = 14, startDate = new Date()) => {

@@ -37,21 +37,21 @@ On each client machine (or your own machine), add:
 
 Entry:
 
-- `<SERVER_IP> opspilot.encipherhealth.com`
+- `<SERVER_IP> shipit.encipherhealth.com`
 
 Then open:
 
-- `http://opspilot.encipherhealth.com:3000`
+- `http://shipit.encipherhealth.com:3000`
 
 ## 4) Azure login note
 
 For MSAL, Azure App Registration must include every redirect URI you use.
 Add these in Azure Portal -> App registrations -> Authentication -> SPA:
 
-- `http://opspilot.encipherhealth.com:3000`
+- `http://shipit.encipherhealth.com:3000`
 - (optional) `http://SERVER_IP:3000`
 
 If you later move to HTTPS, add:
 
-- `https://opspilot.encipherhealth.com`
+- `https://shipit.encipherhealth.com`
 

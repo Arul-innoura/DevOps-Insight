@@ -86,7 +86,15 @@ public class EmailConsumerService {
     }
 
     private void sendEmail(EmailMessage message) throws MessagingException {
-        if (!StringUtils.hasText(message.getTo())) {
+        String primaryTo = StringUtils.hasText(message.getTo()) ? message.getTo().trim() : null;
+        if (!StringUtils.hasText(primaryTo) && message.getToList() != null && !message.getToList().isEmpty()) {
+            primaryTo = message.getToList().stream()
+                    .filter(StringUtils::hasText)
+                    .findFirst()
+                    .map(String::trim)
+                    .orElse(null);
+        }
+        if (!StringUtils.hasText(primaryTo)) {
             throw new MessagingException("Email 'to' address is empty");
         }
 
@@ -96,7 +104,20 @@ public class EmailConsumerService {
         MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, true, "UTF-8");
 
         helper.setFrom(from);
-        helper.setTo(message.getTo());
+        if (message.getToList() != null && !message.getToList().isEmpty()) {
+            String[] toArr = message.getToList().stream()
+                    .filter(StringUtils::hasText)
+                    .map(String::trim)
+                    .distinct()
+                    .toArray(String[]::new);
+            if (toArr.length > 0) {
+                helper.setTo(toArr);
+            } else {
+                helper.setTo(primaryTo);
+            }
+        } else {
+            helper.setTo(primaryTo);
+        }
 
         if (message.getCc() != null && !message.getCc().isEmpty()) {
             helper.setCc(message.getCc().toArray(new String[0]));

@@ -13,10 +13,10 @@ export const UserDashboard = () => {
     const handleLogout = () => {
         if (isTestAuthenticated()) {
             logoutTest();
-            window.location.href = "/";
+            window.location.href = "/login";
         } else {
             instance.logoutRedirect({
-                postLogoutRedirectUri: "/",
+                postLogoutRedirectUri: `${window.location.origin}/login`,
             });
         }
     };

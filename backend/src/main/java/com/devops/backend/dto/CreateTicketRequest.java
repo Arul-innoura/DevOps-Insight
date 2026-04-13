@@ -37,7 +37,9 @@ public class CreateTicketRequest {
     private String managerName;
     private String managerEmail;  // Manager's email for approval workflow
     private boolean managerApprovalRequired;
+    private String toEmail;
     private String ccEmail;
+    private String bccEmail;
     
     // New Environment fields
     private String databaseType;

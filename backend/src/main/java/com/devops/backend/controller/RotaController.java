@@ -2,6 +2,7 @@ package com.devops.backend.controller;
 
 import com.devops.backend.dto.RotaLeaveUpdateRequest;
 import com.devops.backend.dto.RotaManualAssignmentRequest;
+import com.devops.backend.dto.RotaRotationModeRequest;
 import com.devops.backend.dto.RotaScheduleDayResponse;
 import com.devops.backend.model.RotaState;
 import com.devops.backend.service.RotaService;
@@ -40,6 +41,18 @@ public class RotaController {
     public ResponseEntity<RotaState> setManualAssignment(@Valid @RequestBody RotaManualAssignmentRequest request,
                                                           @AuthenticationPrincipal Jwt jwt) {
         return ResponseEntity.ok(rotaService.setManualAssignment(request, extractUserName(jwt)));
+    }
+
+    /** POST is allowed so updates work through proxies that block PUT. */
+    @RequestMapping(value = "/rotation-mode", method = {RequestMethod.PUT, RequestMethod.POST})
+    @PreAuthorize("hasAuthority('APPROLE_Admin')")
+    public ResponseEntity<RotaState> setRotationMode(@Valid @RequestBody RotaRotationModeRequest request,
+                                                     @AuthenticationPrincipal Jwt jwt) {
+        try {
+            return ResponseEntity.ok(rotaService.setRotationMode(request, extractUserName(jwt)));
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().build();
+        }
     }
 
     @GetMapping("/schedule")

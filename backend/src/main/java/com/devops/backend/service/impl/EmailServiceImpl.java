@@ -24,7 +24,9 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
+import java.util.Objects;
 import java.util.stream.Stream;
 
 @Slf4j
@@ -131,29 +133,50 @@ public class EmailServiceImpl implements EmailService {
 
     private EmailMessage applyThreadRecipientFilters(EmailMessage msg, NotificationPreferenceConfig npc) {
         EmailMessage.EmailType type = msg.getType();
-        String origTo = msg.getTo();
+        List<String> origToList = new ArrayList<>();
+        if (msg.getToList() != null && !msg.getToList().isEmpty()) {
+            origToList.addAll(msg.getToList());
+        } else if (msg.getTo() != null && !msg.getTo().isBlank()) {
+            origToList.add(msg.getTo());
+        }
         List<String> origCc = msg.getCc() == null ? List.of() : msg.getCc();
+        List<String> origBcc = msg.getBcc() == null ? List.of() : msg.getBcc();
 
+        List<String> allowedTo = filterAddressList(origToList, type, npc);
         List<String> allowedCc = filterAddressList(origCc, type, npc);
+        List<String> allowedBcc = filterAddressList(origBcc, type, npc);
 
-        boolean toOk = origTo != null && wantsRecipient(origTo, type, npc);
-        String newTo;
-        List<String> newCc = new ArrayList<>(allowedCc);
-        if (toOk) {
-            newTo = origTo.trim();
-            String toLower = newTo.toLowerCase();
-            newCc.removeIf(x -> x.equalsIgnoreCase(toLower));
-        } else if (!newCc.isEmpty()) {
-            newTo = newCc.remove(0);
-        } else {
+        LinkedHashSet<String> dedupTo = new LinkedHashSet<>(allowedTo);
+        if (dedupTo.isEmpty() && !allowedCc.isEmpty()) {
+            dedupTo.add(allowedCc.get(0));
+        }
+        if (dedupTo.isEmpty() && !allowedBcc.isEmpty()) {
+            dedupTo.add(allowedBcc.get(0));
+        }
+        if (dedupTo.isEmpty()) {
             return null;
         }
+        List<String> finalTo = new ArrayList<>(dedupTo);
+        String newTo = finalTo.get(0);
 
-        List<String> newBcc = filterAddressList(
-                msg.getBcc() == null ? List.of() : msg.getBcc(), type, npc);
+        String primaryToLower = newTo.toLowerCase(Locale.ROOT);
+        List<String> newCc = allowedCc.stream()
+                .filter(Objects::nonNull)
+                .map(s -> s.trim().toLowerCase(Locale.ROOT))
+                .filter(s -> !s.equals(primaryToLower) && !dedupTo.contains(s))
+                .distinct()
+                .collect(java.util.stream.Collectors.toList());
+
+        List<String> newBcc = allowedBcc.stream()
+                .filter(Objects::nonNull)
+                .map(s -> s.trim().toLowerCase(Locale.ROOT))
+                .filter(s -> !s.equals(primaryToLower) && !dedupTo.contains(s) && !newCc.contains(s))
+                .distinct()
+                .collect(java.util.stream.Collectors.toList());
 
         return msg.toBuilder()
                 .to(newTo)
+                .toList(finalTo.size() > 1 ? finalTo : null)
                 .cc(newCc.isEmpty() ? null : newCc)
                 .bcc(newBcc.isEmpty() ? null : newBcc)
                 .build();
@@ -233,24 +256,9 @@ public class EmailServiceImpl implements EmailService {
 
     @Override
     public String sendTicketCreatedEmail(Ticket ticket) {
-        List<String> ccList = new ArrayList<>(buildCcList(ticket));
-        String primaryTo = devopsEmail;
-        if (ticket.getWorkflowEmailTo() != null && !ticket.getWorkflowEmailTo().isEmpty()) {
-            primaryTo = ticket.getWorkflowEmailTo().get(0).trim();
-            for (int i = 1; i < ticket.getWorkflowEmailTo().size(); i++) {
-                String extra = ticket.getWorkflowEmailTo().get(i);
-                if (extra != null && !extra.isBlank()) {
-                    ccList.add(extra.trim().toLowerCase());
-                }
-            }
-        }
-        if (ticket.getWorkflowEmailCc() != null) {
-            for (String c : ticket.getWorkflowEmailCc()) {
-                if (c != null && !c.isBlank()) {
-                    ccList.add(c.trim().toLowerCase());
-                }
-            }
-        }
+        List<String> toList = resolveThreadToList(ticket);
+        String primaryTo = toList.get(0);
+        List<String> ccList = buildThreadCcList(ticket, toList);
         List<String> bccList = new ArrayList<>();
         if (ticket.getWorkflowEmailBcc() != null) {
             for (String b : ticket.getWorkflowEmailBcc()) {
@@ -265,6 +273,7 @@ public class EmailServiceImpl implements EmailService {
 
         EmailMessage message = EmailMessage.builder()
                 .to(primaryTo)
+                .toList(toList.size() > 1 ? toList : null)
                 .cc(ccList.isEmpty() ? null : ccList)
                 .bcc(bccList.isEmpty() ? null : bccList)
                 .subject(buildSubject(ticket, "New Request Created"))
@@ -289,10 +298,13 @@ public class EmailServiceImpl implements EmailService {
 
         // For approval-pending stages, notify only the requester (no CC).
         // CC members are notified after the approval decision via sendManagerApprovalResponseEmail.
-        List<String> ccForStatus = pendingApproval ? null : buildCcList(ticket);
+        List<String> toList = resolveThreadToList(ticket);
+        String primaryTo = toList.get(0);
+        List<String> ccForStatus = pendingApproval ? null : buildThreadCcList(ticket, toList);
 
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
-                .to(ticket.getRequesterEmail())
+                .to(primaryTo)
+                .toList(toList.size() > 1 ? toList : null)
                 .cc(ccForStatus)
                 .subject(buildSubject(ticket, "Status Update: " + formatStatus(ticket.getStatus())))
                 .htmlBody(buildProfessionalEmailBody(ticket, EmailAction.STATUS_CHANGED, statusMessage))
@@ -307,9 +319,12 @@ public class EmailServiceImpl implements EmailService {
 
     @Override
     public void sendTicketCompletedEmail(Ticket ticket) {
+        List<String> toList = resolveThreadToList(ticket);
+        String primaryTo = toList.get(0);
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
-                .to(ticket.getRequesterEmail())
-                .cc(buildCcList(ticket))
+                .to(primaryTo)
+                .toList(toList.size() > 1 ? toList : null)
+                .cc(buildThreadCcList(ticket, toList))
                 .subject(buildSubject(ticket, "✓ Request Completed"))
                 .htmlBody(buildProfessionalEmailBody(ticket, EmailAction.COMPLETED, 
                         "Great news! Your DevOps request has been completed successfully."))
@@ -324,9 +339,12 @@ public class EmailServiceImpl implements EmailService {
 
     @Override
     public void sendTicketClosedEmail(Ticket ticket) {
+        List<String> toList = resolveThreadToList(ticket);
+        String primaryTo = toList.get(0);
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
-                .to(ticket.getRequesterEmail())
-                .cc(buildCcList(ticket))
+                .to(primaryTo)
+                .toList(toList.size() > 1 ? toList : null)
+                .cc(buildThreadCcList(ticket, toList))
                 .subject(buildSubject(ticket, "Closed"))
                 .htmlBody(buildProfessionalEmailBody(ticket, EmailAction.CLOSED, 
                         "This request has been closed. If you need further assistance, please create a new request."))
@@ -344,9 +362,11 @@ public class EmailServiceImpl implements EmailService {
      */
     public void sendTicketAssignedEmail(Ticket ticket, String assignedBy) {
         // Email to assigned engineer
+        List<String> toList = resolveThreadToList(ticket);
+        String primaryTo = toList.get(0);
         EmailMessage.EmailMessageBuilder engineerBuilder = EmailMessage.builder()
                 .to(ticket.getAssignedToEmail())
-                .cc(buildCcList(ticket))
+                .cc(buildThreadCcList(ticket, List.of(ticket.getAssignedToEmail())))
                 .subject(buildSubject(ticket, "Assigned to You"))
                 .htmlBody(buildProfessionalEmailBody(ticket, EmailAction.ASSIGNED, 
                         "This request has been assigned to you by " + assignedBy + ". Please review and take action."))
@@ -359,7 +379,9 @@ public class EmailServiceImpl implements EmailService {
 
         // Notification to requester
         EmailMessage.EmailMessageBuilder requesterBuilder = EmailMessage.builder()
-                .to(ticket.getRequesterEmail())
+                .to(primaryTo)
+                .toList(toList.size() > 1 ? toList : null)
+                .cc(buildThreadCcList(ticket, toList))
                 .subject(buildSubject(ticket, "Assigned to " + ticket.getAssignedTo()))
                 .htmlBody(buildProfessionalEmailBody(ticket, EmailAction.ASSIGNED_NOTIFY, 
                         "Your request has been assigned to " + ticket.getAssignedTo() + " and is now being processed."))
@@ -375,9 +397,12 @@ public class EmailServiceImpl implements EmailService {
      * Send email when note is added
      */
     public void sendNoteAddedEmail(Ticket ticket, String noteAuthor, String noteContent) {
+        List<String> toList = resolveThreadToList(ticket);
+        String primaryTo = toList.get(0);
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
-                .to(ticket.getRequesterEmail())
-                .cc(buildCcList(ticket))
+                .to(primaryTo)
+                .toList(toList.size() > 1 ? toList : null)
+                .cc(buildThreadCcList(ticket, toList))
                 .subject(buildSubject(ticket, "New Comment Added"))
                 .htmlBody(buildNoteAddedEmailBody(ticket, noteAuthor, noteContent))
                 .type(EmailMessage.EmailType.TICKET_NOTE_ADDED)
@@ -401,14 +426,17 @@ public class EmailServiceImpl implements EmailService {
         String approvalUrl = frontendUrl + "/manager-approval?token=" + approvalToken;
         
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
-                .to(ticket.getManagerEmail())
+                .to(ticket.getManagerEmail().trim())
+                .toList(null)
+                .cc(null)
+                .bcc(null)
                 .subject(buildSubject(ticket, "🔔 Approval Required"))
                 .htmlBody(buildManagerApprovalEmailBody(ticket, approvalUrl, requesterContextNote))
                 .type(EmailMessage.EmailType.MANAGER_APPROVAL_REQUEST)
                 .ticketId(ticket.getId())
                 .requesterEmail(ticket.getRequesterEmail())
                 .messageId(generateMessageId(ticket.getId()));
-        // Standalone message to configured approver only (not part of ticket Reply-All thread)
+        // Exactly one recipient: designated approver only (no CC/BCC/thread recipients)
         queueTicketEmail(builder.build(), ticket);
         
         log.info("Manager approval email queued for ticket {} to {}", ticket.getId(), ticket.getManagerEmail());
@@ -424,9 +452,12 @@ public class EmailServiceImpl implements EmailService {
                 : "The manager has approved this request. It will now proceed to the next stage.")
             : "The manager has rejected this request." + (note != null && !note.isEmpty() ? " Reason: " + note : "");
         
+        List<String> toList = resolveThreadToList(ticket);
+        String primaryTo = toList.get(0);
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
-                .to(ticket.getRequesterEmail())
-                .cc(buildCcList(ticket))
+                .to(primaryTo)
+                .toList(toList.size() > 1 ? toList : null)
+                .cc(buildThreadCcList(ticket, toList))
                 .subject(buildSubject(ticket, action))
                 .htmlBody(buildProfessionalEmailBody(ticket, 
                         approved ? EmailAction.MANAGER_APPROVED : EmailAction.MANAGER_REJECTED, message))
@@ -442,7 +473,29 @@ public class EmailServiceImpl implements EmailService {
     }
 
     /**
-     * Build manager approval email with Approve/Reject buttons
+     * Link that opens the approval page in a new browser tab (email clients that support target).
+     */
+    private String approverActionLink(String href, String linkText) {
+        return "<a href=\"" + href + "\" target=\"_blank\" rel=\"noopener noreferrer\" style=\"color:#1d4ed8;font-weight:600;text-decoration:underline\">"
+                + escapeHtml(linkText) + "</a>";
+    }
+
+    /**
+     * “Purpose:” on its own line, value on the following line(s) — for approver emails only.
+     */
+    private String buildApproverPurposeHtml(Ticket ticket) {
+        String p = ticket.getPurpose();
+        if (p == null || p.isBlank()) {
+            return "";
+        }
+        String text = escapeHtml(p.trim());
+        return "<p style='margin:0 0 4px 0;font-weight:600;color:#0f172a;font-size:14px'>Purpose:</p>"
+                + "<p style='margin:0 0 16px 0;color:#334155;font-size:14px;line-height:1.55;white-space:pre-wrap'>"
+                + text + "</p>";
+    }
+
+    /**
+     * Build manager approval email: summary + one link to the secure page (approve/decline chosen there).
      */
     private String buildManagerApprovalEmailBody(Ticket ticket, String approvalUrl, String requesterContextNote) {
         String managerName = ticket.getManagerName() != null && !ticket.getManagerName().isBlank()
@@ -450,31 +503,25 @@ public class EmailServiceImpl implements EmailService {
                 : "Approver";
         String approvalNotePlain = toPlainTextForEmail(requesterContextNote);
 
-        String approveLink = approvalUrl + "&action=approve";
-        String rejectLink = approvalUrl + "&action=reject";
-
         StringBuilder body = new StringBuilder();
-        body.append("<p>Dear ").append(escapeHtml(managerName)).append(",</p>");
-        body.append("<p>Please review the request below and choose <strong>Approve</strong> or <strong>Reject</strong>.</p>");
+        body.append("<p style='margin:0 0 12px 0'>Dear ").append(escapeHtml(managerName)).append(",</p>");
+        body.append("<p style='margin:0 0 14px 0;color:#334155'>")
+                .append("A DevOps request needs your decision. Summary below — then open the secure page with the link to choose approve or decline.</p>");
+        body.append(buildApproverPurposeHtml(ticket));
         body.append(buildSimpleTicketKvpTable(ticket));
         if (!approvalNotePlain.isEmpty()) {
-            body.append("<p><strong>Approval request note</strong></p>");
-            body.append("<pre style='margin:0 0 14px 0;font-family:inherit;font-size:14px;white-space:pre-wrap'>")
+            body.append("<p style='margin:14px 0 6px 0'><strong>Requester note</strong></p>");
+            body.append("<pre style='margin:0 0 14px 0;font-family:inherit;font-size:14px;white-space:pre-wrap;color:#334155'>")
                     .append(escapeHtml(approvalNotePlain))
                     .append("</pre>");
         }
 
-        body.append("<p style='margin-top:16px'>")
-                .append("<a href='").append(approveLink).append("'>Approve</a>")
-                .append(" | ")
-                .append("<a href='").append(rejectLink).append("'>Reject</a>")
+        body.append("<p style='margin:18px 0 0;color:#0f172a;line-height:1.6'>")
+                .append("To open the review page and submit your decision, ").append(approverActionLink(approvalUrl, "click here"))
+                .append(". On that page you can approve or decline and add an optional note.")
                 .append("</p>");
 
-        body.append("<p style='color:#555;font-size:12px'>")
-                .append("You may be asked to add a note before confirming your decision.")
-                .append("</p>");
-
-        return wrapAsSimpleEmail("Approval required", body.toString(), ticket.getId());
+        return wrapAsApproverRequestEmail(body.toString(), ticket.getId());
     }
 
     @Override
@@ -497,14 +544,17 @@ public class EmailServiceImpl implements EmailService {
         String approvalUrl = frontendUrl + "/manager-approval?token=" + approvalToken;
         
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
-                .to(ticket.getManagerEmail())
+                .to(ticket.getManagerEmail().trim())
+                .toList(null)
+                .cc(null)
+                .bcc(null)
                 .subject(buildSubject(ticket, "💰 Cost Approval Required"))
                 .htmlBody(buildCostApprovalEmailBody(ticket, approvalUrl))
                 .type(EmailMessage.EmailType.COST_APPROVAL_REQUEST)
                 .ticketId(ticket.getId())
                 .requesterEmail(ticket.getRequesterEmail())
                 .messageId(generateMessageId(ticket.getId()));
-        // Standalone cost approval request (thread continues on status / response emails)
+        // Exactly one recipient: designated cost approver only
         queueTicketEmail(builder.build(), ticket);
         
         log.info("Cost approval email queued for ticket {} to {}", ticket.getId(), ticket.getManagerEmail());
@@ -517,9 +567,12 @@ public class EmailServiceImpl implements EmailService {
             ? "The manager has approved the cost estimation. Work can now begin."
             : "The manager has rejected the cost estimation." + (note != null && !note.isEmpty() ? " Reason: " + note : "");
         
+        List<String> toList = resolveThreadToList(ticket);
+        String primaryTo = toList.get(0);
         EmailMessage.EmailMessageBuilder builder = EmailMessage.builder()
-                .to(ticket.getRequesterEmail())
-                .cc(buildCcListWithDevOps(ticket))
+                .to(primaryTo)
+                .toList(toList.size() > 1 ? toList : null)
+                .cc(buildThreadCcList(ticket, toList))
                 .subject(buildSubject(ticket, action))
                 .htmlBody(buildProfessionalEmailBody(ticket, 
                         approved ? EmailAction.COST_APPROVED : EmailAction.COST_REJECTED, message))
@@ -535,7 +588,7 @@ public class EmailServiceImpl implements EmailService {
     }
 
     /**
-     * Build cost approval email with Approve/Reject buttons
+     * Build cost approval email: estimate + one link to the secure page (approve/decline chosen there).
      */
     private String buildCostApprovalEmailBody(Ticket ticket, String approvalUrl) {
         String managerName = ticket.getManagerName() != null && !ticket.getManagerName().isBlank()
@@ -544,33 +597,27 @@ public class EmailServiceImpl implements EmailService {
         String currency = ticket.getCostCurrency() != null ? ticket.getCostCurrency() : "USD";
         String amount = ticket.getEstimatedCost() != null ? String.format("%,.2f", ticket.getEstimatedCost()) : "0.00";
 
-        String approveLink = approvalUrl + "&action=approve";
-        String rejectLink = approvalUrl + "&action=reject";
-
         StringBuilder body = new StringBuilder();
-        body.append("<p>Dear ").append(escapeHtml(managerName)).append(",</p>");
-        body.append("<p>Please review the cost estimate below and choose <strong>Approve</strong> or <strong>Reject</strong>.</p>");
+        body.append("<p style='margin:0 0 12px 0'>Dear ").append(escapeHtml(managerName)).append(",</p>");
+        body.append("<p style='margin:0 0 12px 0;color:#334155'>Please review the cost estimate below, then open the secure page to approve or decline.</p>");
 
-        body.append("<p><strong>Cost estimate</strong>: ")
+        body.append(buildApproverPurposeHtml(ticket));
+
+        body.append("<p style='margin:0 0 12px 0'><strong>Cost estimate</strong>: ")
                 .append(escapeHtml(currency)).append(" ").append(escapeHtml(amount))
                 .append("</p>");
         if (ticket.getCostSubmittedBy() != null && !ticket.getCostSubmittedBy().isBlank()) {
-            body.append("<p><strong>Submitted by</strong>: ").append(escapeHtml(ticket.getCostSubmittedBy())).append("</p>");
+            body.append("<p style='margin:0 0 12px 0'><strong>Submitted by</strong>: ").append(escapeHtml(ticket.getCostSubmittedBy())).append("</p>");
         }
 
         body.append(buildSimpleTicketKvpTable(ticket));
 
-        body.append("<p style='margin-top:16px'>")
-                .append("<a href='").append(approveLink).append("'>Approve cost</a>")
-                .append(" | ")
-                .append("<a href='").append(rejectLink).append("'>Reject cost</a>")
+        body.append("<p style='margin:18px 0 0;color:#0f172a;line-height:1.6'>")
+                .append("To open the review page and submit your decision, ").append(approverActionLink(approvalUrl, "click here"))
+                .append(". On that page you can approve or decline and add an optional note.")
                 .append("</p>");
 
-        body.append("<p style='color:#555;font-size:12px'>")
-                .append("You may be asked to add a note before confirming your decision.")
-                .append("</p>");
-
-        return wrapAsSimpleEmail("Cost approval required", body.toString(), ticket.getId());
+        return wrapAsApproverRequestEmail(body.toString(), ticket.getId());
     }
 
     /**
@@ -704,6 +751,31 @@ public class EmailServiceImpl implements EmailService {
                 innerHtml +
                 "<hr style='border:none;border-top:1px solid #e0e0e0;margin:12px 0'/>" +
                 "<p style='margin:0;color:#666;font-size:12px'>This is an automated email. Please do not reply.</p>" +
+                "</div></body></html>";
+    }
+
+    /**
+     * Minimal HTML wrapper for approver-only messages (no heavy “signature” blocks).
+     */
+    private String wrapAsApproverRequestEmail(String innerHtml, String ticketId) {
+        String safeTicket = escapeHtml(ticketId != null ? ticketId : "");
+        return "<!DOCTYPE html><html lang='en'><head><meta charset='UTF-8'>" +
+                "<meta name='viewport' content='width=device-width, initial-scale=1.0'>" +
+                "<title>Action required</title>" +
+                getEmailStyles() +
+                "</head><body style='background:#f8fafc'>" +
+                "<div style='max-width:560px;margin:0 auto;padding:20px 16px 28px'>" +
+                "<div style='background:#fff;border-radius:12px;padding:20px 20px 22px;" +
+                "border:1px solid #e2e8f0;box-shadow:0 1px 3px rgba(15,23,42,0.06)'>" +
+                "<p style='margin:0 0 16px 0;font-size:13px;font-weight:600;color:#64748b;letter-spacing:0.02em'>"
+                + "DEVOPS PORTAL · APPROVAL" + "</p>" +
+                (safeTicket.isEmpty() ? "" : "<p style='margin:0 0 16px 0;font-size:12px;color:#64748b'>Reference: <strong style='color:#0f172a'>"
+                + safeTicket + "</strong></p>") +
+                innerHtml +
+                "</div>" +
+                "<p style='margin:16px 0 0 0;font-size:11px;color:#94a3b8;line-height:1.45;text-align:center'>" +
+                "Sent only to the designated approver for this ticket. Links are personal; do not forward." +
+                "</p>" +
                 "</div></body></html>";
     }
 
@@ -1111,6 +1183,68 @@ public class EmailServiceImpl implements EmailService {
         }
         
         return cc;
+    }
+
+    private static List<String> parseEmailList(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return List.of();
+        }
+        List<String> out = new ArrayList<>();
+        for (String part : raw.split("[,;]")) {
+            if (part == null) {
+                continue;
+            }
+            String e = part.trim().toLowerCase(Locale.ROOT);
+            if (!e.isBlank() && e.contains("@") && !out.contains(e)) {
+                out.add(e);
+            }
+        }
+        return out;
+    }
+
+    private List<String> resolveThreadToList(Ticket ticket) {
+        LinkedHashSet<String> to = new LinkedHashSet<>();
+        if (ticket.getWorkflowEmailTo() != null) {
+            for (String t : ticket.getWorkflowEmailTo()) {
+                if (t != null && !t.isBlank()) {
+                    to.add(t.trim().toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        if (to.isEmpty() && ticket.getRequesterEmail() != null && !ticket.getRequesterEmail().isBlank()) {
+            to.add(ticket.getRequesterEmail().trim().toLowerCase(Locale.ROOT));
+        }
+        if (to.isEmpty() && devopsEmail != null && !devopsEmail.isBlank()) {
+            to.add(devopsEmail.trim().toLowerCase(Locale.ROOT));
+        }
+        return new ArrayList<>(to);
+    }
+
+    private List<String> buildThreadCcList(Ticket ticket, List<String> toList) {
+        LinkedHashSet<String> cc = new LinkedHashSet<>();
+        if (ticket.getCcEmail() != null && !ticket.getCcEmail().isBlank()) {
+            for (String c : parseEmailList(ticket.getCcEmail())) {
+                cc.add(c);
+            }
+        }
+        if (ticket.getWorkflowEmailCc() != null) {
+            for (String c : ticket.getWorkflowEmailCc()) {
+                if (c != null && !c.isBlank()) {
+                    cc.add(c.trim().toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        if (ticket.getRequesterEmail() != null && !ticket.getRequesterEmail().isBlank()) {
+            cc.add(ticket.getRequesterEmail().trim().toLowerCase(Locale.ROOT));
+        }
+        if (toList != null) {
+            for (String to : toList) {
+                if (to != null && !to.isBlank()) {
+                    cc.remove(to.trim().toLowerCase(Locale.ROOT));
+                }
+            }
+        }
+        return new ArrayList<>(cc);
     }
 
     private String getActionTitle(EmailAction action) {

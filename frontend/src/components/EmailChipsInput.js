@@ -33,6 +33,8 @@ export default function EmailChipsInput({
   mode = "string", // "string" | "array"
   className = "",
   lockedEmails = [], // emails shown as mandatory/locked — cannot be removed by user
+  /** When true, the text box stays visible but users cannot type, paste, or add addresses (workflow-controlled To). */
+  inputLocked = false,
 }) {
   const [inputValue, setInputValue] = useState("");
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -79,6 +81,13 @@ export default function EmailChipsInput({
   );
 
   const handleKeyDown = (e) => {
+    if (inputLocked) {
+      if (e.key === "Backspace" && !inputValue && emails.length > 0) {
+        e.preventDefault();
+        removeEmail(emails.length - 1);
+      }
+      return;
+    }
     if (e.key === "Enter" || e.key === "Tab" || e.key === "," || e.key === ";" || e.key === " ") {
       if (!inputValue) return;
       e.preventDefault();
@@ -92,6 +101,10 @@ export default function EmailChipsInput({
   };
 
   const handlePaste = (e) => {
+    if (inputLocked) {
+      e.preventDefault();
+      return;
+    }
     const pasted = e.clipboardData?.getData("text") || "";
     const pastedEmails = splitEmails(pasted).filter(isEmailLike).map(defaultNormalize);
     if (!pastedEmails.length) return;
@@ -111,19 +124,29 @@ export default function EmailChipsInput({
       .slice(0, 6);
   }, [savedEmails, inputValue, emails]);
 
+  const lockTitle =
+    "Recipients are set by your workflow. You can’t add To addresses here — use CC to include others.";
+
   return (
-    <div className={`cc-email-input-container ${className}`.trim()}>
-      <div className="cc-email-chips">
+    <div
+      className={`cc-email-input-container ${inputLocked ? "cc-email-input-no-add" : ""} ${className}`.trim()}
+      title={inputLocked ? lockTitle : undefined}
+    >
+      <div className={`cc-email-chips ${inputLocked ? "cc-email-chips-no-add" : ""}`}>
         {/* Locked / mandatory chips — shown first, cannot be removed */}
         {lockedNormalized.map((email) => (
-          <span key={`locked-${email}`} className="cc-email-chip cc-email-chip-locked" title="Mandatory — set by admin, cannot be removed">
-            <Lock size={10} />
-            {email}
+          <span
+            key={`locked-${email}`}
+            className="cc-email-chip cc-email-chip-locked"
+            title={email}
+          >
+            <Lock size={10} className="cc-email-chip-lock-icon" aria-hidden />
+            <span className="cc-email-chip-label">{email}</span>
           </span>
         ))}
         {emails.map((email, index) => (
-          <span key={email} className="cc-email-chip">
-            {email}
+          <span key={email} className="cc-email-chip" title={email}>
+            <span className="cc-email-chip-label">{email}</span>
             <button type="button" onClick={() => removeEmail(index)} className="chip-remove" aria-label={`Remove ${email}`}>
               <X size={12} />
             </button>
@@ -131,21 +154,41 @@ export default function EmailChipsInput({
         ))}
         <input
           type="text"
-          value={inputValue}
+          value={inputLocked ? "" : inputValue}
+          readOnly={inputLocked}
           onChange={(e) => {
+            if (inputLocked) return;
             setInputValue(e.target.value);
             setShowSuggestions(e.target.value.trim().length > 0);
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          onFocus={() => setShowSuggestions(inputValue.trim().length > 0)}
+          onFocus={() => {
+            if (inputLocked) return;
+            setShowSuggestions(inputValue.trim().length > 0);
+          }}
           onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-          placeholder={emails.length === 0 ? placeholder : "Add more…"}
+          placeholder={
+            inputLocked
+              ? lockedNormalized.length + emails.length === 0
+                ? "Set by workflow — select product & request type"
+                : ""
+              : emails.length === 0
+                ? placeholder
+                : "Add more…"
+          }
           className="cc-email-text-input"
+          aria-readonly={inputLocked || undefined}
+          tabIndex={inputLocked ? -1 : 0}
         />
+        {inputLocked && (
+          <span className="cc-email-field-lock-badge" aria-hidden title={lockTitle}>
+            <Lock size={15} strokeWidth={2} />
+          </span>
+        )}
       </div>
 
-      {showSuggestions && filteredSuggestions.length > 0 && (
+      {showSuggestions && !inputLocked && filteredSuggestions.length > 0 && (
         <div className="cc-email-suggestions">
           {filteredSuggestions.map((email) => (
             <button

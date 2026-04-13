@@ -31,9 +31,18 @@ const ManagerApprovalPage = () => {
     const [submitting, setSubmitting] = useState(false);
     const [tokenInfo, setTokenInfo] = useState(null);
     const [note, setNote] = useState('');
-    const [selectedAction, setSelectedAction] = useState(preSelectedAction || null);
+    const [selectedAction, setSelectedAction] = useState(
+        preSelectedAction === 'approve' || preSelectedAction === 'reject' ? preSelectedAction : null
+    );
     const [result, setResult] = useState(null);
     const [error, setError] = useState(null);
+
+    useEffect(() => {
+        const a = searchParams.get('action');
+        if (a === 'approve' || a === 'reject') {
+            setSelectedAction(a);
+        }
+    }, [searchParams]);
 
     useEffect(() => {
         if (!token) {
@@ -211,32 +220,64 @@ const ManagerApprovalPage = () => {
     }
 
     const isCostApproval = tokenInfo?.tokenType === 'COST_APPROVAL';
-    const titleText = isCostApproval ? 'Cost Approval Required' : 'Manager Approval Required';
+    const titleText = isCostApproval ? 'Cost approval' : 'Request approval';
     const subtitleText = isCostApproval
-        ? `Hi ${tokenInfo.managerName}, please review the cost estimation and approve or reject.`
-        : `Hi ${tokenInfo.managerName}, please review and approve or reject this request.`;
+        ? `Review the estimate below, then confirm your decision.`
+        : `Review the request below, then confirm your decision.`;
+    const intentFromLink =
+        preSelectedAction === 'approve' || preSelectedAction === 'reject' ? preSelectedAction : null;
 
     // Main approval form
     return (
-        <div style={styles.container}>
+        <div style={styles.container} className="manager-approval-page">
             <div style={styles.card}>
-                {/* Header */}
-                <div style={styles.header}>
-                    <div style={styles.headerLogo}>
-                        <Shield size={24} color="#fff" />
+                <div style={styles.cardAccent} aria-hidden />
+                <div style={styles.headerMinimal}>
+                    <div style={styles.headerIconWrap}>
+                        <Shield size={22} color="#0f172a" strokeWidth={1.75} />
                     </div>
-                    <div>
-                        <h1 style={styles.headerTitle}>{titleText}</h1>
-                        <p style={styles.headerSubtitle}>{subtitleText}</p>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={styles.kicker}>Secure approver page</p>
+                        <h1 style={styles.headerTitleMinimal}>{titleText}</h1>
+                        <p style={styles.headerSubtitleMinimal}>{subtitleText}</p>
+                        {tokenInfo.managerName && (
+                            <p style={styles.headerGreeting}>Approver: {tokenInfo.managerName}</p>
+                        )}
                     </div>
                 </div>
 
-                {/* Ticket Info */}
                 <div style={styles.body}>
+                    {intentFromLink && selectedAction === intentFromLink && (
+                        <div
+                            style={{
+                                ...styles.intentBanner,
+                                ...(intentFromLink === 'approve' ? styles.intentBannerApprove : styles.intentBannerReject)
+                            }}
+                        >
+                            <p style={styles.intentBannerTitle}>
+                                {intentFromLink === 'approve'
+                                    ? 'You opened the approval link'
+                                    : 'You opened the decline link'}
+                            </p>
+                            <p style={styles.intentBannerText}>
+                                {intentFromLink === 'approve'
+                                    ? 'Confirm below to approve this request, or switch to decline if that fits better.'
+                                    : 'Confirm below to decline, or switch to approve if you change your mind.'}
+                            </p>
+                        </div>
+                    )}
+
                     <div style={styles.section}>
                         <h2 style={styles.sectionTitle}>
-                            <FileText size={18} /> Request Details
+                            <FileText size={18} /> Request details
                         </h2>
+
+                        {tokenInfo.purpose?.trim() ? (
+                            <div style={styles.purposeBox}>
+                                <p style={styles.purposeLabel}>Purpose:</p>
+                                <p style={styles.purposeText}>{tokenInfo.purpose.trim()}</p>
+                            </div>
+                        ) : null}
                         
                         <div style={styles.infoGrid}>
                             <div style={styles.infoItem}>
@@ -279,7 +320,6 @@ const ManagerApprovalPage = () => {
                         )}
                     </div>
 
-                    {/* Requester Info */}
                     <div style={styles.section}>
                         <h2 style={styles.sectionTitle}>
                             <User size={18} /> Requester
@@ -297,32 +337,56 @@ const ManagerApprovalPage = () => {
                         </div>
                     </div>
 
-                    {/* Action Selection */}
                     <div style={styles.section}>
-                        <h2 style={styles.sectionTitle}>Your Decision</h2>
-                        
-                        <div style={styles.actionButtons}>
+                        <h2 style={styles.sectionTitle}>Decision</h2>
+                        <p style={styles.decisionHint}>
+                            Choose one outcome. You can change your selection before submitting.
+                        </p>
+
+                        <div style={styles.actionRow}>
                             <button
+                                type="button"
                                 style={{
-                                    ...styles.actionButton,
-                                    ...(selectedAction === 'approve' ? styles.approveButtonSelected : styles.approveButton)
+                                    ...styles.choicePill,
+                                    ...(selectedAction === 'approve' ? styles.choicePillApproveOn : styles.choicePillApproveOff)
                                 }}
                                 onClick={() => setSelectedAction('approve')}
                             >
-                                <CheckCircle size={24} />
-                                <span>Approve</span>
+                                <CheckCircle size={18} />
+                                Approve
                             </button>
                             <button
+                                type="button"
                                 style={{
-                                    ...styles.actionButton,
-                                    ...(selectedAction === 'reject' ? styles.rejectButtonSelected : styles.rejectButton)
+                                    ...styles.choicePill,
+                                    ...(selectedAction === 'reject' ? styles.choicePillRejectOn : styles.choicePillRejectOff)
                                 }}
                                 onClick={() => setSelectedAction('reject')}
                             >
-                                <XCircle size={24} />
-                                <span>Reject</span>
+                                <XCircle size={18} />
+                                Decline
                             </button>
                         </div>
+
+                        {selectedAction && (
+                            <p style={styles.switchHint}>
+                                {selectedAction === 'approve' ? (
+                                    <>
+                                        Prefer to decline?{' '}
+                                        <button type="button" style={styles.inlineLink} onClick={() => setSelectedAction('reject')}>
+                                            Switch to decline
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        Prefer to approve?{' '}
+                                        <button type="button" style={styles.inlineLink} onClick={() => setSelectedAction('approve')}>
+                                            Switch to approve
+                                        </button>
+                                    </>
+                                )}
+                            </p>
+                        )}
 
                         {/* Note field */}
                         <div style={{ marginTop: 24 }}>
@@ -373,10 +437,8 @@ const ManagerApprovalPage = () => {
                     </div>
                 </div>
 
-                {/* Footer */}
                 <div style={styles.footer}>
-                    <p>DevOps Portal • Secure Manager Approval</p>
-                    <p style={{ marginTop: 4 }}>This link is unique to you and will expire after use.</p>
+                    <p>Personal approval link — do not forward. Single use after a successful submit.</p>
                 </div>
             </div>
             <style>{spinKeyframes}</style>
@@ -394,7 +456,7 @@ const spinKeyframes = `
 const styles = {
     container: {
         minHeight: '100vh',
-        background: '#f0f4f8',
+        background: 'linear-gradient(160deg, var(--surface-muted, #f1f5f9) 0%, var(--border-color, #e2e8f0) 45%, var(--surface-subtle, #f8fafc) 100%)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -403,11 +465,17 @@ const styles = {
     },
     card: {
         width: '100%',
-        maxWidth: '600px',
-        background: '#ffffff',
-        borderRadius: '16px',
-        boxShadow: '0 4px 24px rgba(0, 0, 0, 0.1)',
-        overflow: 'hidden'
+        maxWidth: '560px',
+        background: 'var(--card-bg, #ffffff)',
+        borderRadius: '14px',
+        boxShadow: '0 12px 40px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.04)',
+        overflow: 'hidden',
+        position: 'relative'
+    },
+    cardAccent: {
+        height: '3px',
+        width: '100%',
+        background: 'linear-gradient(90deg, #0f172a 0%, #334155 50%, #64748b 100%)'
     },
     loadingContainer: {
         display: 'flex',
@@ -416,35 +484,79 @@ const styles = {
         justifyContent: 'center',
         padding: '60px 20px'
     },
-    header: {
-        background: '#0052CC',
-        padding: '32px 24px',
+    headerMinimal: {
+        padding: '22px 24px 8px',
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '14px'
+    },
+    headerIconWrap: {
+        width: '44px',
+        height: '44px',
+        borderRadius: '10px',
+        background: '#f1f5f9',
+        border: '1px solid #e2e8f0',
         display: 'flex',
         alignItems: 'center',
-        gap: '16px',
-        color: '#ffffff'
+        justifyContent: 'center',
+        flexShrink: 0
     },
-    headerLogo: {
-        width: '48px',
-        height: '48px',
-        background: 'rgba(255, 255, 255, 0.2)',
-        borderRadius: '12px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center'
-    },
-    headerTitle: {
+    kicker: {
         margin: 0,
-        fontSize: '1.5rem',
+        fontSize: '11px',
+        fontWeight: 600,
+        letterSpacing: '0.08em',
+        textTransform: 'uppercase',
+        color: '#64748b'
+    },
+    headerTitleMinimal: {
+        margin: '6px 0 0 0',
+        fontSize: '1.35rem',
+        fontWeight: 650,
+        color: '#0f172a',
+        letterSpacing: '-0.02em',
+        lineHeight: 1.25
+    },
+    headerSubtitleMinimal: {
+        margin: '8px 0 0 0',
+        fontSize: '0.9rem',
+        color: '#475569',
+        lineHeight: 1.5
+    },
+    headerGreeting: {
+        margin: '10px 0 0 0',
+        fontSize: '0.8125rem',
+        color: '#64748b'
+    },
+    intentBanner: {
+        padding: '14px 16px',
+        borderRadius: '10px',
+        marginBottom: '20px',
+        border: '1px solid'
+    },
+    intentBannerApprove: {
+        background: '#f0fdf4',
+        borderColor: '#bbf7d0',
+        color: '#14532d'
+    },
+    intentBannerReject: {
+        background: '#fef2f2',
+        borderColor: '#fecaca',
+        color: '#7f1d1d'
+    },
+    intentBannerTitle: {
+        margin: 0,
+        fontSize: '0.875rem',
         fontWeight: 600
     },
-    headerSubtitle: {
-        margin: '4px 0 0 0',
-        fontSize: '0.9rem',
-        opacity: 0.9
+    intentBannerText: {
+        margin: '6px 0 0 0',
+        fontSize: '0.8125rem',
+        lineHeight: 1.45,
+        opacity: 0.95
     },
     body: {
-        padding: '24px'
+        padding: '12px 24px 24px'
     },
     section: {
         marginBottom: '24px'
@@ -488,6 +600,29 @@ const styles = {
         fontFamily: 'monospace',
         fontWeight: 600,
         fontSize: '0.875rem'
+    },
+    purposeBox: {
+        marginBottom: '18px',
+        padding: '14px 16px',
+        background: '#f8fafc',
+        borderRadius: '10px',
+        border: '1px solid #e2e8f0'
+    },
+    purposeLabel: {
+        margin: 0,
+        fontSize: '11px',
+        fontWeight: 600,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: '#64748b',
+        marginBottom: '8px'
+    },
+    purposeText: {
+        margin: 0,
+        fontSize: '0.9375rem',
+        color: '#1e293b',
+        lineHeight: 1.55,
+        whiteSpace: 'pre-wrap'
     },
     descriptionBox: {
         marginTop: '16px',
@@ -542,43 +677,63 @@ const styles = {
         alignItems: 'center',
         gap: '6px'
     },
-    actionButtons: {
-        display: 'grid',
-        gridTemplateColumns: 'repeat(2, 1fr)',
-        gap: '16px'
+    decisionHint: {
+        margin: '0 0 12px 0',
+        fontSize: '0.8125rem',
+        color: '#64748b',
+        lineHeight: 1.45
     },
-    actionButton: {
+    actionRow: {
         display: 'flex',
-        flexDirection: 'column',
+        flexWrap: 'wrap',
+        gap: '10px'
+    },
+    choicePill: {
+        display: 'inline-flex',
         alignItems: 'center',
         gap: '8px',
-        padding: '20px',
-        border: '2px solid',
-        borderRadius: '12px',
-        cursor: 'pointer',
-        transition: 'all 0.2s ease',
+        padding: '10px 18px',
+        borderRadius: '999px',
+        fontSize: '0.875rem',
         fontWeight: 600,
-        fontSize: '1rem'
+        cursor: 'pointer',
+        border: '1px solid',
+        transition: 'background 0.15s ease, border-color 0.15s ease, color 0.15s ease'
     },
-    approveButton: {
-        background: '#ffffff',
-        borderColor: '#dcfce7',
-        color: '#166534'
+    choicePillApproveOff: {
+        background: '#fff',
+        borderColor: '#e2e8f0',
+        color: '#334155'
     },
-    approveButtonSelected: {
-        background: '#dcfce7',
-        borderColor: '#22c55e',
-        color: '#166534'
+    choicePillApproveOn: {
+        background: '#ecfdf5',
+        borderColor: '#34d399',
+        color: '#065f46'
     },
-    rejectButton: {
-        background: '#ffffff',
-        borderColor: '#fee2e2',
+    choicePillRejectOff: {
+        background: 'var(--card-bg, #fff)',
+        borderColor: 'var(--border-color, #e2e8f0)',
+        color: 'var(--text-sub, #334155)'
+    },
+    choicePillRejectOn: {
+        background: '#fef2f2',
+        borderColor: '#f87171',
         color: '#991b1b'
     },
-    rejectButtonSelected: {
-        background: '#fee2e2',
-        borderColor: '#ef4444',
-        color: '#991b1b'
+    switchHint: {
+        margin: '12px 0 0 0',
+        fontSize: '0.8125rem',
+        color: '#64748b'
+    },
+    inlineLink: {
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        font: 'inherit',
+        color: '#2563eb',
+        cursor: 'pointer',
+        textDecoration: 'underline',
+        textUnderlineOffset: '2px'
     },
     noteLabel: {
         display: 'block',
@@ -648,12 +803,11 @@ const styles = {
         color: '#475569'
     },
     footer: {
-        padding: '16px 24px',
-        background: '#f8fafc',
-        borderTop: '1px solid #e2e8f0',
+        padding: '14px 24px 20px',
         textAlign: 'center',
-        fontSize: '0.75rem',
-        color: '#94a3b8'
+        fontSize: '11px',
+        color: '#94a3b8',
+        lineHeight: 1.5
     }
 };
 

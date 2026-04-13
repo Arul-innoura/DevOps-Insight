@@ -2,7 +2,7 @@
 
 This is for **local/LAN** use where you want to open:
 
-- `https://opspilot.encipherhealth.com/` (NO `:3000`)
+- `https://shipit.encipherhealth.com/` (NO `:3000`)
 
 and avoid browser “Not secure” / strikethrough.
 
@@ -51,13 +51,13 @@ sudo nano /etc/hosts
 Add:
 
 ```text
-192.168.1.68 opspilot.encipherhealth.com
+192.168.1.68 shipit.encipherhealth.com
 ```
 
 Verify:
 
 ```bash
-getent hosts opspilot.encipherhealth.com
+getent hosts shipit.encipherhealth.com
 ```
 
 ---
@@ -81,7 +81,7 @@ mkcert -install
 sudo mkdir -p /etc/nginx/certs
 cd /etc/nginx/certs
 
-sudo mkcert -key-file opspilot.key -cert-file opspilot.crt opspilot.encipherhealth.com
+sudo mkcert -key-file shipit.key -cert-file shipit.crt shipit.encipherhealth.com
 ```
 
 ---
@@ -91,8 +91,8 @@ sudo mkcert -key-file opspilot.key -cert-file opspilot.crt opspilot.encipherheal
 Copy the repo config:
 
 ```bash
-sudo cp deploy/nginx-local-https.conf /etc/nginx/sites-available/opspilot.encipherhealth.com
-sudo ln -sf /etc/nginx/sites-available/opspilot.encipherhealth.com /etc/nginx/sites-enabled/opspilot.encipherhealth.com
+sudo cp deploy/nginx-local-https.conf /etc/nginx/sites-available/shipit.encipherhealth.com
+sudo ln -sf /etc/nginx/sites-available/shipit.encipherhealth.com /etc/nginx/sites-enabled/shipit.encipherhealth.com
 sudo nginx -t
 sudo systemctl restart nginx
 ```
@@ -107,7 +107,7 @@ sudo ufw allow 443/tcp
 Test from server:
 
 ```bash
-curl -Ik https://opspilot.encipherhealth.com/
+curl -Ik https://shipit.encipherhealth.com/
 ```
 
 ---
@@ -136,7 +136,7 @@ Then reopen Chrome.
 Azure Portal → App Registration → Authentication → **Single-page application**:
 
 Add:
-- `https://opspilot.encipherhealth.com`
+- `https://shipit.encipherhealth.com`
 
 Then login will work on your local domain over HTTPS.
 

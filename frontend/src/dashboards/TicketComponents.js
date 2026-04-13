@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { 
@@ -35,11 +36,17 @@ import {
     DollarSign,
     Loader2,
     Ban,
-    Forward
+    Forward,
+    Paperclip,
+    Image,
+    File,
+    Download,
+    ZoomIn,
+    Eye
 } from 'lucide-react';
 import { 
     TICKET_STATUS, 
-    STATUS_COLORS, 
+    getStatusColors,
     REQUEST_TYPES,
     REQUEST_TYPE_TO_API_ENUM,
     ENVIRONMENTS,
@@ -49,12 +56,73 @@ import {
     createTicket,
     updateTicketStatus,
     addTicketNote,
+    uploadNoteAttachments,
     getSavedCcEmails,
     saveCcEmail,
     toDisplayTicketStatus
 } from '../services/ticketService';
 import { getEffectiveWorkflow } from '../services/projectWorkflowService';
 import EmailChipsInput from "../components/EmailChipsInput";
+import { useTheme } from "../services/ThemeContext";
+
+/** Tint overlay for ticket type strip (works on light + dark card backgrounds). */
+function hexWithAlpha(hex, alpha) {
+    if (!hex || typeof hex !== "string" || hex[0] !== "#") return hex;
+    const core = hex.length >= 7 ? hex.slice(1, 7) : "";
+    if (!/^[0-9a-fA-F]{6}$/.test(core)) return hex;
+    const r = parseInt(core.slice(0, 2), 16);
+    const g = parseInt(core.slice(2, 4), 16);
+    const b = parseInt(core.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function runtimeBarToneForStatus(st, theme) {
+    const d = theme === "dark" || theme === "devops";
+    if (st === "CLOSED" || st === "REJECTED") {
+        return d ? { color: "#a3a3a3", bg: "rgba(255,255,255,0.08)", label: "Closed" } : { color: "#6b7280", bg: "#f9fafb", label: "Closed" };
+    }
+    if (st === "MANAGER_APPROVAL_PENDING") {
+        return d ? { color: "#fcd34d", bg: "rgba(245, 158, 11, 0.2)", label: "Pending Approval" } : { color: "#b45309", bg: "#fffbeb", label: "Pending Approval" };
+    }
+    if (st === "COST_APPROVAL_PENDING") {
+        return d ? { color: "#fdba74", bg: "rgba(249, 115, 22, 0.2)", label: "Cost Review" } : { color: "#c2410c", bg: "#fff7ed", label: "Cost Review" };
+    }
+    if (st === "MANAGER_APPROVED") {
+        return d ? { color: "#86efac", bg: "rgba(34, 197, 94, 0.18)", label: "Approved" } : { color: "#15803d", bg: "#f0fdf4", label: "Approved" };
+    }
+    if (st === "COST_APPROVED") {
+        return d ? { color: "#6ee7b7", bg: "rgba(16, 185, 129, 0.18)", label: "Cost Approved" } : { color: "#059669", bg: "#ecfdf5", label: "Cost Approved" };
+    }
+    if (st === "COMPLETED" || st === "IN_PROGRESS") {
+        return d ? { color: "#6ee7b7", bg: "rgba(34, 197, 94, 0.16)", label: "Processing" } : { color: "#059669", bg: "#ecfdf5", label: "Processing" };
+    }
+    if (st === "ACTION_REQUIRED" || st === "ON_HOLD") {
+        return d ? { color: "#fcd34d", bg: "rgba(245, 158, 11, 0.16)", label: "Waiting" } : { color: "#b45309", bg: "#fffbeb", label: "Waiting" };
+    }
+    return d ? { color: "#93c5fd", bg: "rgba(59, 130, 246, 0.18)", label: "Active" } : { color: "#1d4ed8", bg: "#eff6ff", label: "Active" };
+}
+
+function flowPillStyleForTone(tone, theme) {
+    const d = theme === "dark" || theme === "devops";
+    if (tone === "green") {
+        return d
+            ? { background: "rgba(34, 197, 94, 0.18)", color: "#86efac", border: "1px solid rgba(74, 222, 128, 0.32)" }
+            : { background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0" };
+    }
+    if (tone === "red") {
+        return d
+            ? { background: "rgba(239, 68, 68, 0.18)", color: "#fca5a5", border: "1px solid rgba(248, 113, 113, 0.35)" }
+            : { background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" };
+    }
+    if (tone === "amber") {
+        return d
+            ? { background: "rgba(245, 158, 11, 0.18)", color: "#fcd34d", border: "1px solid rgba(251, 191, 36, 0.35)" }
+            : { background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a" };
+    }
+    return d
+        ? { background: "rgba(59, 130, 246, 0.18)", color: "#93c5fd", border: "1px solid rgba(147, 197, 253, 0.35)" }
+        : { background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" };
+}
 
 // Status configuration with icons and simplified labels for dropdowns
 export const STATUS_DISPLAY_CONFIG = {
@@ -64,9 +132,9 @@ export const STATUS_DISPLAY_CONFIG = {
         shortLabel: 'New'
     },
     [TICKET_STATUS.ACCEPTED]: { 
-        icon: Rocket, 
-        label: 'Accepted',
-        shortLabel: 'Accepted'
+        icon: UserCheck, 
+        label: 'Assigned',
+        shortLabel: 'Assigned'
     },
     [TICKET_STATUS.MANAGER_APPROVAL_PENDING]: { 
         icon: Clock, 
@@ -168,7 +236,9 @@ function extractPurposeSnippet(notes) {
 
 // ============ ENHANCED STATUS BADGE COMPONENT ============
 export const StatusBadge = ({ status, size = 'medium', animated = true }) => {
-    const colors = STATUS_COLORS[status] || { bg: '#e5e7eb', text: '#4b5563' };
+    const { theme } = useTheme();
+    const palette = getStatusColors(theme);
+    const colors = palette[status] || { bg: "#e5e7eb", text: "#4b5563" };
     
     // Simplified display labels for cleaner UI
     const getDisplayLabel = () => {
@@ -176,7 +246,7 @@ export const StatusBadge = ({ status, size = 'medium', animated = true }) => {
             case TICKET_STATUS.CREATED:
                 return 'New';
             case TICKET_STATUS.ACCEPTED:
-                return 'Accepted';
+                return 'Assigned';
             case TICKET_STATUS.MANAGER_APPROVAL_PENDING:
                 return 'Pending Approval';
             case TICKET_STATUS.MANAGER_APPROVED:
@@ -208,7 +278,7 @@ export const StatusBadge = ({ status, size = 'medium', animated = true }) => {
             case TICKET_STATUS.CREATED:
                 return <Clock size={iconSize} />;
             case TICKET_STATUS.ACCEPTED:
-                return <FileCheck size={iconSize} />;
+                return <UserCheck size={iconSize} />;
             case TICKET_STATUS.MANAGER_APPROVAL_PENDING:
                 return <UserCheck size={iconSize} />;
             case TICKET_STATUS.MANAGER_APPROVED:
@@ -279,7 +349,7 @@ export const HorizontalProgress = ({ timeline = [], currentStatus, workflowStage
     // Simplified stage labels for cleaner display
     const staticStages = [
         { key: TICKET_STATUS.CREATED, label: 'Submitted' },
-        { key: TICKET_STATUS.ACCEPTED, label: 'Reviewed' },
+        { key: TICKET_STATUS.ACCEPTED, label: 'Assigned' },
         { key: TICKET_STATUS.MANAGER_APPROVAL_PENDING, label: 'Approval' },
         { key: TICKET_STATUS.MANAGER_APPROVED, label: 'Verified' },
         { key: TICKET_STATUS.COST_APPROVAL_PENDING, label: 'Cost Review' },
@@ -376,76 +446,291 @@ const maskCostText = (text) => {
         .replace(/(Cost estimation submitted:\s*)([A-Z]{3}\s*)?[\d,]+(?:\.\d+)?/gi, "$1***")
         .replace(/(Cost approved:\s*)([A-Z]{3}\s*)?[\d,]+(?:\.\d+)?/gi, "$1***")
         .replace(/(Cost approval declined; ticket closed\.\s*)([A-Z]{3}\s*)?[\d,]+(?:\.\d+)?/gi, "$1***")
-        .replace(/\b(USD|INR)\s*[\d,]+(?:\.\d+)?\b/gi, "***");
+        .replace(/\b(USD|INR|AED|QAR|SAR|EUR|GBP|CAD|AUD|NZD|RIAL)\s*[\d,]+(?:\.\d+)?\b/gi, "***")
+        .replace(/\b[\d,]+(?:\.\d+)?\s*(USD|INR|AED|QAR|SAR|EUR|GBP|CAD|AUD|NZD)\b/gi, "***")
+        .replace(/\$\s*[\d,]+(?:\.\d+)?/g, "***")
+        .replace(/€\s*[\d,]+(?:\.\d+)?/g, "***")
+        .replace(/£\s*[\d,]+(?:\.\d+)?/g, "***");
+};
+
+// ─── Attachment helpers ───────────────────────────────────────────────────────
+
+/** Derive a display filename from a blob URL (last two segments: uuid/name). */
+const getAttachmentName = (url) => {
+    try {
+        const parts = decodeURIComponent(new URL(url).pathname).split('/');
+        return parts[parts.length - 1] || 'Attachment';
+    } catch {
+        return url.split('/').pop() || 'Attachment';
+    }
+};
+
+const getAttachmentType = (url) => {
+    const name = getAttachmentName(url).toLowerCase();
+    if (/\.(png|jpg|jpeg|gif|webp|svg|bmp|ico)$/.test(name)) return 'image';
+    if (/\.pdf$/.test(name)) return 'pdf';
+    return 'file';
+};
+
+const isImageUrl = (url) => getAttachmentType(url) === 'image';
+const isPdfUrl = (url) => getAttachmentType(url) === 'pdf';
+
+/** Lightbox / embedded viewer for images and PDFs. */
+const AttachmentViewer = ({ attachment, onClose }) => {
+    if (!attachment) return null;
+    const { url, name } = attachment;
+    const type = getAttachmentType(url);
+    const displayName = name || getAttachmentName(url);
+
+    return (
+        <div
+            onClick={onClose}
+            style={{
+                position: 'fixed', inset: 0, zIndex: 9999,
+                background: 'rgba(0,0,0,0.82)',
+                display: 'flex', flexDirection: 'column',
+                alignItems: 'center', justifyContent: 'center',
+                padding: '20px',
+                backdropFilter: 'blur(4px)',
+            }}
+        >
+            {/* header */}
+            <div
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                    width: '100%', maxWidth: 900,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    marginBottom: 12, gap: 8,
+                }}
+            >
+                <span style={{ color: '#e2e8f0', fontSize: '0.875rem', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 'calc(100% - 120px)' }}>
+                    {displayName}
+                </span>
+                <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                    <a
+                        href={url}
+                        download={displayName}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '6px 12px', borderRadius: 8,
+                            background: '#1e293b', color: '#94a3b8',
+                            fontSize: '0.8rem', textDecoration: 'none', border: '1px solid #334155',
+                        }}
+                    >
+                        <Download size={14} /> Download
+                    </a>
+                    <button
+                        onClick={onClose}
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                            padding: '6px 12px', borderRadius: 8,
+                            background: '#1e293b', color: '#e2e8f0',
+                            fontSize: '0.8rem', border: '1px solid #334155', cursor: 'pointer',
+                        }}
+                    >
+                        <X size={14} /> Close
+                    </button>
+                </div>
+            </div>
+
+            {/* content */}
+            {type === 'image' && (
+                <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ maxWidth: 900, maxHeight: '80vh', borderRadius: 10, overflow: 'hidden', background: '#0f172a' }}
+                >
+                    <img
+                        src={url}
+                        alt={displayName}
+                        style={{ display: 'block', maxWidth: '100%', maxHeight: '80vh', objectFit: 'contain' }}
+                        onError={(e) => { e.target.alt = 'Could not load image'; }}
+                    />
+                </div>
+            )}
+
+            {type === 'pdf' && (
+                <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ width: '100%', maxWidth: 900, height: '80vh', borderRadius: 10, overflow: 'hidden', background: 'var(--card-bg, #fff)' }}
+                >
+                    <embed
+                        src={url}
+                        type="application/pdf"
+                        width="100%"
+                        height="100%"
+                        style={{ border: 'none' }}
+                    />
+                </div>
+            )}
+
+            {type === 'file' && (
+                <div
+                    onClick={(e) => e.stopPropagation()}
+                    style={{
+                        background: '#1e293b', borderRadius: 12, padding: '32px 40px',
+                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
+                        border: '1px solid #334155',
+                    }}
+                >
+                    <File size={48} color="#64748b" />
+                    <p style={{ color: '#e2e8f0', margin: 0, fontSize: '1rem', fontWeight: 500 }}>{displayName}</p>
+                    <a
+                        href={url}
+                        download={displayName}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 6,
+                            padding: '10px 20px', borderRadius: 8,
+                            background: '#2563eb', color: '#fff',
+                            fontSize: '0.875rem', textDecoration: 'none', fontWeight: 600,
+                        }}
+                    >
+                        <Download size={16} /> Download file
+                    </a>
+                </div>
+            )}
+        </div>
+    );
+};
+
+/** Single attachment chip shown in timeline. */
+const AttachmentChip = ({ url, name, onView }) => {
+    const displayName = name || getAttachmentName(url);
+    const type = getAttachmentType(url);
+
+    return (
+        <div
+            style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '5px 10px', borderRadius: 8,
+                background: 'var(--surface-muted, #f1f5f9)', border: '1px solid var(--border-color, #e2e8f0)',
+                fontSize: '0.78rem', color: 'var(--text-sub, #334155)', maxWidth: 280,
+                cursor: 'pointer',
+            }}
+            onClick={() => onView({ url, name: displayName })}
+            title={`Click to view: ${displayName}`}
+        >
+            {type === 'image' ? <Image size={13} color="#2563eb" /> :
+             type === 'pdf' ? <FileText size={13} color="#dc2626" /> :
+             <File size={13} color="#64748b" />}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
+                {displayName}
+            </span>
+            <Eye size={12} color="#94a3b8" style={{ flexShrink: 0 }} />
+        </div>
+    );
 };
 
 export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
+    const { theme } = useTheme();
+    const statusPalette = getStatusColors(theme);
+    const [viewing, setViewing] = useState(null); // { url, name }
+
     if (!timeline || timeline.length === 0) {
         return <div className="timeline-empty">No timeline entries</div>;
     }
-    
+
     const formatDate = (dateString) => {
         const date = new Date(dateString);
         return date.toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
+            month: 'short', day: 'numeric', year: 'numeric',
+            hour: '2-digit', minute: '2-digit'
         });
     };
-    
+
     return (
-        <div className="ticket-timeline">
-            {timeline.map((entry, index) => (
-                <div key={index} className={`timeline-entry ${entry.isNote ? 'is-note' : ''}`}>
-                    <div className="timeline-marker">
-                        <div className="timeline-dot" style={{
-                            background: entry.isNote ? '#d1d5db' : (STATUS_COLORS[entry.status]?.text || '#d1d5db')
-                        }} />
-                        {index < timeline.length - 1 && <div className="timeline-line" />}
-                    </div>
-                    <div className="timeline-content">
-                        <div className="timeline-header">
-                            <span className="timeline-user">
-                                <User size={12} />
-                                {entry.user}
-                            </span>
-                            <span className="timeline-time">
-                                <Clock size={12} />
-                                {formatDate(entry.timestamp)}
-                            </span>
+        <>
+            {viewing && <AttachmentViewer attachment={viewing} onClose={() => setViewing(null)} />}
+            <div className="ticket-timeline">
+                {timeline.map((entry, index) => (
+                    <div key={index} className={`timeline-entry ${entry.isNote ? 'is-note' : ''}`}>
+                        <div className="timeline-marker">
+                            <div className="timeline-dot" style={{
+                                background: entry.isNote ? "var(--border-color, #d1d5db)" : (statusPalette[entry.status]?.text || "var(--text-muted, #d1d5db)")
+                            }} />
+                            {index < timeline.length - 1 && <div className="timeline-line" />}
                         </div>
-                        {!entry.isNote && (
-                            <div className="timeline-status">
-                                <StatusBadge status={entry.status} size="small" />
+                        <div className="timeline-content">
+                            <div className="timeline-header">
+                                <span className="timeline-user">
+                                    <User size={12} />
+                                    {entry.user}
+                                </span>
+                                <span className="timeline-time">
+                                    <Clock size={12} />
+                                    {formatDate(entry.timestamp)}
+                                </span>
                             </div>
-                        )}
-                        {entry.notes && (
-                            <div className="timeline-notes">
-                                {entry.isNote && <MessageSquare size={12} />}
-                                {maskSensitive ? maskCostText(entry.notes) : entry.notes}
-                            </div>
-                        )}
-                        {Array.isArray(entry.attachments) && entry.attachments.length > 0 && (
-                            <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {entry.attachments.map((att, idx) => (
-                                    <a
-                                        key={`${entry.timestamp || index}-att-${idx}`}
-                                        href={att}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        style={{ fontSize: '0.8rem', color: '#2563eb', textDecoration: 'underline' }}
-                                    >
-                                        Attachment {idx + 1}
-                                    </a>
-                                ))}
-                            </div>
-                        )}
+                            {!entry.isNote && (
+                                <div className="timeline-status">
+                                    <StatusBadge status={entry.status} size="small" />
+                                </div>
+                            )}
+                            {entry.notes && (
+                                <div className="timeline-notes">
+                                    {entry.isNote && <MessageSquare size={12} />}
+                                    {maskSensitive ? maskCostText(entry.notes) : entry.notes}
+                                </div>
+                            )}
+                            {Array.isArray(entry.attachments) && entry.attachments.length > 0 && (
+                                <div style={{ marginTop: 8 }}>
+                                    {/* Image thumbnails */}
+                                    {entry.attachments.some(isImageUrl) && (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                                            {entry.attachments.filter(isImageUrl).map((url, idx) => (
+                                                <div
+                                                    key={`img-${idx}`}
+                                                    onClick={() => setViewing({ url, name: getAttachmentName(url) })}
+                                                    style={{
+                                                        width: 80, height: 80, borderRadius: 8,
+                                                        overflow: 'hidden', cursor: 'pointer',
+                                                        border: '2px solid var(--border-color, #e2e8f0)', position: 'relative',
+                                                        flexShrink: 0, background: 'var(--surface-muted, #f1f5f9)',
+                                                    }}
+                                                    title="Click to view"
+                                                >
+                                                    <img
+                                                        src={url}
+                                                        alt={getAttachmentName(url)}
+                                                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                                                        onError={(e) => { e.target.style.display = 'none'; }}
+                                                    />
+                                                    <div style={{
+                                                        position: 'absolute', inset: 0,
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                        background: 'rgba(0,0,0,0)', transition: 'background 0.15s',
+                                                    }}
+                                                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(0,0,0,0.35)'}
+                                                        onMouseLeave={(e) => e.currentTarget.style.background = 'rgba(0,0,0,0)'}
+                                                    >
+                                                        <ZoomIn size={18} color="#fff" style={{ opacity: 0.9 }} />
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {/* Non-image chips */}
+                                    {entry.attachments.filter((u) => !isImageUrl(u)).length > 0 && (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                            {entry.attachments.filter((u) => !isImageUrl(u)).map((url, idx) => (
+                                                <AttachmentChip
+                                                    key={`file-${idx}`}
+                                                    url={url}
+                                                    onView={setViewing}
+                                                />
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     </div>
-                </div>
-            ))}
-        </div>
+                ))}
+            </div>
+        </>
     );
 };
 
@@ -479,6 +764,7 @@ const getRequestTypeIcon = (requestType, size = 16) => {
 
 // ============ TICKET CARD COMPONENT ============
 export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChange, user }) => {
+    const { theme } = useTheme();
     const [expanded, setExpanded] = useState(false);
     const accent = getTypeAccent(ticket.requestType);
     const ageDays = ticket?.createdAt ? Math.floor((Date.now() - new Date(ticket.createdAt).getTime()) / 86400000) : 0;
@@ -514,7 +800,8 @@ export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChang
             style={{
                 borderLeftColor: accent.border,
                 borderLeftWidth: 4,
-                background: `linear-gradient(135deg, ${accent.bg} 0%, ${accent.bg}88 35%, rgba(255,255,255,0.15) 65%, transparent 100%), #ffffff`
+                backgroundColor: "var(--card-bg, #ffffff)",
+                backgroundImage: `linear-gradient(135deg, ${hexWithAlpha(accent.bg, theme === "light" || theme === "retro" ? 0.42 : 0.28)} 0%, transparent 55%)`
             }}
         >
             {/* ── Main row ── */}
@@ -674,6 +961,171 @@ const COST_APPROVAL_PREFIX = "COST_APPROVAL::";
 /** Dropdown row when workflow has no named cost approvers — still opens the cost tool. */
 const OPEN_COST_TOOL_ACTION = "OPEN_COST_TOOL";
 
+/**
+ * Custom action menu (replaces native &lt;select&gt;) so options use in-app styling and stay readable.
+ * Renders the list in a portal with position:fixed to avoid modal overflow clipping.
+ */
+function TicketActionMenu({
+    menuId,
+    groups,
+    selectedValue,
+    onChangeValue,
+    placeholder = "Choose an action…",
+}) {
+    const [open, setOpen] = useState(false);
+    const [pos, setPos] = useState({ top: 0, left: 0, width: 0, maxH: 280 });
+    const triggerRef = useRef(null);
+    const menuRef = useRef(null);
+
+    const selectedLabel = useMemo(() => {
+        if (!selectedValue) return null;
+        for (const g of groups) {
+            const it = g.items.find((i) => i.value === selectedValue);
+            if (it) return it.label;
+        }
+        return null;
+    }, [selectedValue, groups]);
+
+    const hasChoices = groups.some((g) => g.items.some((i) => !i.disabled));
+
+    const syncPosition = useCallback(() => {
+        const el = triggerRef.current;
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        const pad = 10;
+        const maxH = Math.min(360, Math.max(120, vh - r.bottom - pad - 20));
+        let width = Math.max(r.width, 300);
+        let left = r.left;
+        if (left + width > vw - pad) left = Math.max(pad, vw - width - pad);
+        let top = r.bottom + 6;
+        const spaceBelow = vh - r.bottom - pad;
+        const spaceAbove = r.top - pad;
+        if (spaceBelow < 160 && spaceAbove > spaceBelow) {
+            const h = Math.min(360, Math.max(120, spaceAbove - 20));
+            top = r.top - 6 - h;
+            setPos({ top, left, width, maxH: h });
+            return;
+        }
+        setPos({ top, left, width, maxH });
+    }, []);
+
+    useLayoutEffect(() => {
+        if (!open) return;
+        syncPosition();
+    }, [open, syncPosition]);
+
+    useEffect(() => {
+        if (!open) return;
+        const onScroll = () => syncPosition();
+        const onResize = () => syncPosition();
+        window.addEventListener('scroll', onScroll, true);
+        window.addEventListener('resize', onResize);
+        return () => {
+            window.removeEventListener('scroll', onScroll, true);
+            window.removeEventListener('resize', onResize);
+        };
+    }, [open, syncPosition]);
+
+    useEffect(() => {
+        if (!open) return;
+        const onDoc = (e) => {
+            if (triggerRef.current?.contains(e.target)) return;
+            if (menuRef.current?.contains(e.target)) return;
+            setOpen(false);
+        };
+        const onKey = (e) => {
+            if (e.key === 'Escape') setOpen(false);
+        };
+        document.addEventListener('mousedown', onDoc);
+        document.addEventListener('keydown', onKey);
+        return () => {
+            document.removeEventListener('mousedown', onDoc);
+            document.removeEventListener('keydown', onKey);
+        };
+    }, [open]);
+
+    const displayText = selectedLabel || placeholder;
+
+    const menuPortal =
+        open && hasChoices
+            ? createPortal(
+                  <div
+                      ref={menuRef}
+                      className="jdm-ticket-action-menu-portal"
+                      style={{
+                          position: 'fixed',
+                          top: pos.top,
+                          left: pos.left,
+                          width: pos.width,
+                          maxHeight: pos.maxH,
+                          zIndex: 10060,
+                      }}
+                      role="listbox"
+                      aria-labelledby={menuId}
+                  >
+                      <div className="jdm-ticket-action-menu-scroller">
+                          {groups.map((group, gi) => (
+                              <div key={gi} className="jdm-ticket-action-menu-group">
+                                  {group.title ? (
+                                      <div className="jdm-ticket-action-menu-group-title">{group.title}</div>
+                                  ) : null}
+                                  {group.items.map((item, ii) => (
+                                      <button
+                                          key={item.value ? `${item.value}-${gi}-${ii}` : `row-${gi}-${ii}`}
+                                          type="button"
+                                          role="option"
+                                          aria-selected={selectedValue === item.value}
+                                          disabled={item.disabled}
+                                          className={`jdm-ticket-action-menu-item ${
+                                              selectedValue === item.value ? 'is-selected' : ''
+                                          } ${item.disabled ? 'is-disabled' : ''}`}
+                                          onClick={() => {
+                                              if (item.disabled) return;
+                                              onChangeValue(item.value);
+                                              setOpen(false);
+                                          }}
+                                      >
+                                          {item.label}
+                                      </button>
+                                  ))}
+                              </div>
+                          ))}
+                      </div>
+                  </div>,
+                  document.body
+              )
+            : null;
+
+    return (
+        <>
+            <button
+                ref={triggerRef}
+                type="button"
+                id={menuId}
+                className={`jdm-ticket-action-trigger ${open ? 'is-open' : ''} ${!hasChoices ? 'is-disabled' : ''}`}
+                disabled={!hasChoices}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                aria-label="Ticket action"
+                onClick={() => hasChoices && setOpen((o) => !o)}
+            >
+                <span className={`jdm-ticket-action-trigger-text ${!selectedValue ? 'is-placeholder' : ''}`}>
+                    {displayText}
+                </span>
+                <ChevronDown
+                    size={18}
+                    strokeWidth={2}
+                    className={`jdm-ticket-action-trigger-chev ${open ? 'is-flip' : ''}`}
+                    aria-hidden
+                />
+            </button>
+            {menuPortal}
+        </>
+    );
+}
+
 export const TicketDetailsModal = ({
     ticket,
     onClose,
@@ -690,12 +1142,15 @@ export const TicketDetailsModal = ({
 }) => {
     const [note, setNote] = useState('');
     const [selectedStatus, setSelectedStatus] = useState('');
-    const [noteAttachments, setNoteAttachments] = useState([]);
+    // Each item: { file, name, size, status: 'pending'|'uploading'|'done'|'error', url?, error? }
+    const [pendingFiles, setPendingFiles] = useState([]);
     const [showApprovalEditor, setShowApprovalEditor] = useState(false);
     const [approvalEditorText, setApprovalEditorText] = useState('');
     const [approvalEditorHtml, setApprovalEditorHtml] = useState('');
+    const noteFileInputRef = useRef(null);
     /** DevOps: workflow cost approver chosen in Actions dropdown (sent with cost submission). */
     const [pendingCostApproverEmail, setPendingCostApproverEmail] = useState(null);
+    const { theme } = useTheme();
 
     useEffect(() => {
         if (ticket?.id) setPendingCostApproverEmail(null);
@@ -708,6 +1163,7 @@ export const TicketDetailsModal = ({
 
     // Get simplified action label with icon indicator
     const getStatusActionLabel = (status) => {
+        if (status === TICKET_STATUS.ACCEPTED) return "Assign";
         const config = STATUS_DISPLAY_CONFIG[status];
         if (status === TICKET_STATUS.COST_APPROVAL_PENDING) return "💰 Submit Cost Estimate";
         if (!config) return status;
@@ -789,7 +1245,7 @@ export const TicketDetailsModal = ({
     // DevOps-friendly short action labels based on destination status
     const getDevOpsActionLabel = (status) => {
         switch (status) {
-            case TICKET_STATUS.ACCEPTED:               return '✅ Accept';
+            case TICKET_STATUS.ACCEPTED:               return '👤 Assign';
             case TICKET_STATUS.MANAGER_APPROVAL_PENDING: return '📤 Send for Approval';
             case TICKET_STATUS.MANAGER_APPROVED:       return '✔ Mark Approved';
             case TICKET_STATUS.COST_APPROVAL_PENDING:  return '💰 Cost Estimate';
@@ -930,29 +1386,80 @@ export const TicketDetailsModal = ({
     };
     
     const handleAddNote = () => {
+        const urls = pendingFiles.filter((f) => f.status === 'done').map((f) => f.url);
         if (note.trim() && onAddNote) {
-            onAddNote(ticket.id, note, noteAttachments);
+            onAddNote(ticket.id, note, urls);
             setNote('');
-            setNoteAttachments([]);
+            setPendingFiles([]);
+            if (noteFileInputRef.current) noteFileInputRef.current.value = '';
         }
     };
 
     const handleNoteFiles = async (files) => {
-        const list = Array.from(files || []);
-        const allowed = list.filter((f) =>
-            /^image\//.test(f.type)
-            || /pdf|msword|officedocument|text\//i.test(f.type)
-            || /\.(pdf|doc|docx|txt|png|jpg|jpeg|gif|webp)$/i.test(f.name)
-        );
-        const toDataUrl = (file) => new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(String(reader.result));
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-        });
-        const urls = await Promise.all(allowed.slice(0, 5).map(toDataUrl));
-        setNoteAttachments(urls);
+        const MAX_SIZE = 5 * 1024 * 1024;
+        const list = Array.from(files || []).slice(0, 10);
+
+        // Validate client-side first
+        const withValidation = list.map((f) => ({
+            file: f,
+            name: f.name,
+            size: f.size,
+            status: f.size > MAX_SIZE ? 'error' : 'pending',
+            error: f.size > MAX_SIZE ? 'Exceeds 5 MB limit' : null,
+            url: null,
+        }));
+
+        setPendingFiles((prev) => [...prev, ...withValidation]);
+        if (noteFileInputRef.current) noteFileInputRef.current.value = '';
+
+        // Upload valid files one by one and track progress
+        for (let i = 0; i < withValidation.length; i++) {
+            const item = withValidation[i];
+            if (item.status !== 'pending') continue;
+
+            // Mark as uploading
+            setPendingFiles((prev) =>
+                prev.map((p) => p.name === item.name && p.status === 'pending' ? { ...p, status: 'uploading' } : p)
+            );
+
+            try {
+                const result = await uploadNoteAttachments(ticket.id, [item.file]);
+                if (result.uploaded && result.uploaded.length > 0) {
+                    const { url } = result.uploaded[0];
+                    setPendingFiles((prev) =>
+                        prev.map((p) =>
+                            p.name === item.name && p.status === 'uploading'
+                                ? { ...p, status: 'done', url }
+                                : p
+                        )
+                    );
+                } else {
+                    const errMsg = result.errors?.[0] || 'Upload failed';
+                    setPendingFiles((prev) =>
+                        prev.map((p) =>
+                            p.name === item.name && p.status === 'uploading'
+                                ? { ...p, status: 'error', error: errMsg }
+                                : p
+                        )
+                    );
+                }
+            } catch (err) {
+                setPendingFiles((prev) =>
+                    prev.map((p) =>
+                        p.name === item.name && p.status === 'uploading'
+                            ? { ...p, status: 'error', error: err.message || 'Upload failed' }
+                            : p
+                    )
+                );
+            }
+        }
     };
+
+    const removePendingFile = (idx) => {
+        setPendingFiles((prev) => prev.filter((_, i) => i !== idx));
+    };
+
+    const isAnyUploading = pendingFiles.some((f) => f.status === 'uploading');
     
     const handleToggleActive = (isActive) => {
         if (!onToggleActiveStatus) return;
@@ -995,7 +1502,7 @@ export const TicketDetailsModal = ({
             } else if (st === "CREATED") {
                 label = "New";
             } else if (st === "ACCEPTED") {
-                label = "Accepted";
+                label = "Assigned";
             } else if (st === "IN_PROGRESS") {
                 label = "Active";
             } else if (st === "COMPLETED") {
@@ -1015,25 +1522,57 @@ export const TicketDetailsModal = ({
                 if (st === "ACTION_REQUIRED" || st === "ON_HOLD") return "amber";
                 return "blue";
             })();
-            return { id: `${entry?.timestamp || "x"}-${idx}`, label, tone, user: entry?.user || '', timestamp: entry?.timestamp || '', notes: entry?.notes ? normalizeFlowNotes(entry.notes).slice(0, 80) : '' };
+            const rawNotes = entry?.notes ? normalizeFlowNotes(entry.notes).slice(0, 80) : '';
+            const notesForTooltip = canManage ? rawNotes : maskCostText(rawNotes);
+            return { id: `${entry?.timestamp || "x"}-${idx}`, label, tone, user: entry?.user || '', timestamp: entry?.timestamp || '', notes: notesForTooltip };
         });
     const canForwardTicket =
         typeof onForward === "function" &&
         !!ticket.assignedTo &&
         ![TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(ticket.status);
 
-    const runtimeBarTone = (() => {
-        const st = timelineStatusKey(ticket.status);
-        if (st === "CLOSED" || st === "REJECTED")          return { color: "#6b7280", bg: "#f9fafb", label: "Closed" };
-        if (st === "MANAGER_APPROVAL_PENDING")              return { color: "#b45309", bg: "#fffbeb", label: "Pending Approval" };
-        if (st === "COST_APPROVAL_PENDING")                 return { color: "#c2410c", bg: "#fff7ed", label: "Cost Review" };
-        if (st === "MANAGER_APPROVED")                      return { color: "#15803d", bg: "#f0fdf4", label: "Approved" };
-        if (st === "COST_APPROVED")                         return { color: "#059669", bg: "#ecfdf5", label: "Cost Approved" };
-        if (st === "COMPLETED" || st === "IN_PROGRESS")     return { color: "#059669", bg: "#ecfdf5", label: "Processing" };
-        if (st === "ACTION_REQUIRED" || st === "ON_HOLD")   return { color: "#b45309", bg: "#fffbeb", label: "Waiting" };
-        return { color: "#1d4ed8", bg: "#eff6ff", label: "Active" };
-    })();
-    
+    const runtimeBarTone = runtimeBarToneForStatus(timelineStatusKey(ticket.status), theme);
+
+    const actionDropdownGroups = [];
+    if (canManage && defaultActions.length > 0) {
+        actionDropdownGroups.push({
+            title: "Status",
+            items: defaultActions.map((a) => ({ value: a.value, label: a.label })),
+        });
+    }
+    if (!canManage && userCloseAction.length > 0) {
+        actionDropdownGroups.push({
+            title: "Actions",
+            items: userCloseAction.map((a) => ({ value: a.value, label: a.label })),
+        });
+    }
+    if (canManage && (approvalActions.length > 0 || costApprovalActions.length > 0)) {
+        actionDropdownGroups.push({
+            title: "Request & cost approval",
+            items: [
+                ...approvalActions.map((a) => ({ value: a.value, label: a.label })),
+                ...costApprovalActions.map((a) => ({ value: a.value, label: a.label })),
+            ],
+        });
+    }
+    if (!canManage && approvalActions.length > 0) {
+        actionDropdownGroups.push({
+            title: "Send for approval",
+            items: approvalActions.map((a) => ({ value: a.value, label: a.label })),
+        });
+    }
+    if (
+        canManage &&
+        defaultActions.length === 0 &&
+        approvalActions.length === 0 &&
+        costApprovalActions.length === 0
+    ) {
+        actionDropdownGroups.push({
+            title: "",
+            items: [{ value: "__none__", label: "No actions available", disabled: true }],
+        });
+    }
+
     return (
         <div className="modal-overlay" onClick={onClose}>
             <div className="jdm-modal" onClick={e => e.stopPropagation()}>
@@ -1057,7 +1596,7 @@ export const TicketDetailsModal = ({
                     </div>
                     <button className="modal-close" onClick={onClose}><X size={20} /></button>
                 </div>
-                <div style={{ padding: "0.5rem 1rem", borderBottom: "1px solid #e5e7eb", background: runtimeBarTone.bg }}>
+                <div style={{ padding: "0.5rem 1rem", borderBottom: "1px solid var(--border-color, #e5e7eb)", background: runtimeBarTone.bg }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                         <div style={{ height: 6, borderRadius: 999, background: runtimeBarTone.color, flex: 1 }} />
                         <span style={{ color: runtimeBarTone.color, fontWeight: 600, fontSize: "0.78rem" }}>
@@ -1084,16 +1623,10 @@ export const TicketDetailsModal = ({
                             <div className="jdm-section-title"><Clock size={14} /> Progress</div>
                             <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                                 {actionFlowItems.length === 0 && (
-                                    <span style={{ color: "#64748b", fontSize: "0.85rem" }}>Pending</span>
+                                    <span style={{ color: "var(--text-muted, #64748b)", fontSize: "0.85rem" }}>Pending</span>
                                 )}
                                 {actionFlowItems.map((item, index) => {
-                                    const toneStyle = item.tone === "green"
-                                        ? { background: "#f0fdf4", color: "#15803d", border: "1px solid #bbf7d0" }
-                                        : item.tone === "red"
-                                            ? { background: "#fef2f2", color: "#dc2626", border: "1px solid #fecaca" }
-                                            : item.tone === "amber"
-                                                ? { background: "#fffbeb", color: "#b45309", border: "1px solid #fde68a" }
-                                                : { background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" };
+                                    const toneStyle = flowPillStyleForTone(item.tone, theme);
                                     return (
                                         <React.Fragment key={item.id}>
                                             <span 
@@ -1103,7 +1636,7 @@ export const TicketDetailsModal = ({
                                                 {item.label}
                                             </span>
                                             {index < actionFlowItems.length - 1 && (
-                                                <span style={{ color: "#d1d5db", fontWeight: 600 }}>→</span>
+                                                <span style={{ color: "var(--border-color, #d1d5db)", fontWeight: 600 }}>→</span>
                                             )}
                                         </React.Fragment>
                                     );
@@ -1177,55 +1710,28 @@ export const TicketDetailsModal = ({
                                 {!canManage && approvalActions.length === 0 ? (
                                     <p className="jdm-hint-text">No approvers configured for this product.</p>
                                 ) : (
-                                <div className="jdm-action-row">
-                                    <select
-                                        value={selectedStatus}
-                                        onChange={(e) => handleActionSelectChange(e.target.value)}
-                                        className="jdm-select"
-                                    >
-                                        <option value="">Select action...</option>
-                                        {canManage && defaultActions.length > 0 && (
-                                            <optgroup label="Status">
-                                                {defaultActions.map((a) => (
-                                                    <option key={a.value} value={a.value}>{a.label}</option>
-                                                ))}
-                                            </optgroup>
-                                        )}
-                                        {!canManage && userCloseAction.length > 0 && (
-                                            <optgroup label="Actions">
-                                                {userCloseAction.map((a) => (
-                                                    <option key={a.value} value={a.value}>{a.label}</option>
-                                                ))}
-                                            </optgroup>
-                                        )}
-                                        {canManage && (approvalActions.length > 0 || costApprovalActions.length > 0) && (
-                                            <optgroup label="Request & cost approval">
-                                                {approvalActions.map((a) => (
-                                                    <option key={a.value} value={a.value}>{a.label}</option>
-                                                ))}
-                                                {costApprovalActions.map((a) => (
-                                                    <option key={a.value} value={a.value}>{a.label}</option>
-                                                ))}
-                                            </optgroup>
-                                        )}
-                                        {!canManage && approvalActions.length > 0 && (
-                                            <optgroup label="Send for Approval">
-                                                {approvalActions.map((a) => (
-                                                    <option key={a.value} value={a.value}>{a.label}</option>
-                                                ))}
-                                            </optgroup>
-                                        )}
-                                        {canManage && defaultActions.length === 0 && approvalActions.length === 0 && costApprovalActions.length === 0 && (
-                                            <option value="" disabled>No actions available</option>
-                                        )}
-                                    </select>
+                                <div className="jdm-ticket-action-picker">
+                                    <div className="jdm-ticket-action-picker-label">Change status or route</div>
+                                    <div className="jdm-ticket-action-picker-row">
+                                    <TicketActionMenu
+                                        key={ticket.id}
+                                        menuId={`ticket-action-${ticket.id}`}
+                                        groups={actionDropdownGroups}
+                                        selectedValue={selectedStatus}
+                                        onChangeValue={handleActionSelectChange}
+                                    />
                                     <button
-                                        className="jdm-btn-primary"
+                                        type="button"
+                                        className="jdm-btn-primary jdm-ticket-action-apply"
                                         onClick={handleStatusChange}
                                         disabled={!selectedStatus}
                                     >
                                         Apply
                                     </button>
+                                    </div>
+                                    <p className="jdm-ticket-action-picker-hint">
+                                        Pick a status update or an approval / cost step, then apply. Notes above are sent when relevant.
+                                    </p>
                                 </div>
                                 )}
                                 {!canManage && managerRespondedApproved && approvalActions.length > 0 && (
@@ -1325,33 +1831,93 @@ export const TicketDetailsModal = ({
                         {/* Add Note */}
                         {onAddNote && (
                             <div className="jdm-section">
-                                <div className="jdm-section-title"><MessageSquare size={14} /> Notes</div>
+                                <div className="jdm-section-title"><MessageSquare size={14} /> Add Note</div>
                                 <textarea
                                     className="jdm-textarea"
                                     value={note}
                                     onChange={e => setNote(e.target.value)}
-                                    placeholder="Add a note..."
+                                    placeholder="Write a note..."
                                     rows={3}
                                 />
+
+                                {/* File picker */}
                                 <input
+                                    ref={noteFileInputRef}
+                                    id={`note-files-${ticket.id}`}
                                     type="file"
                                     multiple
-                                    accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.gif,.webp,image/*"
+                                    accept="image/*,.pdf,.doc,.docx,.txt,.xls,.xlsx,.csv,.zip"
                                     onChange={(e) => handleNoteFiles(e.target.files)}
-                                    style={{ marginTop: 8 }}
+                                    style={{ display: 'none' }}
                                 />
-                                {noteAttachments.length > 0 && (
-                                    <div style={{ marginTop: 6, fontSize: '0.8rem', color: '#374151' }}>
-                                        {noteAttachments.length} file(s)
+                                <label
+                                    htmlFor={`note-files-${ticket.id}`}
+                                    style={{
+                                        marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6,
+                                        padding: '6px 12px', borderRadius: 8,
+                                        border: '1px dashed var(--border-color, #cbd5e1)', background: 'var(--surface-subtle, #f8fafc)',
+                                        color: 'var(--text-sub, #475569)', fontSize: '0.8rem', cursor: 'pointer',
+                                        userSelect: 'none',
+                                    }}
+                                >
+                                    <Paperclip size={13} /> Attach files (max 5 MB each)
+                                </label>
+
+                                {/* Pending / uploaded files list */}
+                                {pendingFiles.length > 0 && (
+                                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                        {pendingFiles.map((f, idx) => (
+                                            <div
+                                                key={idx}
+                                                style={{
+                                                    display: 'flex', alignItems: 'center', gap: 8,
+                                                    padding: '6px 10px', borderRadius: 8,
+                                                    background: f.status === 'error' ? '#fef2f2' : f.status === 'done' ? '#f0fdf4' : 'var(--surface-subtle, #f8fafc)',
+                                                    border: `1px solid ${f.status === 'error' ? '#fecaca' : f.status === 'done' ? '#bbf7d0' : 'var(--border-color, #e2e8f0)'}`,
+                                                    fontSize: '0.8rem',
+                                                }}
+                                            >
+                                                {f.status === 'uploading' && <Loader2 size={14} className="spin-icon" color="#2563eb" />}
+                                                {f.status === 'done' && <CheckCircle size={14} color="#16a34a" />}
+                                                {f.status === 'error' && <XCircle size={14} color="#dc2626" />}
+                                                {f.status === 'pending' && <Paperclip size={14} color="#64748b" />}
+
+                                                <span style={{
+                                                    flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                                                    color: f.status === 'error' ? '#991b1b' : '#374151',
+                                                }}>
+                                                    {f.name}
+                                                    {f.status === 'error' && (
+                                                        <span style={{ marginLeft: 6, color: '#dc2626', fontSize: '0.75rem' }}>
+                                                            — {f.error}
+                                                        </span>
+                                                    )}
+                                                </span>
+                                                <span style={{ color: '#94a3b8', flexShrink: 0, fontSize: '0.75rem' }}>
+                                                    {f.size < 1024 ? `${f.size} B` : f.size < 1024 * 1024 ? `${(f.size / 1024).toFixed(1)} KB` : `${(f.size / (1024 * 1024)).toFixed(1)} MB`}
+                                                </span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => removePendingFile(idx)}
+                                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, color: '#94a3b8', flexShrink: 0 }}
+                                                    title="Remove"
+                                                >
+                                                    <X size={13} />
+                                                </button>
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
+
                                 <button
                                     className="jdm-btn-primary"
-                                    style={{ marginTop: 8, alignSelf: 'flex-start' }}
+                                    style={{ marginTop: 12, alignSelf: 'flex-start' }}
                                     onClick={handleAddNote}
-                                    disabled={!note.trim()}
+                                    disabled={!note.trim() || isAnyUploading}
                                 >
-                                    <Send size={14} /> Add Note
+                                    {isAnyUploading
+                                        ? <><Loader2 size={14} className="spin-icon" /> Uploading…</>
+                                        : <><Send size={14} /> Add Note</>}
                                 </button>
                             </div>
                         )}
@@ -1727,7 +2293,9 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
         managerName: '',
         managerEmail: '',
         managerApprovalRequired: true,
+        toEmail: '',
         ccEmail: '',
+        bccEmail: '',
         description: '',
         requestType: ''
     });
@@ -1745,7 +2313,9 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                 managerName: '',
                 managerEmail: '',
                 managerApprovalRequired: true,
+                toEmail: '',
                 ccEmail: '',
+                bccEmail: '',
                 description: '',
                 requestType: ''
             });
@@ -1818,128 +2388,47 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
         const key = `${selectedProjectId}::${formData.requestType}`;
         if (workflowAutoKey === key) return;
 
-        const firstConfiguredManager = (workflowPreview.managers || [])
-            .find((m) => m && m.email);
+        // Auto-fill hidden approver for the API payload (not shown in To field)
+        const firstConfiguredManager = (workflowPreview.managers || []).find((m) => m && m.email);
         const firstLevel = (workflowPreview.approvalLevels || [])
             .slice()
             .sort((a, b) => (a.level || 0) - (b.level || 0))
             .find((lvl) => Array.isArray(lvl.approvers) && lvl.approvers.length > 0);
         const firstApprover = firstLevel?.approvers?.[0];
-        // Mandatory CC emails are locked — backend adds them automatically, don't put in user-editable field
-        const mandatoryCcSet = new Set(
-            (workflowPreview.emailRouting?.ccMandatory || [])
-                .map((e) => String(e).trim().toLowerCase())
-                .filter(Boolean)
-        );
-        const routingCc = (workflowPreview.emailRouting?.cc || [])
-            .filter((e) => e && String(e).trim())
-            .map((e) => String(e).trim().toLowerCase())
-            .filter((e) => !mandatoryCcSet.has(e)); // exclude mandatory ones from editable field
-        const existingCc = (formData.ccEmail || "")
-            .split(",")
-            .map((e) => e.trim().toLowerCase())
-            .filter((e) => Boolean(e) && !mandatoryCcSet.has(e)); // also strip mandatory from prior value
-        const mergedCc = [...new Set([...routingCc, ...existingCc])];
+        const autoManagerEmail = firstConfiguredManager?.email || firstApprover?.email || "";
+        const autoManagerName = firstConfiguredManager?.name || firstApprover?.name || "";
+
+        // Extract only the non-mandatory (optional/editable) emails for each field.
+        // Mandatory emails are shown as locked chips directly from workflowPreview — not stored in formData.
+        const optionalOnly = (list, mandatoryList) => {
+            const mandatorySet = new Set(
+                (mandatoryList || []).map((e) => String(e).trim().toLowerCase()).filter(Boolean)
+            );
+            return [...new Set(
+                (list || [])
+                    .map((e) => String(e).trim().toLowerCase())
+                    .filter((e) => e && !mandatorySet.has(e))
+            )];
+        };
+
+        const routingTo = optionalOnly(workflowPreview.emailRouting?.to, workflowPreview.emailRouting?.toMandatory);
+        const routingCc = optionalOnly(workflowPreview.emailRouting?.cc, workflowPreview.emailRouting?.ccMandatory);
+        const routingBcc = optionalOnly(workflowPreview.emailRouting?.bcc, workflowPreview.emailRouting?.bccMandatory);
 
         setFormData((prev) => ({
             ...prev,
-            managerName: firstConfiguredManager?.name || firstApprover?.name || prev.managerName,
-            managerEmail: firstConfiguredManager?.email || firstApprover?.email || prev.managerEmail,
+            managerName: autoManagerName || prev.managerName,
+            managerEmail: autoManagerEmail || prev.managerEmail,
             managerApprovalRequired: (workflowPreview.approvalLevels || []).length > 0,
-            ccEmail: mergedCc.join(", ")
+            toEmail: routingTo.join(", "),
+            ccEmail: routingCc.join(", "),
+            bccEmail: routingBcc.join(", ")
         }));
         setWorkflowAutoKey(key);
-    }, [workflowPreview, selectedProjectId, formData.requestType, workflowAutoKey, formData.ccEmail]);
+    }, [workflowPreview, selectedProjectId, formData.requestType, workflowAutoKey]);
     
     if (!isOpen) return null;
 
-    const approvalLevelPeople = (workflowPreview?.approvalLevels || [])
-        .slice()
-        .sort((a, b) => (a.level || 0) - (b.level || 0))
-        .map((lvl, idx) => {
-            const a = (lvl.approvers || [])[0] || {};
-            return {
-                id: `${lvl.level || idx + 1}-${a?.email || a?.name || ""}`,
-                level: lvl.level || (idx + 1),
-                role: a?.role || "Approver",
-                name: (a?.name || "").trim(),
-                email: String(a?.email || "").trim()
-            };
-        })
-        .filter((p) => p.email);
-
-    const projectApproverOptions = (() => {
-        const map = new Map();
-        approvalLevelPeople.forEach((p) => map.set(p.email.toLowerCase(), p));
-        (workflowPreview?.managers || []).forEach((m) => {
-            const email = String(m?.email || "").trim();
-            if (!email) return;
-            const k = email.toLowerCase();
-            if (map.has(k)) return;
-            map.set(k, {
-                id: `wfm-${k}`,
-                role: "Manager",
-                name: String(m?.name || "").trim(),
-                email
-            });
-        });
-        return [...map.values()];
-    })();
-
-    /** Dropdown text: designation first, then name and/or email (matches approval-request style). */
-    const formatApproverDropdownLabel = (person) => {
-        const designation = (person.role || "").trim() || "Approver";
-        const name = (person.name || "").trim();
-        const email = String(person.email || "").trim();
-        if (!email) return designation;
-        if (name) return `${designation} — ${name} · ${email}`;
-        return `${designation} — ${email}`;
-    };
-
-    const formatManagerDirectoryLabel = (manager) => {
-        const designation = "Manager";
-        const name = (manager.name || "").trim();
-        const email = String(manager.email || "").trim();
-        if (!email) return designation;
-        if (name) return `${designation} — ${name} · ${email}`;
-        return `${designation} — ${email}`;
-    };
-
-    const handleManagerSelect = (e) => {
-        const selectedKey = e.target.value;
-        if (!selectedKey) {
-            setFormData({ ...formData, managerName: '', managerEmail: '' });
-            return;
-        }
-        const keyLc = selectedKey.toLowerCase();
-        const projectPerson = projectApproverOptions.find(
-            (p) => String(p.email || "").toLowerCase() === keyLc
-        );
-        if (projectPerson) {
-            setFormData({
-                ...formData,
-                managerName: projectPerson.name || projectPerson.role || "Approver",
-                managerEmail: projectPerson.email
-            });
-            return;
-        }
-        const manager = managers.find(
-            (m) => String(m.email || "").toLowerCase() === keyLc
-        );
-        if (manager) {
-            const currentCc = formData.ccEmail ? formData.ccEmail.split(',').map(e => e.trim()).filter(e => e) : [];
-            if (!currentCc.includes(manager.email.toLowerCase())) {
-                currentCc.push(manager.email.toLowerCase());
-            }
-            setFormData({
-                ...formData,
-                managerName: manager.name,
-                managerEmail: manager.email,
-                ccEmail: currentCc.join(', ')
-            });
-        }
-    };
-    
     const handleRequestTypeSelect = (type) => {
         setFormData({ 
             ...formData, 
@@ -1957,6 +2446,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             setError('Please fill in all required fields');
             return;
         }
+
         
         try {
             setIsSubmitting(true);
@@ -2122,62 +2612,80 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                 
                                 <div className="form-row">
                                     <FormField label="To">
-                                        <select 
-                                            value={formData.managerEmail || ''}
-                                            onChange={handleManagerSelect}
-                                        >
-                                            <option value="">Select approver (designation — name · email)</option>
-                                            {projectApproverOptions.length > 0 && (
-                                                <optgroup label="From product workflow">
-                                                    {projectApproverOptions.map((person) => (
-                                                        <option
-                                                            key={person.id}
-                                                            value={person.email}
-                                                            title={formatApproverDropdownLabel(person)}
-                                                        >
-                                                            {formatApproverDropdownLabel(person)}
-                                                        </option>
-                                                    ))}
-                                                </optgroup>
-                                            )}
-                                            {(managers || []).filter((m) => m.active !== false && String(m.email || "").trim()).length > 0 && (
-                                                <optgroup label="Manager directory">
-                                                    {(managers || []).filter((m) => m.active !== false && String(m.email || "").trim()).map((manager) => (
-                                                        <option
-                                                            key={manager.id || manager.email}
-                                                            value={manager.email}
-                                                            title={formatManagerDirectoryLabel(manager)}
-                                                        >
-                                                            {formatManagerDirectoryLabel(manager)}
-                                                        </option>
-                                                    ))}
-                                                </optgroup>
-                                            )}
-                                        </select>
-                                        <small style={{ color: '#64748b', fontSize: '0.75rem' }}>
-                                            Auto-filled from workflow; you can change it if needed.
+                                        <EmailChipsInput
+                                            value={formData.toEmail}
+                                            onChange={(val) => setFormData((prev) => ({ ...prev, toEmail: val }))}
+                                            lockedEmails={
+                                                (workflowPreview?.emailRouting?.toMandatory || [])
+                                                    .map((e) => String(e).trim().toLowerCase())
+                                                    .filter(Boolean)
+                                            }
+                                            savedEmails={savedEmails}
+                                            placeholder="Type email and press Enter"
+                                            inputLocked
+                                        />
+                                        <small style={{ color: '#64748b', fontSize: '0.75rem', display: 'block', marginTop: 4 }}>
+                                            To is set from your project workflow (auto-filled). You can’t add addresses here — use <strong>CC</strong> to copy others.
                                         </small>
+                                        {(workflowPreview?.emailRouting?.toMandatory || []).length > 0 && (
+                                            <small style={{ color: '#6d28d9', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                                                <span style={{ fontSize: '0.7rem' }}>🔒</span>
+                                                Some To addresses are mandatory — set by your admin.
+                                            </small>
+                                        )}
+                                        {!workflowPreview && (
+                                            <small style={{ color: '#94a3b8', fontSize: '0.75rem', display: 'block', marginTop: 4 }}>
+                                                Recipients load after selecting product &amp; request type.
+                                            </small>
+                                        )}
                                     </FormField>
-                                    <FormField label="CC Emails">
+                                    <FormField label="CC">
                                         <EmailChipsInput
                                             value={formData.ccEmail}
-                                            onChange={(ccEmail) => setFormData({ ...formData, ccEmail })}
+                                            onChange={(ccEmail) => setFormData((prev) => ({ ...prev, ccEmail }))}
                                             savedEmails={savedEmails}
-                                            lockedEmails={(workflowPreview?.emailRouting?.ccMandatory || []).map(e => String(e).trim().toLowerCase()).filter(Boolean)}
+                                            lockedEmails={
+                                                (workflowPreview?.emailRouting?.ccMandatory || [])
+                                                    .map((e) => String(e).trim().toLowerCase())
+                                                    .filter(Boolean)
+                                            }
                                         />
                                         {(workflowPreview?.emailRouting?.ccMandatory || []).length > 0 && (
                                             <small style={{ color: '#6d28d9', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
                                                 <span style={{ fontSize: '0.7rem' }}>🔒</span>
-                                                Locked emails are mandatory and set by your admin — they cannot be removed.
+                                                Locked emails are mandatory — set by your admin.
                                             </small>
                                         )}
                                         <small style={{ color: '#64748b', fontSize: '0.75rem' }}>
-                                            Type email and press Enter. Paste multiple emails to add all at once.
+                                            Type email and press Enter. Paste to add multiple.
                                         </small>
                                     </FormField>
                                 </div>
-                                
-                                {/* Workflow preview removed from end-user request flow. */}
+
+                                <div className="form-row">
+                                    <FormField label="BCC">
+                                        <EmailChipsInput
+                                            value={formData.bccEmail}
+                                            onChange={(bccEmail) => setFormData((prev) => ({ ...prev, bccEmail }))}
+                                            savedEmails={savedEmails}
+                                            lockedEmails={
+                                                (workflowPreview?.emailRouting?.bccMandatory || [])
+                                                    .map((e) => String(e).trim().toLowerCase())
+                                                    .filter(Boolean)
+                                            }
+                                            placeholder="Type email and press Enter"
+                                        />
+                                        {(workflowPreview?.emailRouting?.bccMandatory || []).length > 0 && (
+                                            <small style={{ color: '#6d28d9', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
+                                                <span style={{ fontSize: '0.7rem' }}>🔒</span>
+                                                Locked BCC emails are mandatory — set by your admin.
+                                            </small>
+                                        )}
+                                        <small style={{ color: '#64748b', fontSize: '0.75rem' }}>
+                                            Recipients receive a hidden copy of this request.
+                                        </small>
+                                    </FormField>
+                                </div>
                                 
                                 <div className="form-checkbox">
                                     <input 

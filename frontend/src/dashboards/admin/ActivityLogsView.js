@@ -119,8 +119,8 @@ const ActivityLogsView = () => {
             {/* Filter bar */}
             <div
                 style={{
-                    background: "#fff",
-                    border: "1px solid #E5E7EB",
+                    background: "var(--card-bg, #fff)",
+                    border: "1px solid var(--border-color, #E5E7EB)",
                     borderRadius: 10,
                     padding: "1rem 1.25rem",
                     marginBottom: "1.25rem",
@@ -209,7 +209,7 @@ const ActivityLogsView = () => {
                     <p style={{ color: "#6B7280" }}>No activity logs found.</p>
                 </div>
             ) : (
-                <div style={{ background: "#fff", border: "1px solid #E5E7EB", borderRadius: 10, overflow: "hidden" }}>
+                <div style={{ background: "var(--card-bg, #fff)", border: "1px solid var(--border-color, #E5E7EB)", borderRadius: 10, overflow: "hidden" }}>
                     {/* Table header */}
                     <div style={tableHeaderStyle}>
                         <div style={{ flex: "0 0 170px" }}>Timestamp</div>
@@ -230,7 +230,7 @@ const ActivityLogsView = () => {
                                     style={{
                                         ...tableRowStyle,
                                         cursor: "pointer",
-                                        background: isExpanded ? "#F9FAFB" : "#fff",
+                                        background: isExpanded ? "var(--surface-muted, #F9FAFB)" : "var(--card-bg, #fff)",
                                     }}
                                     onClick={() => setExpandedRow(isExpanded ? null : log.id)}
                                 >
@@ -328,12 +328,12 @@ const ActivityLogsView = () => {
 // ─── Style helpers ────────────────────────────────────────────────────────────
 
 const inputStyle = (extra = {}) => ({
-    border: "1px solid #D1D5DB",
+    border: "1px solid var(--border-color, #D1D5DB)",
     borderRadius: 7,
     padding: "6px 10px",
     fontSize: "0.83rem",
-    color: "#374151",
-    background: "#fff",
+    color: "var(--text-main, #374151)",
+    background: "var(--card-bg, #fff)",
     outline: "none",
     height: 34,
     ...extra,
@@ -360,11 +360,11 @@ const tableHeaderStyle = {
     display: "flex",
     gap: "0.75rem",
     padding: "0.7rem 1.25rem",
-    background: "#F9FAFB",
-    borderBottom: "1px solid #E5E7EB",
+    background: "var(--surface-muted, #F9FAFB)",
+    borderBottom: "1px solid var(--border-color, #E5E7EB)",
     fontSize: "0.75rem",
     fontWeight: 600,
-    color: "#6B7280",
+    color: "var(--text-muted, #6B7280)",
     textTransform: "uppercase",
     letterSpacing: "0.04em",
 };

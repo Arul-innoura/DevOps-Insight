@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useMsal } from "@azure/msal-react";
-import { 
-    LogOut, 
-    Terminal, 
+import {
+    LogOut,
+    Terminal,
     Activity,
     RefreshCw,
     Filter,
@@ -33,6 +33,7 @@ import {
     Eye,
     EyeOff,
     Coffee,
+    Calendar,
     Moon,
     Shield,
     Database,
@@ -67,8 +68,10 @@ import {
     getStandupNotes,
     addStandupNote,
     getRotaSchedule,
+    getRotaManagementState,
     subscribeDataChanges
 } from "../../services/ticketService";
+import RotaCalendarModal from "../admin/RotaCalendarModal";
 import { openCostEstimateWindow } from "./openCostEstimateWindow";
 import { useRealTimeSync, useConnectionStatus } from "../../services/useRealTimeSync";
 import { 
@@ -81,11 +84,13 @@ import {
     getVolume
 } from "../../services/notificationService";
 import AnalyticsDashboard from "../admin/AnalyticsDashboard";
+import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
 import { useTheme } from "../../services/ThemeContext";
 import { LoadingScreen } from "../../components/LoadingScreen";
+import { signOutRedirectToLogin } from "../../auth/logoutHelper";
 
 const DEVOPS_SIDEBAR_NAV_DEFAULTS = { team: true, account: true };
 
@@ -286,6 +291,9 @@ export const DevOpsDashboard = () => {
     const [memberUpdates, setMemberUpdates] = useState({});
     const [selectedStandupNote, setSelectedStandupNote] = useState(null);
     const [rotaSchedule, setRotaSchedule] = useState([]);
+    const [rotaCalOpen, setRotaCalOpen] = useState(false);
+    const [rotaCalMonth, setRotaCalMonth] = useState(() => new Date());
+    const [rotaMeta, setRotaMeta] = useState({ rotationMode: "DAILY", leaveByDate: {} });
     const [actionLoading, setActionLoading] = useState("");
     const [isSyncing, setIsSyncing] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -376,12 +384,13 @@ export const DevOpsDashboard = () => {
         // Only show syncing on initial load or manual refresh
         if (!silent) setIsSyncing(true);
         try {
-            const [allTickets, statsData, members, standups, rota] = await Promise.all([
+            const [allTickets, statsData, members, standups, rota, rotaMgmt] = await Promise.all([
                 getActiveTicketsForDevOps(),
                 getTicketStats(),
                 getDevOpsTeamMembers(),
                 getStandupNotes(),
-                getRotaSchedule(14, new Date())
+                getRotaSchedule(14, new Date()),
+                getRotaManagementState().catch(() => ({})),
             ]);
             setTickets(allTickets);
             setStats(statsData);
@@ -389,6 +398,10 @@ export const DevOpsDashboard = () => {
             setTeamMembers(members);
             setStandupNotes(standups);
             setRotaSchedule(rota);
+            setRotaMeta({
+                rotationMode: rotaMgmt?.rotationMode || "DAILY",
+                leaveByDate: rotaMgmt?.leaveByDate || {},
+            });
             const currentMember = members.find(m => m.email?.toLowerCase() === userEmail.toLowerCase());
             if (currentMember?.availability) {
                 setMyAvailability(currentMember.availability);
@@ -436,7 +449,7 @@ export const DevOpsDashboard = () => {
     useEffect(() => {
         const unsubscribe = subscribeDataChanges((detail) => {
             if (!detail?.scope) return;
-            if (["tickets", "devops-team", "projects", "managers"].includes(detail.scope)) {
+            if (["tickets", "devops-team", "projects", "managers", "rota"].includes(detail.scope)) {
                 loadTickets(true);
             }
         });
@@ -560,9 +573,9 @@ export const DevOpsDashboard = () => {
             ticket.id === ticketId ? { ...ticket, status: TICKET_STATUS.ACCEPTED, assignedTo: userName } : ticket
         )));
         try {
-            setActionLoading("Accepting ticket...");
-            // First update status to ACCEPTED
-            await updateTicketStatus(ticketId, TICKET_STATUS.ACCEPTED, { name: userName, email: userEmail }, 'Ticket accepted for processing');
+            setActionLoading("Assigning ticket...");
+            // First update status to ACCEPTED (shown as Assigned in UI)
+            await updateTicketStatus(ticketId, TICKET_STATUS.ACCEPTED, { name: userName, email: userEmail }, 'Ticket assigned for processing');
             // Then assign to current user
             const updated = await assignTicket(ticketId, userName, { name: userName, email: userEmail });
             upsertTicketLocally(updated);
@@ -647,9 +660,7 @@ export const DevOpsDashboard = () => {
     };
 
     const handleLogout = () => {
-        instance.logoutRedirect({
-            postLogoutRedirectUri: `${window.location.origin}/login`,
-        });
+        signOutRedirectToLogin(instance);
     };
 
     const handleAvailabilityChange = async (availability) => {
@@ -691,13 +702,13 @@ export const DevOpsDashboard = () => {
             return (
                 <div className="quick-actions" onClick={e => e.stopPropagation()}>
                     <button className="quick-btn accept" onClick={() => handleAcceptTicket(ticket.id)}>
-                        <UserPlus size={14} /> Accept
+                        <UserPlus size={14} /> Assign
                     </button>
                 </div>
             );
         }
 
-        // "Assign Me" removed — Accept already assigns the ticket to the user.
+        // "Assign Me" removed — Assign already takes the ticket to the current user.
 
         const actions = [];
 
@@ -1112,12 +1123,12 @@ export const DevOpsDashboard = () => {
                                                 transition: 'all 0.2s ease'
                                             }}
                                         >
-                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : '🕹️ Retro'}
+                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : t === 'retro' ? '🕹️ Retro' : '🎬 DevOps'}
                                         </button>
                                     ))}
                                 </div>
                             </div>
-                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#f9fafb', borderRadius: 8 }}>
+                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'var(--surface-subtle, #f9fafb)', borderRadius: 8 }}>
                                 <h4 style={{ marginBottom: '0.5rem', color: '#111827' }}>Connection Status</h4>
                                 <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>
                                     Sync Method: <strong>WebSocket (Fastest)</strong>
@@ -1185,10 +1196,9 @@ export const DevOpsDashboard = () => {
                  
                 {/* Content Sections */}
                 {activeSection === 'monitoring' ? (
-                    <AnalyticsDashboard
+                    <EnvMonitoringDashboard
                         tickets={tickets}
                         devOpsMembers={teamMembers}
-                        showCost={true}
                         userRole="devops"
                     />
                 ) : activeSection === 'profile' ? (
@@ -1287,27 +1297,76 @@ export const DevOpsDashboard = () => {
                         </div>
                     </div>
                 ) : activeSection === 'rota' ? (
-                    <div className="tickets-section">
-                        <div className="tickets-header">
-                            <h3>Rota (Night Shift)</h3>
-                        </div>
-                        <div className="tickets-list">
-                            <div className="team-members-grid">
-                                {rotaSchedule.map(day => (
-                                    <div className="team-member-card" key={day.date}>
-                                        <div className="team-member-head">
-                                            <strong>{day.date}</strong>
-                                            <span>{day.dayName}</span>
-                                        </div>
-                                        <p>
-                                            {day.members.length > 0
-                                                ? day.members.map(m => m.name).join(', ')
-                                                : 'No assigned member'}
-                                        </p>
-                                        {day.isManual && <span className="availability-badge availability-busy">Manual</span>}
-                                    </div>
-                                ))}
+                    <div className="tickets-section rota-page-wrap">
+                        <div className="rota-page rota-page--readonly">
+                            <div className="rota-actions-bar">
+                                <div className="rota-actions-bar__left">
+                                    <span className="rota-mode-badge">
+                                        Shift: {String(rotaMeta.rotationMode || "DAILY").toUpperCase() === "WEEKLY" ? "Weekly" : "Daily"}
+                                    </span>
+                                </div>
+                                <div className="rota-actions-bar__btns">
+                                    <button type="button" className="rota-icon-btn" onClick={() => { setRotaCalOpen(true); }}>
+                                        <Calendar size={18} aria-hidden /> Calendar
+                                    </button>
+                                </div>
                             </div>
+                            <RotaCalendarModal
+                                open={rotaCalOpen}
+                                onClose={() => setRotaCalOpen(false)}
+                                isAdmin={false}
+                                initialEdit={false}
+                                calMonth={rotaCalMonth}
+                                onCalMonthChange={setRotaCalMonth}
+                                devOpsMembers={teamMembers}
+                                rotationMode={rotaMeta.rotationMode}
+                                leaveByDate={rotaMeta.leaveByDate}
+                                onUpdated={async () => {
+                                    const [r, s] = await Promise.all([
+                                        getRotaSchedule(14, new Date()),
+                                        getRotaManagementState().catch(() => ({})),
+                                    ]);
+                                    setRotaSchedule(r);
+                                    setRotaMeta({
+                                        rotationMode: s?.rotationMode || "DAILY",
+                                        leaveByDate: s?.leaveByDate || {},
+                                    });
+                                }}
+                            />
+                            <section className="rota-section rota-section--schedule">
+                                <div className="rota-schedule-head">
+                                    <h3 className="rota-section__title">
+                                        <Moon size={18} aria-hidden /> On-call schedule
+                                    </h3>
+                                    <p>Next 14 nights — same rotation as admin. Open the calendar for a full month view. Contact an admin to change assignments.</p>
+                                </div>
+                                <div className="rota-schedule-grid">
+                                    {(rotaSchedule || []).map((day) => {
+                                        const names = (day.members || []).map((m) => m.name).filter(Boolean);
+                                        const s = String(day.date || '');
+                                        const d = s.length <= 10 ? new Date(`${s}T12:00:00`) : new Date(s);
+                                        const short = Number.isNaN(d.getTime()) ? day.date : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+                                        return (
+                                            <div className={`rota-day-card${day.isManual ? ' rota-day-card--manual' : ''}`} key={day.date}>
+                                                <div className="rota-day-card__meta">
+                                                    <span className="rota-day-card__dow">{day.dayName || '—'}</span>
+                                                    <span className="rota-day-card__date">{short}</span>
+                                                </div>
+                                                {names.length > 0 ? (
+                                                    <div className="rota-chip-row">
+                                                        {names.map((n, i) => (
+                                                            <span className="rota-chip" key={`${day.date}-${i}`}>{n}</span>
+                                                        ))}
+                                                    </div>
+                                                ) : (
+                                                    <div className="rota-empty-shift">No assignee</div>
+                                                )}
+                                                {day.isManual && <span className="rota-manual-pill">Manual</span>}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </section>
                         </div>
                     </div>
                 ) : <div className="tickets-section">
@@ -1316,7 +1375,7 @@ export const DevOpsDashboard = () => {
                             {activeSection === 'requests' && requestTab === 'unassigned' && (
                                 <SectionHeader 
                                     title="Unassigned Queue" 
-                                    description="Click 'Accept Ticket' to take ownership"
+                                    description="Click Assign to take ownership from the queue"
                                     count={sectionCounts.unassigned}
                                     icon={Inbox}
                                 />
@@ -1388,7 +1447,7 @@ export const DevOpsDashboard = () => {
                                 </h3>
                                 <p>
                                     {requestTab === 'unassigned' && "All tickets have been assigned. Great job, team!"}
-                                    {requestTab === 'myTickets' && "Accept tickets from the Unassigned queue to get started."}
+                                    {requestTab === 'myTickets' && "Assign tickets from the Unassigned queue to get started."}
                                     {requestTab === 'active' && "No tickets are currently being processed."}
                                     {requestTab === 'history' && "Completed tickets will appear here."}
                                     {requestTab === 'closed' && "Closed tickets will appear in this separate section."}

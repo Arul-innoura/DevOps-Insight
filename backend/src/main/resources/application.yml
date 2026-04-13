@@ -42,12 +42,15 @@ app:
     queue:
       connection-string: ${AZURE_QUEUE_CONNECTION_STRING:}
       queue-name: ${AZURE_QUEUE_NAME:shipit-mail-queue}
+    blob:
+      connection-string: ${AZURE_BLOB_CONNECTION_STRING:}
+      container-name: ${AZURE_BLOB_CONTAINER:shipit-assets}
   email:
     from: ${MAIL_FROM:devopsteam@altermanager.encipherhealth.com}
     devops-to: ${DEVOPS_EMAIL:devopsteam@encipherhealth.com}
     enabled: ${EMAIL_ENABLED:true}
   frontend:
-    url: ${FRONTEND_URL:https://opspilot.encipherhealth.com}
+    url: ${FRONTEND_URL:https://shipit.encipherhealth.com}
   trivy:
     path: ${TRIVY_PATH:trivy}
     timeout: ${TRIVY_TIMEOUT:120}

@@ -72,6 +72,12 @@
 			<artifactId>azure-storage-queue</artifactId>
 			<version>12.22.1</version>
 		</dependency>
+		<!-- Azure Blob Storage for note attachments -->
+		<dependency>
+			<groupId>com.azure</groupId>
+			<artifactId>azure-storage-blob</artifactId>
+			<version>12.27.1</version>
+		</dependency>
 		<!-- Email sending -->
 		<dependency>
 			<groupId>org.springframework.boot</groupId>

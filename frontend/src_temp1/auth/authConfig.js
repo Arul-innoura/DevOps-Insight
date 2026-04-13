@@ -10,7 +10,7 @@ export const msalConfig = {
         // Azure app registration in each environment.
         redirectUri: process.env.REACT_APP_REDIRECT_URI || "http://localhost:3000",
         
-        postLogoutRedirectUri: "/"
+        postLogoutRedirectUri: process.env.REACT_APP_POST_LOGOUT_REDIRECT_URI || `${window.location.origin}/login`
     },
     cache: {
         cacheLocation: "sessionStorage", // This configures where your cache will be stored

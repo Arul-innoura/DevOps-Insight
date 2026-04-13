@@ -47,11 +47,13 @@ import {
     saveMyNotificationPreferences
 } from "../../services/userNotificationService";
 import AnalyticsDashboard from "../admin/AnalyticsDashboard";
+import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
 import { useTheme } from "../../services/ThemeContext";
 import { LoadingScreen } from "../../components/LoadingScreen";
+import { signOutRedirectToLogin } from "../../auth/logoutHelper";
 
 const USER_SIDEBAR_NAV_DEFAULTS = { workspace: true, system: true, account: true };
 
@@ -302,9 +304,7 @@ export const UserDashboard = () => {
     };
     
     const handleLogout = () => {
-        instance.logoutRedirect({
-            postLogoutRedirectUri: `${window.location.origin}/login`,
-        });
+        signOutRedirectToLogin(instance);
     };
 
     const handleSoundToggle = () => {
@@ -618,12 +618,12 @@ export const UserDashboard = () => {
                                                 transition: 'all 0.2s ease'
                                             }}
                                         >
-                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : '🕹️ Retro'}
+                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : t === 'retro' ? '🕹️ Retro' : '🎬 DevOps'}
                                         </button>
                                     ))}
                                 </div>
                             </div>
-                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: '#f9fafb', borderRadius: 8 }}>
+                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'var(--surface-subtle, #f9fafb)', borderRadius: 8 }}>
                                 <h4 style={{ marginBottom: '0.5rem', color: '#111827' }}>Connection Status</h4>
                                 <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>
                                     Sync Method: <strong>WebSocket (Fastest)</strong>
@@ -637,11 +637,10 @@ export const UserDashboard = () => {
                         </div>
                     </div>
                 ) : activeSection === 'monitoring' ? (
-                    <AnalyticsDashboard
+                    <EnvMonitoringDashboard
                         tickets={tickets}
-                        devOpsMembers={devOpsMembers}
                         projects={projects}
-                        showCost={false}
+                        devOpsMembers={devOpsMembers}
                         userRole="user"
                     />
                 ) : activeSection === 'profile' ? (

@@ -14,10 +14,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .allowedOrigins(
                         "http://localhost:3000",
                         "http://localhost:8080",
-                        "http://opspilot.encipherhealht.com",
-                        "https://opspilot.encipherhealht.com",
-                        "http://opspilot.encipherhealth.com",
-                        "https://opspilot.encipherhealth.com"
+                        "http://shipit.encipherhealth.com",
+                        "https://shipit.encipherhealth.com"
                 )
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
@@ -28,10 +26,8 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .allowedOrigins(
                         "http://localhost:3000",
                         "http://localhost:8080",
-                        "http://opspilot.encipherhealht.com",
-                        "https://opspilot.encipherhealht.com",
-                        "http://opspilot.encipherhealth.com",
-                        "https://opspilot.encipherhealth.com"
+                        "http://shipit.encipherhealth.com",
+                        "https://shipit.encipherhealth.com"
                 )
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")

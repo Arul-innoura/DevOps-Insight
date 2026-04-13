@@ -1,5 +1,7 @@
 package com.devops.backend.model;
 
+import com.devops.backend.model.workflow.CloudServiceItem;
+import com.devops.backend.model.workflow.ProjectServiceItem;
 import com.devops.backend.model.workflow.RequestTypeWorkflowOverride;
 import com.devops.backend.model.workflow.WorkflowConfiguration;
 import lombok.AllArgsConstructor;
@@ -40,6 +42,20 @@ public class ProjectWorkflowSettings {
 
     @Builder.Default
     private List<RequestTypeWorkflowOverride> requestTypeOverrides = new ArrayList<>();
+
+    /**
+     * Internal project services configured by admin (e.g. Auth Service, Payment API).
+     * Not visible to end users.
+     */
+    @Builder.Default
+    private List<ProjectServiceItem> projectServices = new ArrayList<>();
+
+    /**
+     * Cloud infrastructure services used by this project (AWS / Azure / GCP).
+     * Not visible to end users.
+     */
+    @Builder.Default
+    private List<CloudServiceItem> cloudServices = new ArrayList<>();
 
     private Instant updatedAt;
     private String updatedBy;

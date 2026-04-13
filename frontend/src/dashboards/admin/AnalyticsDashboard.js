@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import {
     BarChart3,
     TrendingUp,
@@ -19,9 +19,13 @@ import {
     Layers,
     ChevronDown,
     AlertCircle,
-    Zap
+    Zap,
+    Pencil,
+    Save,
+    Loader2
 } from 'lucide-react';
 import { TICKET_STATUS, ENVIRONMENTS, REQUEST_TYPES } from '../../services/ticketService';
+import { getAnalyticsSettings, saveAnalyticsSettings } from '../../services/analyticsSettingsService';
 
 /* ═══════════════════════════════════════════════════
    SHARED HELPERS
@@ -48,7 +52,7 @@ const maxVal = (entries) =>
     entries.length > 0 ? Math.max(...entries.map(e => e[1])) : 1;
 
 const fmtCurrency = (amount, currency = 'USD') => {
-    const symbols = { USD: '$', INR: '₹' };
+    const symbols = { USD: '$', INR: '₹', AED: 'د.إ', QAR: 'ر.ق', SAR: '﷼', EUR: '€' };
     const sym = symbols[currency] || currency + ' ';
     return `${sym}${Number(amount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
@@ -64,6 +68,110 @@ const monthLabel = (key) => {
 };
 
 const daysInMonth = (year, month) => new Date(year, month, 0).getDate();
+
+const clamp0 = (n) => Math.max(0, Math.round(Number.isFinite(Number(n)) ? Number(n) : 0));
+
+function normalizeAnalyticsSettings(raw) {
+    const s = raw && typeof raw === 'object' ? raw : {};
+    return {
+        id: s.id || 'global',
+        overviewMetricDeltas: { ...(s.overviewMetricDeltas || {}) },
+        dayTrafficDeltas: Array.isArray(s.dayTrafficDeltas) ? [...s.dayTrafficDeltas] : [],
+        monthTrafficDeltas: Array.isArray(s.monthTrafficDeltas) ? [...s.monthTrafficDeltas] : [],
+        envTrafficDeltas: Array.isArray(s.envTrafficDeltas) ? [...s.envTrafficDeltas] : [],
+        updatedAt: s.updatedAt,
+        updatedBy: s.updatedBy,
+    };
+}
+
+function mergeTrafficDaySeries(baseIng, baseEg, viewYear, viewMonth, viewEnv, deltas) {
+    const envKey = viewEnv || '';
+    const ing = { ...baseIng };
+    const eg = { ...baseEg };
+    const addIng = {};
+    const addEg = {};
+    (deltas || []).forEach((d) => {
+        if (d.year !== viewYear || d.month !== viewMonth) return;
+        if ((d.environment || '') !== envKey) return;
+        const day = d.day;
+        addIng[day] = (addIng[day] || 0) + (d.ingressDelta || 0);
+        addEg[day] = (addEg[day] || 0) + (d.egressDelta || 0);
+    });
+    Object.keys(addIng).forEach((k) => {
+        const day = Number(k);
+        ing[day] = clamp0((ing[day] || 0) + addIng[day]);
+    });
+    Object.keys(addEg).forEach((k) => {
+        const day = Number(k);
+        eg[day] = clamp0((eg[day] || 0) + addEg[day]);
+    });
+    return { ingress: ing, egress: eg };
+}
+
+function sumMonthTrafficDelta(yearMonth, deltas) {
+    let ing = 0;
+    let eg = 0;
+    (deltas || []).forEach((m) => {
+        if (m.yearMonth === yearMonth) {
+            ing += m.ingressDelta || 0;
+            eg += m.egressDelta || 0;
+        }
+    });
+    return { ingressDelta: ing, egressDelta: eg };
+}
+
+function mergeMonthlyTrafficRows(monthRows, monthDeltas) {
+    const deltaAgg = new Map();
+    (monthDeltas || []).forEach((m) => {
+        if (!m || !m.yearMonth) return;
+        const prev = deltaAgg.get(m.yearMonth) || { i: 0, e: 0 };
+        deltaAgg.set(m.yearMonth, {
+            i: prev.i + (m.ingressDelta || 0),
+            e: prev.e + (m.egressDelta || 0),
+        });
+    });
+    const map = new Map(monthRows);
+    deltaAgg.forEach((de, ym) => {
+        const cur = map.get(ym) || { ingress: 0, egress: 0 };
+        map.set(ym, {
+            ingress: clamp0(cur.ingress + de.i),
+            egress: clamp0(cur.egress + de.e),
+        });
+    });
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+}
+
+function mergeEnvTrafficRows(rows, envDeltas) {
+    const deltaByEnv = new Map();
+    (envDeltas || []).forEach((ex) => {
+        const env = ex.environment || '';
+        const prev = deltaByEnv.get(env) || { ingressDelta: 0, egressDelta: 0 };
+        deltaByEnv.set(env, {
+            ingressDelta: prev.ingressDelta + (ex.ingressDelta || 0),
+            egressDelta: prev.egressDelta + (ex.egressDelta || 0),
+        });
+    });
+    const seen = new Set();
+    const merged = rows.map(([env, data]) => {
+        seen.add(env);
+        const ex = deltaByEnv.get(env) || { ingressDelta: 0, egressDelta: 0 };
+        const ingress = clamp0(data.ingress + (ex.ingressDelta || 0));
+        const egress = clamp0(data.egress + (ex.egressDelta || 0));
+        return [env, { ingress, egress, total: ingress + egress }];
+    });
+    deltaByEnv.forEach((agg, env) => {
+        if (!env || seen.has(env)) return;
+        merged.push([
+            env,
+            {
+                ingress: clamp0(agg.ingressDelta || 0),
+                egress: clamp0(agg.egressDelta || 0),
+                total: clamp0((agg.ingressDelta || 0) + (agg.egressDelta || 0)),
+            },
+        ]);
+    });
+    return merged.sort((a, b) => b[1].total - a[1].total);
+}
 
 /* ═══════════════════════════════════════════════════
    REUSABLE CHART COMPONENTS
@@ -188,6 +296,48 @@ const AnalyticsDashboard = ({ tickets = [], devOpsMembers = [], projects = [], s
     const [filterEnv, setFilterEnv] = useState('');
     const [filterProduct, setFilterProduct] = useState('');
     const [selectedMonths, setSelectedMonths] = useState([]);
+    const [analyticsSettings, setAnalyticsSettings] = useState(null);
+    const [savingAnalytics, setSavingAnalytics] = useState(false);
+
+    const isAdminRole = String(userRole || '').toLowerCase() === 'admin';
+
+    useEffect(() => {
+        let cancelled = false;
+        getAnalyticsSettings()
+            .then((raw) => {
+                if (!cancelled) setAnalyticsSettings(normalizeAnalyticsSettings(raw));
+            })
+            .catch(() => {
+                if (!cancelled) setAnalyticsSettings(normalizeAnalyticsSettings(null));
+            });
+        return () => { cancelled = true; };
+    }, []);
+
+    const persistAnalyticsSettings = useCallback(async (next) => {
+        setSavingAnalytics(true);
+        try {
+            const saved = await saveAnalyticsSettings(normalizeAnalyticsSettings(next));
+            setAnalyticsSettings(normalizeAnalyticsSettings(saved));
+        } catch (e) {
+            window.alert(e?.message || 'Failed to save analytics settings');
+        } finally {
+            setSavingAnalytics(false);
+        }
+    }, []);
+
+    const patchOverviewMetricDelta = useCallback((key, rawVal) => {
+        setAnalyticsSettings((prev) => {
+            const base = normalizeAnalyticsSettings(prev);
+            const nextOd = { ...base.overviewMetricDeltas };
+            const n = Number(rawVal);
+            if (rawVal === '' || rawVal === null || rawVal === undefined || !Number.isFinite(n)) {
+                delete nextOd[key];
+            } else {
+                nextOd[key] = Math.round(n);
+            }
+            return { ...base, overviewMetricDeltas: nextOd };
+        });
+    }, []);
 
     // Derive available months from tickets
     const availableMonths = useMemo(() => {
@@ -231,7 +381,7 @@ const AnalyticsDashboard = ({ tickets = [], devOpsMembers = [], projects = [], s
         borderRadius: '8px',
         fontSize: '0.8125rem',
         color: '#374151',
-        background: '#fff',
+        background: 'var(--card-bg, #fff)',
         cursor: 'pointer',
         outline: 'none',
         appearance: 'none',
@@ -291,9 +441,27 @@ const AnalyticsDashboard = ({ tickets = [], devOpsMembers = [], projects = [], s
             )}
 
             {/* ─── View Content ─── */}
-            {activeView === 'overview' && <OverviewView tickets={filtered} />}
+            {activeView === 'overview' && (
+                <OverviewView
+                    tickets={filtered}
+                    analyticsSettings={analyticsSettings}
+                    isAdminRole={isAdminRole}
+                    patchOverviewMetricDelta={patchOverviewMetricDelta}
+                    onPersistAnalytics={persistAnalyticsSettings}
+                    savingAnalytics={savingAnalytics}
+                />
+            )}
             {activeView === 'infrastructure' && <InfrastructureView tickets={filtered} />}
-            {activeView === 'traffic' && <TrafficView tickets={filtered} />}
+            {activeView === 'traffic' && (
+                <TrafficView
+                    tickets={filtered}
+                    analyticsSettings={analyticsSettings}
+                    setAnalyticsSettings={setAnalyticsSettings}
+                    isAdminRole={isAdminRole}
+                    onPersistAnalytics={persistAnalyticsSettings}
+                    savingAnalytics={savingAnalytics}
+                />
+            )}
             {activeView === 'cost' && canViewCost && <CostView tickets={filtered} selectedMonths={selectedMonths} availableMonths={availableMonths} />}
             {activeView === 'team' && <TeamView tickets={filtered} devOpsMembers={devOpsMembers} />}
         </div>
@@ -304,12 +472,26 @@ const AnalyticsDashboard = ({ tickets = [], devOpsMembers = [], projects = [], s
    VIEW: OVERVIEW
    ═══════════════════════════════════════════════════ */
 
-const OverviewView = ({ tickets }) => {
-    const total = tickets.length;
-    const resolved = tickets.filter(t => [TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(t.status)).length;
-    const inProgress = tickets.filter(t => t.status === TICKET_STATUS.IN_PROGRESS).length;
-    const pending = tickets.filter(t => t.status === TICKET_STATUS.CREATED).length;
-    const actionRequired = tickets.filter(t => t.status === TICKET_STATUS.ACTION_REQUIRED).length;
+const OverviewView = ({
+    tickets,
+    analyticsSettings,
+    isAdminRole,
+    patchOverviewMetricDelta,
+    onPersistAnalytics,
+    savingAnalytics,
+}) => {
+    const od = analyticsSettings?.overviewMetricDeltas || {};
+    const total = clamp0(tickets.length + (od.totalDelta || 0));
+    const resolved = clamp0(
+        tickets.filter(t => [TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(t.status)).length + (od.resolvedDelta || 0)
+    );
+    const inProgress = clamp0(
+        tickets.filter(t => t.status === TICKET_STATUS.IN_PROGRESS).length + (od.inProgressDelta || 0)
+    );
+    const pending = clamp0(tickets.filter(t => t.status === TICKET_STATUS.CREATED).length + (od.pendingDelta || 0));
+    const actionRequired = clamp0(
+        tickets.filter(t => t.status === TICKET_STATUS.ACTION_REQUIRED).length + (od.actionRequiredDelta || 0)
+    );
 
     const avgResolutionDays = useMemo(() => {
         const done = tickets.filter(t => t.status === TICKET_STATUS.COMPLETED && t.createdAt);
@@ -443,6 +625,46 @@ const OverviewView = ({ tickets }) => {
                     <HorizontalBarChart data={byMonth} color="#0891b2" />
                 </div>
             </div>
+
+            {isAdminRole && (
+                <div className="sa-card sa-card-full sa-admin-corrections">
+                    <h3 className="sa-card-title"><Pencil size={18} /> Admin — overview KPI adjustments</h3>
+                    <p className="sa-admin-hint">
+                        Values below are <strong>added</strong> to ticket-based counts for dashboards and reporting. Leave blank to use tickets only.
+                    </p>
+                    <div className="sa-admin-kpi-grid">
+                        {[
+                            { key: 'totalDelta', label: 'Total tickets Δ' },
+                            { key: 'resolvedDelta', label: 'Resolved Δ' },
+                            { key: 'inProgressDelta', label: 'In progress Δ' },
+                            { key: 'pendingDelta', label: 'Pending Δ' },
+                            { key: 'actionRequiredDelta', label: 'Action required Δ' },
+                        ].map(({ key, label }) => (
+                            <label key={key} className="sa-admin-field">
+                                <span>{label}</span>
+                                <input
+                                    type="number"
+                                    className="sa-admin-input"
+                                    value={od[key] != null && od[key] !== '' ? String(od[key]) : ''}
+                                    onChange={(e) => patchOverviewMetricDelta(key, e.target.value)}
+                                    placeholder="0"
+                                />
+                            </label>
+                        ))}
+                    </div>
+                    <div className="sa-admin-actions">
+                        <button
+                            type="button"
+                            className="sa-admin-save-btn"
+                            disabled={savingAnalytics || !analyticsSettings}
+                            onClick={() => onPersistAnalytics(normalizeAnalyticsSettings(analyticsSettings))}
+                        >
+                            {savingAnalytics ? <Loader2 size={16} className="sa-spin" /> : <Save size={16} />}
+                            Save overview adjustments
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -573,11 +795,71 @@ const InfrastructureView = ({ tickets }) => {
    VIEW: TRAFFIC (INGRESS / EGRESS)
    ═══════════════════════════════════════════════════ */
 
-const TrafficView = ({ tickets }) => {
+function upsertDayTrafficDelta(list, row) {
+    const env = row.environment || '';
+    const idx = list.findIndex(
+        (d) => d.year === row.year && d.month === row.month && d.day === row.day && (d.environment || '') === env
+    );
+    const next = [...list];
+    const ing = Math.round(Number(row.ingressDelta) || 0);
+    const eg = Math.round(Number(row.egressDelta) || 0);
+    if (ing === 0 && eg === 0) {
+        if (idx >= 0) next.splice(idx, 1);
+    } else if (idx >= 0) {
+        next[idx] = { year: row.year, month: row.month, day: row.day, environment: env, ingressDelta: ing, egressDelta: eg };
+    } else {
+        next.push({ year: row.year, month: row.month, day: row.day, environment: env, ingressDelta: ing, egressDelta: eg });
+    }
+    return next;
+}
+
+function upsertMonthTrafficDelta(list, yearMonth, ingressDelta, egressDelta) {
+    const next = [...list];
+    const idx = next.findIndex((m) => m.yearMonth === yearMonth);
+    const ing = Math.round(Number(ingressDelta) || 0);
+    const eg = Math.round(Number(egressDelta) || 0);
+    if (ing === 0 && eg === 0) {
+        if (idx >= 0) next.splice(idx, 1);
+    } else if (idx >= 0) {
+        next[idx] = { yearMonth, ingressDelta: ing, egressDelta: eg };
+    } else {
+        next.push({ yearMonth, ingressDelta: ing, egressDelta: eg });
+    }
+    return next;
+}
+
+function upsertEnvTrafficDelta(list, environment, ingressDelta, egressDelta) {
+    const env = environment || '';
+    const next = [...list];
+    const idx = next.findIndex((e) => (e.environment || '') === env);
+    const ing = Math.round(Number(ingressDelta) || 0);
+    const eg = Math.round(Number(egressDelta) || 0);
+    if (ing === 0 && eg === 0) {
+        if (idx >= 0) next.splice(idx, 1);
+    } else if (idx >= 0) {
+        next[idx] = { environment: env, ingressDelta: ing, egressDelta: eg };
+    } else {
+        next.push({ environment: env, ingressDelta: ing, egressDelta: eg });
+    }
+    return next;
+}
+
+const TrafficView = ({
+    tickets,
+    analyticsSettings,
+    setAnalyticsSettings,
+    isAdminRole,
+    onPersistAnalytics,
+    savingAnalytics,
+}) => {
     const now = new Date();
     const [viewMonth, setViewMonth] = useState(now.getMonth() + 1);
     const [viewYear, setViewYear] = useState(now.getFullYear());
     const [viewEnv, setViewEnv] = useState('');
+    const [showTrafficAdmin, setShowTrafficAdmin] = useState(false);
+    const [newEnvName, setNewEnvName] = useState('');
+
+    const norm = normalizeAnalyticsSettings(analyticsSettings);
 
     const ingressTickets = useMemo(() =>
         tickets.filter(t => t.requestType === REQUEST_TYPES.ENVIRONMENT_UP || t.requestType === 'Environment Up'),
@@ -589,8 +871,7 @@ const TrafficView = ({ tickets }) => {
     const totalIngress = ingressTickets.length;
     const totalEgress = egressTickets.length;
 
-    // Daily breakdown for chart
-    const { ingress, egress } = useMemo(() => {
+    const baseTrafficSeries = useMemo(() => {
         const ing = {};
         const eg = {};
         const filterByMonthYear = (t) => {
@@ -611,7 +892,18 @@ const TrafficView = ({ tickets }) => {
         return { ingress: ing, egress: eg };
     }, [ingressTickets, egressTickets, viewMonth, viewYear, viewEnv]);
 
-    // Monthly trend data
+    const { ingress, egress } = useMemo(
+        () => mergeTrafficDaySeries(
+            baseTrafficSeries.ingress,
+            baseTrafficSeries.egress,
+            viewYear,
+            viewMonth,
+            viewEnv,
+            norm.dayTrafficDeltas
+        ),
+        [baseTrafficSeries, viewYear, viewMonth, viewEnv, analyticsSettings]
+    );
+
     const monthlyTraffic = useMemo(() => {
         const map = {};
         [...ingressTickets, ...egressTickets].forEach(t => {
@@ -627,7 +919,11 @@ const TrafficView = ({ tickets }) => {
         return Object.entries(map).sort((a, b) => a[0].localeCompare(b[0]));
     }, [ingressTickets, egressTickets]);
 
-    // By environment
+    const monthlyTrafficDisplay = useMemo(
+        () => mergeMonthlyTrafficRows(monthlyTraffic, norm.monthTrafficDeltas),
+        [monthlyTraffic, analyticsSettings]
+    );
+
     const byEnvTraffic = useMemo(() => {
         const map = {};
         const allTraffic = [...ingressTickets, ...egressTickets];
@@ -644,13 +940,90 @@ const TrafficView = ({ tickets }) => {
         return Object.entries(map).sort((a, b) => b[1].total - a[1].total);
     }, [ingressTickets, egressTickets]);
 
+    const byEnvTrafficDisplay = useMemo(
+        () => mergeEnvTrafficRows(byEnvTraffic, norm.envTrafficDeltas),
+        [byEnvTraffic, analyticsSettings]
+    );
+
+    const numDays = useMemo(() => daysInMonth(viewYear, viewMonth), [viewYear, viewMonth]);
+    const dayNumbers = useMemo(() => Array.from({ length: numDays }, (_, i) => i + 1), [numDays]);
+
+    const patchDayDelta = (day, field, rawVal) => {
+        setAnalyticsSettings((prev) => {
+            const base = normalizeAnalyticsSettings(prev);
+            const envKey = viewEnv || '';
+            const idx = base.dayTrafficDeltas.findIndex(
+                (d) => d.year === viewYear && d.month === viewMonth && d.day === day && (d.environment || '') === envKey
+            );
+            const cur = idx >= 0 ? base.dayTrafficDeltas[idx] : { ingressDelta: 0, egressDelta: 0 };
+            const ing = field === 'ingress' ? rawVal : cur.ingressDelta;
+            const eg = field === 'egress' ? rawVal : cur.egressDelta;
+            return {
+                ...base,
+                dayTrafficDeltas: upsertDayTrafficDelta(base.dayTrafficDeltas, {
+                    year: viewYear,
+                    month: viewMonth,
+                    day,
+                    environment: envKey,
+                    ingressDelta: ing,
+                    egressDelta: eg,
+                }),
+            };
+        });
+    };
+
+    const patchMonthRow = (yearMonth, field, rawVal) => {
+        setAnalyticsSettings((prev) => {
+            const base = normalizeAnalyticsSettings(prev);
+            const idx = base.monthTrafficDeltas.findIndex((m) => m.yearMonth === yearMonth);
+            const cur = idx >= 0 ? base.monthTrafficDeltas[idx] : { ingressDelta: 0, egressDelta: 0 };
+            const ing = field === 'ingress' ? rawVal : cur.ingressDelta;
+            const eg = field === 'egress' ? rawVal : cur.egressDelta;
+            return { ...base, monthTrafficDeltas: upsertMonthTrafficDelta(base.monthTrafficDeltas, yearMonth, ing, eg) };
+        });
+    };
+
+    const patchEnvRow = (environment, field, rawVal) => {
+        setAnalyticsSettings((prev) => {
+            const base = normalizeAnalyticsSettings(prev);
+            const env = environment || '';
+            const idx = base.envTrafficDeltas.findIndex((e) => (e.environment || '') === env);
+            const cur = idx >= 0 ? base.envTrafficDeltas[idx] : { ingressDelta: 0, egressDelta: 0 };
+            const ing = field === 'ingress' ? rawVal : cur.ingressDelta;
+            const eg = field === 'egress' ? rawVal : cur.egressDelta;
+            return { ...base, envTrafficDeltas: upsertEnvTrafficDelta(base.envTrafficDeltas, environment, ing, eg) };
+        });
+    };
+
+    const appendEnvTrafficRow = (nameRaw) => {
+        const name = (nameRaw || '').trim();
+        if (!name) return;
+        setAnalyticsSettings((prev) => {
+            const base = normalizeAnalyticsSettings(prev);
+            if (base.envTrafficDeltas.some((e) => (e.environment || '') === name)) return base;
+            return {
+                ...base,
+                envTrafficDeltas: [...base.envTrafficDeltas, { environment: name, ingressDelta: 0, egressDelta: 0 }],
+            };
+        });
+        setNewEnvName('');
+    };
+
+    const getDayDelta = (day) => {
+        const envKey = viewEnv || '';
+        const d = norm.dayTrafficDeltas.find(
+            (x) => x.year === viewYear && x.month === viewMonth && x.day === day && (x.environment || '') === envKey
+        );
+        return { ing: d?.ingressDelta || 0, eg: d?.egressDelta || 0 };
+    };
+
     const SELECT_STYLE = {
         padding: '0.35rem 1.8rem 0.35rem 0.6rem',
         border: '1px solid #d1d5db',
         borderRadius: '7px',
         fontSize: '0.8rem',
         color: '#374151',
-        background: '#fff',
+        background: 'var(--card-bg, #fff)',
         cursor: 'pointer',
         appearance: 'none',
         backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")",
@@ -660,18 +1033,11 @@ const TrafficView = ({ tickets }) => {
 
     return (
         <div className="sa-view-content">
-            <div className="sa-metrics-grid">
-                <MetricCard icon={ArrowUpCircle} label="Total Ingress" value={totalIngress} color="#22c55e" sub="Environment Up" />
-                <MetricCard icon={ArrowDownCircle} label="Total Egress" value={totalEgress} color="#ef4444" sub="Environment Down" />
-                <MetricCard icon={Activity} label="Net Flow" value={totalIngress - totalEgress} color={totalIngress >= totalEgress ? '#22c55e' : '#ef4444'} />
-                <MetricCard icon={Globe} label="Environments" value={byEnvTraffic.length} color="#2563eb" />
-            </div>
-
-            {/* Daily Chart */}
+            {/* Daily bar chart first on Traffic view */}
             <div className="sa-card sa-card-full">
                 <div className="sa-card-header-row">
-                    <h3 className="sa-card-title"><Activity size={18} /> Daily Traffic</h3>
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    <h3 className="sa-card-title"><Activity size={18} /> Daily Activity</h3>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                         <select value={viewEnv} onChange={e => setViewEnv(e.target.value)} style={SELECT_STYLE}>
                             <option value="">All Envs</option>
                             {ENVIRONMENTS.map(e => <option key={e} value={e}>{e}</option>)}
@@ -690,7 +1056,7 @@ const TrafficView = ({ tickets }) => {
                     </div>
                 </div>
                 <DailyBarChart
-                    days={daysInMonth(viewYear, viewMonth)}
+                    days={numDays}
                     ingress={ingress}
                     egress={egress}
                     month={viewMonth}
@@ -698,8 +1064,191 @@ const TrafficView = ({ tickets }) => {
                 />
             </div>
 
-            {/* By Environment table */}
-            {byEnvTraffic.length > 0 && (
+            {isAdminRole && (
+                <div className="sa-card sa-card-full sa-admin-corrections">
+                    <div className="sa-admin-corrections-head">
+                        <h3 className="sa-card-title" style={{ margin: 0 }}><Pencil size={18} /> Admin — traffic corrections</h3>
+                        <button
+                            type="button"
+                            className="sa-admin-toggle-btn"
+                            onClick={() => setShowTrafficAdmin((v) => !v)}
+                        >
+                            {showTrafficAdmin ? 'Hide editor' : 'Show editor'}
+                        </button>
+                    </div>
+                    <p className="sa-admin-hint">
+                        Adjustments are <strong>added</strong> to ticket-based Environment Up / Down counts. Use the same month and environment selectors as the chart above. Save persists for all users.
+                    </p>
+                    {showTrafficAdmin && (
+                        <>
+                            <h4 className="sa-admin-subtitle">Daily deltas ({viewYear}-{String(viewMonth).padStart(2, '0')}, {viewEnv || 'All envs'})</h4>
+                            <div className="sa-table-wrap sa-admin-day-table-wrap">
+                                <table className="sa-table sa-admin-compact-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Day</th>
+                                            <th>Tickets ↑</th>
+                                            <th>Tickets ↓</th>
+                                            <th>Adj ↑</th>
+                                            <th>Adj ↓</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {dayNumbers.map((d) => {
+                                            const adj = getDayDelta(d);
+                                            const bi = baseTrafficSeries.ingress[d] || 0;
+                                            const be = baseTrafficSeries.egress[d] || 0;
+                                            return (
+                                                <tr key={d}>
+                                                    <td className="sa-td-bold">{d}</td>
+                                                    <td>{bi}</td>
+                                                    <td>{be}</td>
+                                                    <td>
+                                                        <input
+                                                            className="sa-admin-input sa-admin-input--sm"
+                                                            type="number"
+                                                            value={adj.ing !== 0 ? String(adj.ing) : ''}
+                                                            placeholder="0"
+                                                            onChange={(e) => patchDayDelta(d, 'ingress', e.target.value)}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <input
+                                                            className="sa-admin-input sa-admin-input--sm"
+                                                            type="number"
+                                                            value={adj.eg !== 0 ? String(adj.eg) : ''}
+                                                            placeholder="0"
+                                                            onChange={(e) => patchDayDelta(d, 'egress', e.target.value)}
+                                                        />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4 className="sa-admin-subtitle">Monthly table deltas (yyyy-MM)</h4>
+                            <div className="sa-table-wrap">
+                                <table className="sa-table">
+                                    <thead>
+                                        <tr><th>Month</th><th>Tickets ↑</th><th>Tickets ↓</th><th>Adj ↑</th><th>Adj ↓</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        {monthlyTraffic.map(([ym, data]) => {
+                                            const sm = sumMonthTrafficDelta(ym, norm.monthTrafficDeltas);
+                                            return (
+                                                <tr key={ym}>
+                                                    <td className="sa-td-bold">{monthLabel(ym)}</td>
+                                                    <td>{data.ingress}</td>
+                                                    <td>{data.egress}</td>
+                                                    <td>
+                                                        <input
+                                                            className="sa-admin-input sa-admin-input--sm"
+                                                            type="number"
+                                                            value={sm.ingressDelta !== 0 ? String(sm.ingressDelta) : ''}
+                                                            placeholder="0"
+                                                            onChange={(e) => patchMonthRow(ym, 'ingress', e.target.value)}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <input
+                                                            className="sa-admin-input sa-admin-input--sm"
+                                                            type="number"
+                                                            value={sm.egressDelta !== 0 ? String(sm.egressDelta) : ''}
+                                                            placeholder="0"
+                                                            onChange={(e) => patchMonthRow(ym, 'egress', e.target.value)}
+                                                        />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <h4 className="sa-admin-subtitle">By environment deltas</h4>
+                            <div className="sa-table-wrap">
+                                <table className="sa-table">
+                                    <thead>
+                                        <tr><th>Environment</th><th>Tickets ↑</th><th>Tickets ↓</th><th>Adj ↑</th><th>Adj ↓</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        {byEnvTraffic.map(([env, data]) => {
+                                            const ex = norm.envTrafficDeltas.find((r) => (r.environment || '') === env) || {};
+                                            return (
+                                                <tr key={env}>
+                                                    <td className="sa-td-bold">{env}</td>
+                                                    <td>{data.ingress}</td>
+                                                    <td>{data.egress}</td>
+                                                    <td>
+                                                        <input
+                                                            className="sa-admin-input sa-admin-input--sm"
+                                                            type="number"
+                                                            value={(ex.ingressDelta || 0) !== 0 ? String(ex.ingressDelta || 0) : ''}
+                                                            placeholder="0"
+                                                            onChange={(e) => patchEnvRow(env, 'ingress', e.target.value)}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <input
+                                                            className="sa-admin-input sa-admin-input--sm"
+                                                            type="number"
+                                                            value={(ex.egressDelta || 0) !== 0 ? String(ex.egressDelta || 0) : ''}
+                                                            placeholder="0"
+                                                            onChange={(e) => patchEnvRow(env, 'egress', e.target.value)}
+                                                        />
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                        <tr className="sa-admin-new-env-row">
+                                            <td colSpan={3}>
+                                                <input
+                                                    className="sa-admin-input"
+                                                    placeholder="Other environment name"
+                                                    value={newEnvName}
+                                                    onChange={(e) => setNewEnvName(e.target.value)}
+                                                />
+                                            </td>
+                                            <td colSpan={2}>
+                                                <button
+                                                    type="button"
+                                                    className="sa-admin-secondary-btn"
+                                                    onClick={() => appendEnvTrafficRow(newEnvName)}
+                                                >
+                                                    Add row
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div className="sa-admin-actions">
+                                <button
+                                    type="button"
+                                    className="sa-admin-save-btn"
+                                    disabled={savingAnalytics || !analyticsSettings}
+                                    onClick={() => onPersistAnalytics(normalizeAnalyticsSettings(analyticsSettings))}
+                                >
+                                    {savingAnalytics ? <Loader2 size={16} className="sa-spin" /> : <Save size={16} />}
+                                    Save traffic adjustments
+                                </button>
+                            </div>
+                        </>
+                    )}
+                </div>
+            )}
+
+            <div className="sa-metrics-grid">
+                <MetricCard icon={ArrowUpCircle} label="Total Ingress" value={totalIngress} color="#22c55e" sub="Environment Up (from tickets)" />
+                <MetricCard icon={ArrowDownCircle} label="Total Egress" value={totalEgress} color="#ef4444" sub="Environment Down (from tickets)" />
+                <MetricCard icon={Activity} label="Net Flow" value={totalIngress - totalEgress} color={totalIngress >= totalEgress ? '#22c55e' : '#ef4444'} />
+                <MetricCard icon={Globe} label="Environments" value={byEnvTrafficDisplay.length} color="#2563eb" />
+            </div>
+
+            {byEnvTrafficDisplay.length > 0 && (
                 <div className="sa-card sa-card-full">
                     <h3 className="sa-card-title"><Globe size={18} /> Traffic by Environment</h3>
                     <div className="sa-table-wrap">
@@ -714,7 +1263,7 @@ const TrafficView = ({ tickets }) => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {byEnvTraffic.map(([env, data], i) => (
+                                {byEnvTrafficDisplay.map(([env, data], i) => (
                                     <tr key={env} className={i % 2 === 0 ? 'even' : ''}>
                                         <td className="sa-td-bold">{env}</td>
                                         <td style={{ color: '#16a34a' }}>{data.ingress}</td>
@@ -733,8 +1282,7 @@ const TrafficView = ({ tickets }) => {
                 </div>
             )}
 
-            {/* Monthly Trend */}
-            {monthlyTraffic.length > 0 && (
+            {monthlyTrafficDisplay.length > 0 && (
                 <div className="sa-card sa-card-full">
                     <h3 className="sa-card-title"><TrendingUp size={18} /> Monthly Traffic Trend</h3>
                     <div className="sa-table-wrap">
@@ -743,7 +1291,7 @@ const TrafficView = ({ tickets }) => {
                                 <tr><th>Month</th><th>↑ Ingress</th><th>↓ Egress</th><th>Net</th></tr>
                             </thead>
                             <tbody>
-                                {monthlyTraffic.map(([month, data], i) => (
+                                {monthlyTrafficDisplay.map(([month, data], i) => (
                                     <tr key={month} className={i % 2 === 0 ? 'even' : ''}>
                                         <td className="sa-td-bold">{monthLabel(month)}</td>
                                         <td style={{ color: '#16a34a' }}>{data.ingress}</td>

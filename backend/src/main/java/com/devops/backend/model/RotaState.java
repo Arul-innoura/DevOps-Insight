@@ -32,6 +32,11 @@ public class RotaState {
     @Builder.Default
     private Map<String, List<String>> manualAssignments = new HashMap<>();
 
+    /**
+     * DAILY = rotate primary each day (classic). WEEKLY = same primary Mon–Sun unless leave/manual adds coverage.
+     */
+    private String rotationMode;
+
     private String startDate;
     private Instant updatedAt;
     private String updatedBy;

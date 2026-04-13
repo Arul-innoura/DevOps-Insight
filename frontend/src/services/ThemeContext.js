@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 
 const THEME_KEY = 'shipit_theme';
-const THEMES = ['light', 'dark', 'retro'];
+const THEMES = ['light', 'dark', 'retro', 'devops'];
 
 const ThemeContext = createContext({ theme: 'light', setTheme: () => {}, themes: THEMES });
 

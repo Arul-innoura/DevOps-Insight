@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SplashCursor from '../auth/SplashCursor';
 
 const MESSAGES = [
     "Warming up the engines...",
@@ -6,12 +7,6 @@ const MESSAGES = [
     "Fetching live data...",
     "Almost ready to ship! 🎯",
 ];
-
-const ROLE_GRADIENTS = {
-    admin:  { a: '#0f172a', b: '#1e3a8a', c: '#1d4ed8' },
-    devops: { a: '#042f2e', b: '#0e4f6b', c: '#0891b2' },
-    user:   { a: '#1e1b4b', b: '#3730a3', c: '#7c3aed' },
-};
 
 export const LoadingScreen = ({ role = 'user' }) => {
     const [msgIdx, setMsgIdx] = useState(0);
@@ -21,18 +16,19 @@ export const LoadingScreen = ({ role = 'user' }) => {
         return () => clearInterval(msgTimer);
     }, []);
 
-    const g = ROLE_GRADIENTS[role] || ROLE_GRADIENTS.user;
-
     return (
-        <div
-            className="sl-screen"
-            style={{ background: `linear-gradient(145deg, ${g.a} 0%, ${g.b} 55%, ${g.c} 100%)` }}
-        >
-            {/* Floating orbs */}
-            <div className="sl-orb sl-orb1" />
-            <div className="sl-orb sl-orb2" />
-            <div className="sl-orb sl-orb3" />
-
+        <div className="sl-screen sl-screen--light">
+            <SplashCursor
+                SIM_RESOLUTION={128}
+                DYE_RESOLUTION={768}
+                SPLAT_FORCE={4800}
+                CURL={2.8}
+                DENSITY_DISSIPATION={3.2}
+                COLOR_UPDATE_SPEED={8}
+                BACK_COLOR={{ r: 0.94, g: 0.96, b: 0.99 }}
+                TRANSPARENT
+                SHADING
+            />
             <div className="sl-card">
                 {/* Rocket scene */}
                 <div className="sl-rocket-scene">

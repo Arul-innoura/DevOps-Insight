@@ -17,6 +17,7 @@ public class EmailMessage implements Serializable {
     private static final long serialVersionUID = 1L;
     
     private String to;
+    private List<String> toList;
     private List<String> cc;
     private List<String> bcc;
     private String subject;
