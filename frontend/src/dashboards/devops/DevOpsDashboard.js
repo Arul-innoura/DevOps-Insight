@@ -300,6 +300,8 @@ export const DevOpsDashboard = () => {
     const [isSyncing, setIsSyncing] = useState(false);
     const [ticketSearch, setTicketSearch] = useState({ query: "", remote: null, loading: false });
     const [ticketDataVersion, setTicketDataVersion] = useState(0);
+    const [unassignedPage, setUnassignedPage] = useState(1);
+    const UNASSIGNED_PAGE_SIZE = 12;
     const ticketSearchRef = useRef(ticketSearch);
     const [soundSettings, setSoundSettings] = useState({
         enabled: getSoundEnabled(),
@@ -596,8 +598,8 @@ export const DevOpsDashboard = () => {
         if (section === 'unassigned' && f.assignedTo) {
             const assigneeNeedle = String(f.assignedTo).toLowerCase().trim();
             result = result.filter((t) =>
-                (t.assignedTo || "").toLowerCase().includes(assigneeNeedle) ||
-                (t.assignedToEmail || "").toLowerCase().includes(assigneeNeedle)
+                (t.assignedToEmail || "").toLowerCase() === assigneeNeedle ||
+                (t.assignedTo || "").toLowerCase() === assigneeNeedle
             );
         }
         if (f.search) {
@@ -630,10 +632,35 @@ export const DevOpsDashboard = () => {
     
     const handleFilterChange = (newFilters) => {
         setFilters(newFilters);
+        if (requestTab === 'unassigned') {
+            setUnassignedPage(1);
+        }
         if (activeSection === 'requests') {
             applySectionFilter(tickets, requestTab, newFilters);
         }
     };
+
+    const unassignedAssigneeOptions = teamMembers
+        .map((member) => ({
+            value: String(member.email || member.name || "").trim().toLowerCase(),
+            label: member.name && member.email ? `${member.name} (${member.email})` : (member.name || member.email || "")
+        }))
+        .filter((member) => member.value && member.label)
+        .sort((a, b) => a.label.localeCompare(b.label));
+
+    const totalUnassignedPages = requestTab === 'unassigned'
+        ? Math.max(1, Math.ceil(filteredTickets.length / UNASSIGNED_PAGE_SIZE))
+        : 1;
+    const paginatedTickets = requestTab === 'unassigned'
+        ? filteredTickets.slice((unassignedPage - 1) * UNASSIGNED_PAGE_SIZE, unassignedPage * UNASSIGNED_PAGE_SIZE)
+        : filteredTickets;
+
+    useEffect(() => {
+        if (requestTab !== 'unassigned') return;
+        if (unassignedPage > totalUnassignedPages) {
+            setUnassignedPage(totalUnassignedPages);
+        }
+    }, [requestTab, unassignedPage, totalUnassignedPages]);
     
     const TICKET_TABS = ['unassigned', 'myTickets', 'active', 'history', 'closed'];
 
@@ -670,9 +697,6 @@ export const DevOpsDashboard = () => {
         )));
         try {
             setActionLoading("Assigning ticket...");
-            // First update status to ACCEPTED (shown as Assigned in UI)
-            await updateTicketStatus(ticketId, TICKET_STATUS.ACCEPTED, { name: userName, email: userEmail }, 'Ticket assigned for processing');
-            // Then assign to current user
             const updated = await assignTicket(ticketId, userName, { name: userName, email: userEmail });
             upsertTicketLocally(updated);
         } catch (error) {
@@ -758,12 +782,6 @@ export const DevOpsDashboard = () => {
     const handleAssignToSelf = async (ticketId) => {
         try {
             setActionLoading("Assigning ticket...");
-            await updateTicketStatus(
-                ticketId,
-                TICKET_STATUS.ACCEPTED,
-                { name: userName, email: userEmail },
-                "Ticket assigned for processing"
-            );
             const updated = await assignTicket(ticketId, userName, { name: userName, email: userEmail });
             upsertTicketLocally(updated);
         } catch (error) {
@@ -1542,11 +1560,12 @@ export const DevOpsDashboard = () => {
                             onFilterChange={(newFilters) =>
                                 handleFilterChange({
                                     ...newFilters,
-                                    status: newFilters?.status || TICKET_FILTER_BUCKET.PENDING
+                                    status: newFilters?.status || TICKET_FILTER_BUCKET.UNASSIGNED
                                 })
                             }
                             hideAssignMeOption
                             showAssigneeFilter
+                            assigneeOptions={unassignedAssigneeOptions}
                             searchPlaceholder="Search queue (id, person/email, environment, project id…)"
                         />
                     )}
@@ -1576,18 +1595,40 @@ export const DevOpsDashboard = () => {
                                 </p>
                             </div>
                         ) : (
-                            filteredTickets.map(ticket => (
+                            paginatedTickets.map(ticket => (
                                 <TicketCard
                                     key={ticket.id}
                                     ticket={ticket}
                                     onClick={() => setSelectedTicket(ticket)}
                                     showActions={false}
-                                    showAssignedFullName={requestTab === 'unassigned'}
                                     highlightAssigned={requestTab === 'unassigned'}
                                 />
                             ))
                         )}
                     </div>
+                    {requestTab === 'unassigned' && filteredTickets.length > UNASSIGNED_PAGE_SIZE && (
+                        <div className="jtc-pagination">
+                            <button
+                                className="jtc-page-btn"
+                                type="button"
+                                onClick={() => setUnassignedPage((p) => Math.max(1, p - 1))}
+                                disabled={unassignedPage <= 1}
+                            >
+                                Prev
+                            </button>
+                            <span className="jtc-page-info">
+                                Page {unassignedPage} / {totalUnassignedPages}
+                            </span>
+                            <button
+                                className="jtc-page-btn"
+                                type="button"
+                                onClick={() => setUnassignedPage((p) => Math.min(totalUnassignedPages, p + 1))}
+                                disabled={unassignedPage >= totalUnassignedPages}
+                            >
+                                Next
+                            </button>
+                        </div>
+                    )}
                 </div>}
                 </>
                 )}

@@ -70,6 +70,7 @@ import { getEffectiveWorkflow } from '../services/projectWorkflowService';
 import { fetchWorkflowDirectoryContacts } from "../services/workflowDirectoryService";
 import EmailChipsInput from "../components/EmailChipsInput";
 import { useTheme } from "../services/ThemeContext";
+import { useToast } from "../services/ToastNotification";
 
 /** Tint overlay for ticket type strip (works on light + dark card backgrounds). */
 function hexWithAlpha(hex, alpha) {
@@ -775,10 +776,10 @@ export const TicketCard = ({
     showActions = false,
     onStatusChange,
     user,
-    showAssignedFullName = false,
     highlightAssigned = false
 }) => {
     const { theme } = useTheme();
+    const toast = useToast();
     const [expanded, setExpanded] = useState(false);
     const accent = getTypeAccent(ticket.requestType);
     const ageDays = ticket?.createdAt ? Math.floor((Date.now() - new Date(ticket.createdAt).getTime()) / 86400000) : 0;
@@ -792,16 +793,13 @@ export const TicketCard = ({
     const formatDate = (dateString) => {
         if (!dateString) return '—';
         const date = new Date(dateString);
-        return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-    };
-
-    const timeSince = (dateString) => {
-        if (!dateString) return '';
-        const seconds = Math.floor((new Date() - new Date(dateString)) / 1000);
-        if (seconds < 60) return 'just now';
-        if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-        if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-        return `${Math.floor(seconds / 86400)}d ago`;
+        return date.toLocaleString('en-GB', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
     };
 
     // Pick up the most relevant service detail 
@@ -809,6 +807,17 @@ export const TicketCard = ({
 
     const assignedName = String(ticket?.assignedTo || "").trim();
     const shouldHighlightAssignedCard = highlightAssigned && assignedName.length > 0;
+    const handleCopyTicketId = async (e) => {
+        e.stopPropagation();
+        const ticketId = String(ticket?.id || "").trim();
+        if (!ticketId) return;
+        try {
+            await navigator.clipboard.writeText(ticketId);
+            toast.success("Copied", `Ticket ID ${ticketId} copied`);
+        } catch {
+            toast.error("Copy failed", "Could not copy ticket ID");
+        }
+    };
 
     return (
         <div
@@ -829,19 +838,19 @@ export const TicketCard = ({
             {/* ── Main row ── */}
             <div className="jtc-row">
 
-                {/* Left: type icon */}
-                <div className="jtc-icon" style={{ background: `${accent.icon}18`, color: accent.icon }}>
-                    {getRequestTypeIcon(ticket.requestType, 13)}
-                </div>
-
                 {/* Centre: title + meta chips */}
                 <div className="jtc-centre">
-                    <h3 className="jtc-title">{ticket.productName || '(No product)'}</h3>
+                    <h3
+                        className="jtc-title jtc-title-clickable"
+                        onClick={handleCopyTicketId}
+                        title="Click to copy ticket ID"
+                    >
+                        {ticket.id || "—"}
+                    </h3>
                     <div className="jtc-meta">
                         <span className="jtc-type-badge" style={{ color: accent.icon, borderColor: `${accent.icon}44`, background: `${accent.icon}14` }}>
                             {ticket.requestType || "General Request"}
                         </span>
-                        <span className="jtc-id">{ticket.id}</span>
                         {ticket.environment && (
                             <span className="jtc-chip env">{ticket.environment}</span>
                         )}
@@ -858,27 +867,16 @@ export const TicketCard = ({
                 <div className="jtc-right">
                     <StatusBadge status={ticket.status} size="small" />
                     <div className="jtc-right-bottom">
-                        <div className="jtc-people">
-                            <span className="jtc-avatar" title={ticket.requestedBy}>
-                                {(ticket.requestedBy || 'U').charAt(0).toUpperCase()}
+                        <div className="jtc-people-names">
+                            <span className="jtc-person-line" title={ticket.requestedBy || "Unknown User"}>
+                                User: {ticket.requestedBy || "Unknown User"}
                             </span>
-                            {assignedName && (
-                                <>
-                                    <span className="jtc-arrow">›</span>
-                                    {showAssignedFullName ? (
-                                        <span className="jtc-chip assigned-name" title={assignedName}>
-                                            {assignedName}
-                                        </span>
-                                    ) : (
-                                        <span className="jtc-avatar assigned" title={assignedName}>
-                                            {assignedName.charAt(0).toUpperCase()}
-                                        </span>
-                                    )}
-                                </>
-                            )}
+                            <span className={`jtc-person-line ${assignedName ? "assigned" : ""}`} title={assignedName || "Unassigned"}>
+                                Assigned: {assignedName || "Unassigned"}
+                            </span>
                         </div>
-                        <span className="jtc-date" title={formatDate(ticket.createdAt)}>
-                            {timeSince(ticket.createdAt)}
+                        <span className="jtc-date" title={formatDate(ticket.updatedAt || ticket.createdAt)}>
+                            {formatDate(ticket.updatedAt || ticket.createdAt)}
                         </span>
                         <span className={`jtc-age-dot ${ageClass}`} title={`Ticket age: ${Math.max(ageDays, 0)} day(s)`} />
                     </div>
@@ -913,6 +911,7 @@ export const TicketFilters = ({
     hideAssignMeOption = false,
     hideStatusFilter = false,
     showAssigneeFilter = false,
+    assigneeOptions = [],
     searchPlaceholder = "Filter this list (id, product, assignee…)"
 }) => {
     useEffect(() => {
@@ -975,13 +974,17 @@ export const TicketFilters = ({
             {showAssigneeFilter && (
                 <div className="filter-group">
                     <label>DevOps member</label>
-                    <input
-                        type="search"
-                        className="ticket-filter-search-input"
-                        placeholder="Assigned name or email"
+                    <select
                         value={filters.assignedTo || ''}
                         onChange={e => onFilterChange({ ...filters, assignedTo: e.target.value || null })}
-                    />
+                    >
+                        <option value="">All DevOps members</option>
+                        {assigneeOptions.map((member) => (
+                            <option key={member.value} value={member.value}>
+                                {member.label}
+                            </option>
+                        ))}
+                    </select>
                 </div>
             )}
             
@@ -1221,6 +1224,7 @@ export const TicketDetailsModal = ({
     /** Admin: restore soft-deleted ticket from recycle bin */
     onRestoreTicket
 }) => {
+    const toast = useToast();
     const [note, setNote] = useState('');
     const [reopenNote, setReopenNote] = useState('');
     const [selectedStatus, setSelectedStatus] = useState('');
@@ -1242,6 +1246,16 @@ export const TicketDetailsModal = ({
     }, [ticket?.id]);
 
     if (!ticket) return null;
+    const handleCopyTicketId = async () => {
+        const ticketId = String(ticket?.id || "").trim();
+        if (!ticketId) return;
+        try {
+            await navigator.clipboard.writeText(ticketId);
+            toast.success("Copied", `Ticket ID ${ticketId} copied`);
+        } catch {
+            toast.error("Copy failed", "Could not copy ticket ID");
+        }
+    };
 
     const ticketIsDeleted = !!ticket.deleted;
     const effectiveCanManage = canManage && !ticketIsDeleted;
@@ -1712,7 +1726,14 @@ export const TicketDetailsModal = ({
                         </div>
                         <div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                                <span className="jdm-ticket-id">{ticket.id}</span>
+                                <button
+                                    type="button"
+                                    className="jdm-ticket-id jdm-ticket-id-btn"
+                                    onClick={handleCopyTicketId}
+                                    title="Click to copy ticket ID"
+                                >
+                                    {ticket.id}
+                                </button>
                                 <StatusBadge status={ticket.status} size="medium" />
                                 <span className="jdm-type-label" style={{ background: accent.bg, color: accent.icon }}>
                                     {ticket.requestType}

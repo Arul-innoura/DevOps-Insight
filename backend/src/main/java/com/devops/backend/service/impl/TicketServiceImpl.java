@@ -680,7 +680,7 @@ public class TicketServiceImpl implements TicketService {
     
     @Override
     public TicketResponse assignTicket(String ticketId, AssignTicketRequest request, 
-                                        String userName, String userEmail) {
+                                         String userName, String userEmail) {
         log.info("Assigning ticket {} to {} by {}", ticketId, request.getAssigneeName(), userName);
         
         Ticket ticket = ticketRepository.findById(ticketId)
@@ -689,9 +689,16 @@ public class TicketServiceImpl implements TicketService {
         
         ticket.setAssignedTo(request.getAssigneeName());
         ticket.setAssignedToEmail(request.getAssigneeEmail());
+        if (ticket.getStatus() == TicketStatus.CREATED) {
+            ticket.setStatus(TicketStatus.ACCEPTED);
+        }
         ticket.setUpdatedAt(Instant.now());
-        ticket.addTimelineEntry(ticket.getStatus(), userName, userEmail, 
-                "Ticket assigned to " + request.getAssigneeName());
+        ticket.addTimelineEntry(
+                ticket.getStatus(),
+                userName,
+                userEmail,
+                "Ticket assigned to " + request.getAssigneeName()
+        );
         
         Ticket savedTicket = ticketRepository.save(ticket);
         evictTicketCaches();
