@@ -52,7 +52,9 @@ export const WS_MESSAGE_TYPES = {
     SYNC_REQUIRED: 'sync:required',
     CONNECTED: 'connected',
     DISCONNECTED: 'disconnected',
-    CACHE_INVALIDATE: 'cache:invalidate'
+    CACHE_INVALIDATE: 'cache:invalidate',
+    /** Emitted once when WS is disabled for this page load (e.g. broken proxy); hooks should fall back to polling. */
+    TRANSPORT_UNAVAILABLE: 'transport:unavailable'
 };
 
 class RealTimeService {
@@ -77,6 +79,45 @@ class RealTimeService {
         this.abnormalCloseTimestamps = [];
         this.recentMessages = new Map();
         this.messageDedupWindowMs = 500;
+        this.warned1006 = false;
+        this.transportUnavailableEmitted = false;
+    }
+
+    /**
+     * Stops reconnect loops and WS for this tab. Call when handshakes cannot succeed (e.g. proxy strips Upgrade).
+     */
+    giveUpWebSocket(reason) {
+        if (!this.wsEnabled) {
+            return;
+        }
+        this.wsEnabled = false;
+        this.shouldReconnect = false;
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        this.stopPing();
+        this.clearPongTimeout();
+        if (this.ws) {
+            try {
+                this.ws.close();
+            } catch {
+                /* ignore */
+            }
+            this.ws = null;
+        }
+        this.isConnected = false;
+        this.wsCandidates = [];
+        this.wsCandidateIndex = 0;
+        if (!this.transportUnavailableEmitted) {
+            this.transportUnavailableEmitted = true;
+            console.warn(
+                "[WS] Disabled for this session after repeated failed handshakes. Updates fall back to polling until refresh. "
+                    + "Fix: host nginx must forward Upgrade + Connection for /api/ws/ (see WEBSOCKET_SETUP.md).",
+                reason || ""
+            );
+            this.emit(WS_MESSAGE_TYPES.TRANSPORT_UNAVAILABLE, { reason: reason || "handshake_failed" });
+        }
     }
 
     connect() {
@@ -141,13 +182,17 @@ class RealTimeService {
             this.ws.onclose = (event) => {
                 const reason = (event.reason || "").trim();
                 console.log('[WS] Disconnected:', event.code, reason || "(no reason)");
-                if (event.code === 1006) {
+                if (!this.wsEnabled) {
+                    return;
+                }
+                if (event.code === 1006 && !this.warned1006) {
+                    this.warned1006 = true;
                     console.warn(
-                        "[WS] 1006 = TCP closed without a WebSocket close frame. Usually: bad proxy TLS path, "
-                            + "or HTTP 4xx on upgrade (missing Upgrade header). Test: curl -i --http1.1 "
-                            + '-H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" '
-                            + '-H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" '
-                            + `"${window.location.origin}/api/ws/tickets" — expect HTTP 101. See WEBSOCKET_SETUP.md.`
+                        "[WS] 1006 = upgrade failed (often missing Upgrade header through TLS proxy). "
+                            + "Test: curl -i --http1.1 -H \"Connection: Upgrade\" -H \"Upgrade: websocket\" "
+                            + "-H \"Sec-WebSocket-Version: 13\" -H \"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\" "
+                            + `"${typeof window !== "undefined" ? window.location.origin : ""}/api/ws/tickets" (expect 101). `
+                            + "See WEBSOCKET_SETUP.md. Further failures switch to polling."
                     );
                 }
                 this.isConnected = false;
@@ -157,13 +202,16 @@ class RealTimeService {
                 if (event.code === 1006) {
                     this.consecutiveAbnormalCloses += 1;
                     this.abnormalCloseTimestamps.push(Date.now());
-                    // Keep only recent abnormal closes (rolling window).
                     this.abnormalCloseTimestamps = this.abnormalCloseTimestamps.filter(ts => Date.now() - ts < 60000);
+                    const manyRecent1006 = this.abnormalCloseTimestamps.length >= 10;
+                    if (manyRecent1006 || this.consecutiveAbnormalCloses >= 12) {
+                        this.giveUpWebSocket("repeated_1006");
+                        return;
+                    }
                 } else {
                     this.consecutiveAbnormalCloses = 0;
                     this.abnormalCloseTimestamps = [];
                 }
-                // Do not permanently disable WS on flaky networks; just back off.
                 if (!this.isConnected && this.wsCandidateIndex < this.wsCandidates.length - 1) {
                     this.wsCandidateIndex += 1;
                 }
@@ -180,7 +228,11 @@ class RealTimeService {
     }
 
     scheduleReconnect() {
-        if (!this.wsEnabled || !this.shouldReconnect || this.reconnectAttempts >= this.maxReconnectAttempts) {
+        if (!this.wsEnabled || !this.shouldReconnect) {
+            return;
+        }
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+            this.giveUpWebSocket("max_reconnect_attempts");
             return;
         }
 

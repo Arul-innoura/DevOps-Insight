@@ -4,7 +4,7 @@
  * Silent background updates - No spinners for users
  */
 
-import { useEffect, useRef, useCallback, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import realTimeService, { WS_MESSAGE_TYPES } from "./stompWebSocketService";
 import { applyCacheInvalidationHint } from "./ticketService";
 import { 
@@ -22,12 +22,13 @@ export const useRealTimeSync = ({
     playNewTicketSound = false,
     playUpdateSound = true,
     enableWebSocket = true,
-    pollingInterval = null // Not used - kept for compatibility
+    pollingInterval = null // Used when WS is off or after repeated handshake failures
 }) => {
     const onRefreshRef = useRef(onRefresh);
     const didInitialLoad = useRef(false);
     const debounceRef = useRef(null);
     const lockRef = useRef(false);
+    const [wsBrokenUsePolling, setWsBrokenUsePolling] = useState(false);
     
     // Keep ref updated
     onRefreshRef.current = onRefresh;
@@ -49,9 +50,25 @@ export const useRealTimeSync = ({
             }
         }, 1);
     }, []);
-    
+
+    useLayoutEffect(() => {
+        if (enableWebSocket && !realTimeService.wsEnabled) {
+            setWsBrokenUsePolling(true);
+        }
+    }, [enableWebSocket]);
+
     useEffect(() => {
         if (!enableWebSocket) {
+            return;
+        }
+        const onWsDead = () => setWsBrokenUsePolling(true);
+        realTimeService.on(WS_MESSAGE_TYPES.TRANSPORT_UNAVAILABLE, onWsDead);
+        return () => realTimeService.off(WS_MESSAGE_TYPES.TRANSPORT_UNAVAILABLE, onWsDead);
+    }, [enableWebSocket]);
+    
+    useEffect(() => {
+        const usePolling = !enableWebSocket || wsBrokenUsePolling;
+        if (usePolling) {
             onRefreshRef.current?.();
             const pollMs = pollingInterval || 8000;
             const timer = setInterval(() => onRefreshRef.current?.(), pollMs);
@@ -127,7 +144,7 @@ export const useRealTimeSync = ({
                 clearTimeout(debounceRef.current);
             }
         };
-    }, [enableWebSocket, playNewTicketSound, playUpdateSound, debouncedRefresh]);
+    }, [enableWebSocket, wsBrokenUsePolling, playNewTicketSound, playUpdateSound, debouncedRefresh, pollingInterval]);
     
     // Refresh on tab visibility
     useEffect(() => {
