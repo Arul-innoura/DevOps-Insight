@@ -2679,6 +2679,17 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   flex-shrink: 0;
 }
 .jtc-avatar.assigned { background: #0052CC; color: #fff; }
+
+.jtc-chip.assigned-name {
+    background: #eff6ff;
+    color: #1d4ed8;
+    border: 1px solid #bfdbfe;
+    font-weight: 600;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .jtc-arrow { font-size: 0.7rem; color: #b3b9c4; }
 .jtc-people-names {
   display: flex;

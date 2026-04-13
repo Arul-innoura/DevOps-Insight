@@ -769,7 +769,15 @@ const getRequestTypeIcon = (requestType, size = 16) => {
 };
 
 // ============ TICKET CARD COMPONENT ============
-export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChange, user }) => {
+export const TicketCard = ({
+    ticket,
+    onClick,
+    showActions = false,
+    onStatusChange,
+    user,
+    showAssignedFullName = false,
+    highlightAssigned = false
+}) => {
     const { theme } = useTheme();
     const [expanded, setExpanded] = useState(false);
     const accent = getTypeAccent(ticket.requestType);
@@ -799,6 +807,9 @@ export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChang
     // Pick up the most relevant service detail 
     const serviceDetail = ticket.releaseVersion || ticket.branchName || ticket.issueType || ticket.databaseType || ticket.deploymentStrategy || null;
 
+    const assignedName = String(ticket?.assignedTo || "").trim();
+    const shouldHighlightAssignedCard = highlightAssigned && assignedName.length > 0;
+
     return (
         <div
             className={`jira-ticket-card ${isActionRequired ? 'status-glow' : ''}`}
@@ -807,7 +818,12 @@ export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChang
                 borderLeftColor: accent.border,
                 borderLeftWidth: 4,
                 backgroundColor: "var(--card-bg, #ffffff)",
-                backgroundImage: `linear-gradient(135deg, ${hexWithAlpha(accent.bg, theme === "light" || theme === "retro" ? 0.42 : 0.28)} 0%, transparent 55%)`
+                backgroundImage: shouldHighlightAssignedCard
+                    ? `linear-gradient(135deg, ${hexWithAlpha("#bfdbfe", theme === "light" || theme === "retro" ? 0.55 : 0.35)} 0%, transparent 65%)`
+                    : `linear-gradient(135deg, ${hexWithAlpha(accent.bg, theme === "light" || theme === "retro" ? 0.42 : 0.28)} 0%, transparent 55%)`,
+                boxShadow: shouldHighlightAssignedCard
+                    ? "0 0 0 1px rgba(37,99,235,0.45), 0 2px 10px rgba(37,99,235,0.12)"
+                    : undefined
             }}
         >
             {/* ── Main row ── */}
@@ -846,12 +862,18 @@ export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChang
                             <span className="jtc-avatar" title={ticket.requestedBy}>
                                 {(ticket.requestedBy || 'U').charAt(0).toUpperCase()}
                             </span>
-                            {ticket.assignedTo && (
+                            {assignedName && (
                                 <>
                                     <span className="jtc-arrow">›</span>
-                                    <span className="jtc-avatar assigned" title={ticket.assignedTo}>
-                                        {ticket.assignedTo.charAt(0).toUpperCase()}
-                                    </span>
+                                    {showAssignedFullName ? (
+                                        <span className="jtc-chip assigned-name" title={assignedName}>
+                                            {assignedName}
+                                        </span>
+                                    ) : (
+                                        <span className="jtc-avatar assigned" title={assignedName}>
+                                            {assignedName.charAt(0).toUpperCase()}
+                                        </span>
+                                    )}
                                 </>
                             )}
                         </div>

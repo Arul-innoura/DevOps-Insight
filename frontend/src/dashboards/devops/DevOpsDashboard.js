@@ -1582,6 +1582,8 @@ export const DevOpsDashboard = () => {
                                     ticket={ticket}
                                     onClick={() => setSelectedTicket(ticket)}
                                     showActions={false}
+                                    showAssignedFullName={requestTab === 'unassigned'}
+                                    highlightAssigned={requestTab === 'unassigned'}
                                 />
                             ))
                         )}
