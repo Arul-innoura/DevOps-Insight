@@ -844,6 +844,7 @@ export const TicketCard = ({
                         className="jtc-title jtc-title-clickable"
                         onClick={handleCopyTicketId}
                         title="Click to copy ticket ID"
+                        style={{ color: accent.icon }}
                     >
                         {ticket.id || "—"}
                     </h3>
