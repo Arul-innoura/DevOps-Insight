@@ -364,11 +364,31 @@ export const DevOpsDashboard = () => {
 
     useEffect(() => {
         if (activeSection !== "requests" || requestTab !== "unassigned") return;
-        if (filters.status) return;
-        const withDefault = { ...filters, status: TICKET_FILTER_BUCKET.UNASSIGNED };
+        if (filters.status !== null && filters.status !== undefined) return;
+        const ctx = { userName, userEmail };
+        const hasNewUnassigned = tickets.some((t) =>
+            ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, ctx)
+        );
+        const withDefault = {
+            ...filters,
+            status: hasNewUnassigned ? TICKET_FILTER_BUCKET.UNASSIGNED : TICKET_FILTER_BUCKET.ALL
+        };
         setFilters(withDefault);
         applySectionFilter(tickets, requestTab, withDefault);
-    }, [activeSection, requestTab, filters, tickets]);
+    }, [activeSection, requestTab, filters, tickets, userName, userEmail]);
+
+    useEffect(() => {
+        if (activeSection !== "requests" || requestTab !== "unassigned") return;
+        if (filters.status !== TICKET_FILTER_BUCKET.UNASSIGNED) return;
+        const ctx = { userName, userEmail };
+        const hasNewUnassigned = tickets.some((t) =>
+            ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, ctx)
+        );
+        if (hasNewUnassigned) return;
+        const fallbackAll = { ...filters, status: TICKET_FILTER_BUCKET.ALL };
+        setFilters(fallbackAll);
+        applySectionFilter(tickets, requestTab, fallbackAll);
+    }, [activeSection, requestTab, filters, tickets, userName, userEmail]);
     
     useEffect(() => {
         if (didUpsertSelfRef.current) return;
