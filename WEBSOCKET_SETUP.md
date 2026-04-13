@@ -139,6 +139,50 @@ Enable/disable sounds from dashboard settings.
 - This is handled gracefully - the frontend falls back to reading existing data
 - The upsert validates user data before sending requests
 
+### Production: browser shows `1006` or `WebSocket connection failed`
+
+**1. Prove the HTTP upgrade (same machine or laptop with DNS to the site):**
+
+```bash
+curl -i --http1.1 --max-time 15 \
+  -H "Connection: Upgrade" \
+  -H "Upgrade: websocket" \
+  -H "Sec-WebSocket-Version: 13" \
+  -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+  -H "Origin: https://YOUR_HOST" \
+  "https://YOUR_HOST/api/ws/tickets"
+```
+
+- **HTTP/1.1 101 Switching Protocols** — path and app are fine; if the browser still fails, check extensions, mixed content, or corporate TLS inspection.
+- **HTTP 400** with body like `Can "Upgrade" only to "WebSocket".` — Tomcat saw a bad upgrade. Almost always the **reverse proxy in front of the app** cleared `Upgrade` / `Connection` or sent `Connection: upgrade` while `Upgrade` was missing. Fix the **host** nginx (or load balancer), not only the in-repo `frontend/nginx.conf`.
+- **HTTP 401/403** — Spring Security blocked the path; ensure `/api/ws/**` and `/ws/**` are `permitAll` and redeployed.
+- **HTTP 404** — nothing mapped that path (wrong service, or path not proxied).
+
+**2. Host nginx in front of Docker (TLS often terminates here):** the outer `server` must forward WebSocket headers to the container that runs `frontend/nginx.conf`. Example fragment:
+
+```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+location ^~ /api/ws/ {
+    proxy_pass http://127.0.0.1:FRONTEND_PORT;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_read_timeout 86400s;
+    proxy_send_timeout 86400s;
+}
+```
+
+Do **not** send `Connection ""` for WebSocket locations. Avoid a single `location /api/` that forces `Connection` closed for traffic that includes `/api/ws/`.
+
+**3. Backend logs:** after deploy, look for `[WS] Handshake path=...` or `[WS] Missing Upgrade header` — if neither appears but curl still returns 400, the failure is **before** Spring (proxy or Tomcat).
+
 ---
 
 **Done! Real-time sync is now working!** 🎉

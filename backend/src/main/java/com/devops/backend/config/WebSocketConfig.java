@@ -18,9 +18,13 @@ import org.springframework.web.socket.server.standard.ServletServerContainerFact
 public class WebSocketConfig implements WebSocketConfigurer {
 
     private final TicketWebSocketHandler ticketWebSocketHandler;
+    private final TicketWebSocketHandshakeInterceptor handshakeInterceptor;
 
-    public WebSocketConfig(TicketWebSocketHandler ticketWebSocketHandler) {
+    public WebSocketConfig(
+            TicketWebSocketHandler ticketWebSocketHandler,
+            TicketWebSocketHandshakeInterceptor handshakeInterceptor) {
         this.ticketWebSocketHandler = ticketWebSocketHandler;
+        this.handshakeInterceptor = handshakeInterceptor;
     }
 
     @Override
@@ -28,6 +32,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
         // REST controllers live under /api; some gateways forward the browser path unchanged
         // (e.g. wss://host/api/ws/tickets → /api/ws/tickets on Spring). Register both paths.
         registry.addHandler(ticketWebSocketHandler, "/ws/tickets", "/api/ws/tickets")
+                .addInterceptors(handshakeInterceptor)
                 .setAllowedOriginPatterns("*");
     }
 

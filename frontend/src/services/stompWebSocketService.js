@@ -139,7 +139,17 @@ class RealTimeService {
             };
 
             this.ws.onclose = (event) => {
-                console.log('[WS] Disconnected:', event.code);
+                const reason = (event.reason || "").trim();
+                console.log('[WS] Disconnected:', event.code, reason || "(no reason)");
+                if (event.code === 1006) {
+                    console.warn(
+                        "[WS] 1006 = TCP closed without a WebSocket close frame. Usually: bad proxy TLS path, "
+                            + "or HTTP 4xx on upgrade (missing Upgrade header). Test: curl -i --http1.1 "
+                            + '-H "Connection: Upgrade" -H "Upgrade: websocket" -H "Sec-WebSocket-Version: 13" '
+                            + '-H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" '
+                            + `"${window.location.origin}/api/ws/tickets" — expect HTTP 101. See WEBSOCKET_SETUP.md.`
+                    );
+                }
                 this.isConnected = false;
                 this.stopPing();
                 this.clearPongTimeout();
