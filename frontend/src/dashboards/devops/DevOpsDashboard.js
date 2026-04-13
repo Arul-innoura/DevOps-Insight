@@ -1557,12 +1557,7 @@ export const DevOpsDashboard = () => {
                     {requestTab === 'unassigned' && (
                         <TicketFilters
                             filters={filters}
-                            onFilterChange={(newFilters) =>
-                                handleFilterChange({
-                                    ...newFilters,
-                                    status: newFilters?.status || TICKET_FILTER_BUCKET.UNASSIGNED
-                                })
-                            }
+                            onFilterChange={handleFilterChange}
                             hideAssignMeOption
                             showAssigneeFilter
                             assigneeOptions={unassignedAssigneeOptions}

@@ -931,7 +931,7 @@ export const TicketFilters = ({
                     <label>Status</label>
                     <select 
                         value={statusValue} 
-                        onChange={e => onFilterChange({ ...filters, status: e.target.value || null })}
+                        onChange={e => onFilterChange({ ...filters, status: e.target.value })}
                     >
                         <option value={TICKET_FILTER_BUCKET.ALL}>All</option>
                         <option value={TICKET_FILTER_BUCKET.UNASSIGNED}>Unassigned</option>
