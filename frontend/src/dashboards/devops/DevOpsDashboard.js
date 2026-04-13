@@ -417,31 +417,47 @@ export const DevOpsDashboard = () => {
         setSelectedTicket((prev) => (prev && prev.id === updatedTicket.id ? updatedTicket : prev));
     }, [recalcSectionCounts]);
 
+    const withTimeoutFallback = useCallback(async (promise, timeoutMs, fallbackValue) => {
+        try {
+            return await Promise.race([
+                promise,
+                new Promise((resolve) => setTimeout(() => resolve(fallbackValue), timeoutMs))
+            ]);
+        } catch {
+            return fallbackValue;
+        }
+    }, []);
+
     const loadTickets = useCallback(async (silent = false) => {
         if (isLoadingRef.current) return;
         isLoadingRef.current = true;
         // Only show syncing on initial load or manual refresh
         if (!silent) setIsSyncing(true);
         try {
-            const [allTickets, statsData, members, standups, rota, rotaMgmt] = await Promise.all([
-                getActiveTicketsForDevOps(),
-                getTicketStats(),
-                getDevOpsTeamMembers(),
-                getStandupNotes(),
-                getRotaSchedule(14, new Date()),
-                getRotaManagementState().catch(() => ({})),
+            const [allTickets, statsData] = await Promise.all([
+                withTimeoutFallback(getActiveTicketsForDevOps(), 12000, []),
+                withTimeoutFallback(getTicketStats(), 12000, {}),
             ]);
             setTickets(allTickets);
             setStats(statsData);
             recalcSectionCounts(allTickets);
-            setTeamMembers(members);
-            setStandupNotes(standups);
-            setRotaSchedule(rota);
+            setIsInitialLoading(false);
+
+            const [members, standups, rota, rotaMgmt] = await Promise.all([
+                withTimeoutFallback(getDevOpsTeamMembers(), 8000, []),
+                withTimeoutFallback(getStandupNotes(), 8000, []),
+                withTimeoutFallback(getRotaSchedule(14, new Date()), 8000, []),
+                withTimeoutFallback(getRotaManagementState(), 8000, {}),
+            ]);
+            setTeamMembers(Array.isArray(members) ? members : []);
+            setStandupNotes(Array.isArray(standups) ? standups : []);
+            setRotaSchedule(Array.isArray(rota) ? rota : []);
             setRotaMeta({
                 rotationMode: rotaMgmt?.rotationMode || "DAILY",
                 leaveByDate: rotaMgmt?.leaveByDate || {},
             });
-            const currentMember = members.find(m => m.email?.toLowerCase() === userEmail.toLowerCase());
+            const currentMember = (Array.isArray(members) ? members : [])
+                .find(m => m.email?.toLowerCase() === userEmail.toLowerCase());
             if (currentMember?.availability) {
                 setMyAvailability(currentMember.availability);
             }
@@ -455,12 +471,12 @@ export const DevOpsDashboard = () => {
                 applySectionFilter(allTickets, requestTabRef.current);
             }
             setTicketDataVersion((v) => v + 1);
-            setIsInitialLoading(false);
         } finally {
             isLoadingRef.current = false;
+            setIsInitialLoading(false);
             if (!silent) setIsSyncing(false);
         }
-    }, [userEmail, recalcSectionCounts]);
+    }, [userEmail, recalcSectionCounts, withTimeoutFallback]);
 
     // Sound settings handlers
     const handleSoundToggle = () => {
