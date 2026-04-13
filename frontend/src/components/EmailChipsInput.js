@@ -29,6 +29,8 @@ export default function EmailChipsInput({
   value,
   onChange,
   savedEmails = [],
+  /** Optional { email, name?, role? }[] from server workflow directory (other products) for richer suggestions. */
+  contactHints = [],
   placeholder = "Type email and press Enter",
   mode = "string", // "string" | "array"
   className = "",
@@ -118,11 +120,25 @@ export default function EmailChipsInput({
   const filteredSuggestions = useMemo(() => {
     const q = inputValue.toLowerCase().trim();
     if (!q) return [];
-    return (savedEmails || [])
-      .map(defaultNormalize)
-      .filter((email) => email && email.includes(q) && !emails.includes(email))
-      .slice(0, 6);
-  }, [savedEmails, inputValue, emails]);
+    const rows = [];
+    const seen = new Set(emails);
+    for (const h of contactHints || []) {
+      const em = defaultNormalize(h?.email);
+      if (!em || !isEmailLike(em) || seen.has(em)) continue;
+      const nm = String(h?.name || "").toLowerCase();
+      const rl = String(h?.role || "").toLowerCase();
+      if (!em.includes(q) && !nm.includes(q) && !rl.includes(q)) continue;
+      seen.add(em);
+      rows.push({ email: em, label: h?.name ? `${h.name} · ${em}` : em });
+    }
+    for (const raw of savedEmails || []) {
+      const em = defaultNormalize(raw);
+      if (!em || !isEmailLike(em) || seen.has(em) || !em.includes(q)) continue;
+      seen.add(em);
+      rows.push({ email: em, label: em });
+    }
+    return rows.slice(0, 8);
+  }, [savedEmails, contactHints, inputValue, emails]);
 
   const lockTitle =
     "Recipients are set by your workflow. You can’t add To addresses here — use CC to include others.";
@@ -190,14 +206,15 @@ export default function EmailChipsInput({
 
       {showSuggestions && !inputLocked && filteredSuggestions.length > 0 && (
         <div className="cc-email-suggestions">
-          {filteredSuggestions.map((email) => (
+          {filteredSuggestions.map((row) => (
             <button
-              key={email}
+              key={row.email}
               type="button"
               className="cc-email-suggestion"
-              onClick={() => addEmail(email)}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => addEmail(row.email)}
             >
-              {email}
+              {row.label}
             </button>
           ))}
         </div>

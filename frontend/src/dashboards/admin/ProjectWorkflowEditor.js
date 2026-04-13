@@ -9,7 +9,9 @@ import {
 import Quill from "quill";
 import "quill/dist/quill.snow.css";
 import { getProjectWorkflow, saveProjectWorkflow } from "../../services/projectWorkflowService";
+import { fetchWorkflowDirectoryContacts } from "../../services/workflowDirectoryService";
 import { ENVIRONMENTS, normalizeEnvironmentLabel, updateProjectEnvironments } from "../../services/ticketService";
+import WorkflowPersonSuggest from "../../components/WorkflowPersonSuggest";
 
 // ─── Cloud Services Catalog (140+ services across AWS, Azure, GCP) ───────────
 const CLOUD_CATALOG = [
@@ -721,8 +723,10 @@ const normalizeCfg = (raw) => ({
 });
 
 // ─── Email Routing Row Editor ─────────────────────────────────────────────────
-const EmailRoutingField = ({ label, hint, fieldKey, cfg, setCfg }) => {
+const EmailRoutingField = ({ label, hint, fieldKey, cfg, setCfg, workflowContacts = [] }) => {
     const [addInput, setAddInput] = useState("");
+    const [showSuggest, setShowSuggest] = useState(false);
+    const skipBlurAddRef = useRef(false);
     const mandatoryKey = `${fieldKey}Mandatory`;
     const emails = cfg.emailRouting?.[fieldKey] || [];
     const mandatory = cfg.emailRouting?.[mandatoryKey] || [];
@@ -735,10 +739,12 @@ const EmailRoutingField = ({ label, hint, fieldKey, cfg, setCfg }) => {
         const email = addInput.trim().toLowerCase();
         if (!email || !email.includes("@") || emails.includes(email)) {
             setAddInput("");
+            setShowSuggest(false);
             return;
         }
         updateRouting([...emails, email], mandatory);
         setAddInput("");
+        setShowSuggest(false);
     };
 
     const handleRemove = (email) => {
@@ -751,6 +757,18 @@ const EmailRoutingField = ({ label, hint, fieldKey, cfg, setCfg }) => {
             : mandatory.filter(m => m !== email);
         updateRouting(emails, newMandatory);
     };
+
+    const q = addInput.trim().toLowerCase();
+    const routingSuggestions = (workflowContacts || [])
+        .filter((c) => c && c.email && String(c.email).includes("@"))
+        .filter((c) => {
+            const em = String(c.email).trim().toLowerCase();
+            if (!q) return !emails.includes(em);
+            const nm = String(c.name || "").toLowerCase();
+            const rl = String(c.role || "").toLowerCase();
+            return !emails.includes(em) && (em.includes(q) || nm.includes(q) || rl.includes(q));
+        })
+        .slice(0, 10);
 
     return (
         <div className="workflow-input-group">
@@ -792,21 +810,57 @@ const EmailRoutingField = ({ label, hint, fieldKey, cfg, setCfg }) => {
                         </div>
                     );
                 })}
-                <div className="email-routing-add-row">
-                    <input
-                        type="email"
-                        className="email-routing-add-input"
-                        placeholder={`Add ${hint} email and press Enter…`}
-                        value={addInput}
-                        onChange={(e) => setAddInput(e.target.value)}
-                        onKeyDown={(e) => {
-                            if (e.key === "Enter") { e.preventDefault(); handleAddEmail(); }
-                        }}
-                        onBlur={handleAddEmail}
-                    />
-                    <button type="button" className="email-routing-add-btn" onClick={handleAddEmail} tabIndex={-1}>
-                        <Plus size={14} />
-                    </button>
+                <div className="email-routing-add-wrap">
+                    <div className="email-routing-add-row">
+                        <input
+                            type="email"
+                            className="email-routing-add-input"
+                            placeholder={`Add ${hint} email and press Enter…`}
+                            value={addInput}
+                            onChange={(e) => {
+                                setAddInput(e.target.value);
+                                setShowSuggest(true);
+                            }}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") { e.preventDefault(); handleAddEmail(); }
+                            }}
+                            onFocus={() => setShowSuggest(true)}
+                            onBlur={() => {
+                                setTimeout(() => {
+                                    setShowSuggest(false);
+                                    if (!skipBlurAddRef.current) handleAddEmail();
+                                    skipBlurAddRef.current = false;
+                                }, 180);
+                            }}
+                        />
+                        <button type="button" className="email-routing-add-btn" onClick={handleAddEmail} tabIndex={-1}>
+                            <Plus size={14} />
+                        </button>
+                    </div>
+                    {showSuggest && routingSuggestions.length > 0 && (
+                        <div className="email-routing-suggest">
+                            {routingSuggestions.map((c) => (
+                                <button
+                                    key={c.email}
+                                    type="button"
+                                    className="email-routing-suggest-item"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() => {
+                                        const email = String(c.email).trim().toLowerCase();
+                                        if (!email || emails.includes(email)) return;
+                                        skipBlurAddRef.current = true;
+                                        updateRouting([...emails, email], mandatory);
+                                        setAddInput("");
+                                        setShowSuggest(false);
+                                    }}
+                                >
+                                    <span className="email-routing-suggest-name">{c.name || c.email}</span>
+                                    {c.name && <span className="email-routing-suggest-email">{c.email}</span>}
+                                    {c.role && <span className="email-routing-suggest-role">{c.role}</span>}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
             </div>
         </div>
@@ -814,7 +868,7 @@ const EmailRoutingField = ({ label, hint, fieldKey, cfg, setCfg }) => {
 };
 
 // ─── Workflow Form ────────────────────────────────────────────────────────────
-const WorkflowForm = ({ cfg, setCfg }) => {
+const WorkflowForm = ({ cfg, setCfg, workflowContacts = [] }) => {
     const addApproverRow = () => {
         const levels = [...(cfg.approvalLevels || [])];
         levels.push({ level: levels.length + 1, approvers: [{ role: "", name: "", email: "" }] });
@@ -879,36 +933,21 @@ const WorkflowForm = ({ cfg, setCfg }) => {
                                             ><Trash2 size={12} /></button>
                                         </div>
                                     </div>
-                                    <div className="approval-level-fields">
-                                        <input
-                                            placeholder="Designation / Role (e.g. Lead, Manager)"
-                                            value={lvl.approvers?.[0]?.role || ""}
-                                            onChange={(e) => {
-                                                const al = [...cfg.approvalLevels];
-                                                al[idx].approvers = [{ ...(al[idx].approvers?.[0] || {}), role: e.target.value }];
-                                                setCfg({ ...cfg, approvalLevels: normalizeApprovalLevels(al) });
-                                            }}
-                                        />
-                                        <input
-                                            placeholder="Full Name"
-                                            value={lvl.approvers?.[0]?.name || ""}
-                                            onChange={(e) => {
-                                                const al = [...cfg.approvalLevels];
-                                                al[idx].approvers = [{ ...(al[idx].approvers?.[0] || {}), name: e.target.value }];
-                                                setCfg({ ...cfg, approvalLevels: normalizeApprovalLevels(al) });
-                                            }}
-                                        />
-                                        <input
-                                            placeholder="Email"
-                                            type="email"
-                                            value={lvl.approvers?.[0]?.email || ""}
-                                            onChange={(e) => {
-                                                const al = [...cfg.approvalLevels];
-                                                al[idx].approvers = [{ ...(al[idx].approvers?.[0] || {}), email: e.target.value }];
-                                                setCfg({ ...cfg, approvalLevels: normalizeApprovalLevels(al) });
-                                            }}
-                                        />
-                                    </div>
+                                    <WorkflowPersonSuggest
+                                        layout="approval"
+                                        showRole
+                                        contacts={workflowContacts}
+                                        value={{
+                                            role: lvl.approvers?.[0]?.role || "",
+                                            name: lvl.approvers?.[0]?.name || "",
+                                            email: lvl.approvers?.[0]?.email || ""
+                                        }}
+                                        onChange={(v) => {
+                                            const al = [...cfg.approvalLevels];
+                                            al[idx].approvers = [{ ...(al[idx].approvers?.[0] || {}), ...v }];
+                                            setCfg({ ...cfg, approvalLevels: normalizeApprovalLevels(al) });
+                                        }}
+                                    />
                                 </div>
                             ))}
                         </div>
@@ -928,9 +967,9 @@ const WorkflowForm = ({ cfg, setCfg }) => {
                     </div>
                 </div>
                 <div className="workflow-section-content">
-                    <EmailRoutingField fieldKey="to"  label="Primary Recipients" hint="To"  cfg={cfg} setCfg={setCfg} />
-                    <EmailRoutingField fieldKey="cc"  label="Copy Recipients"    hint="CC"  cfg={cfg} setCfg={setCfg} />
-                    <EmailRoutingField fieldKey="bcc" label="Hidden Recipients"  hint="BCC" cfg={cfg} setCfg={setCfg} />
+                    <EmailRoutingField fieldKey="to"  label="Primary Recipients" hint="To"  cfg={cfg} setCfg={setCfg} workflowContacts={workflowContacts} />
+                    <EmailRoutingField fieldKey="cc"  label="Copy Recipients"    hint="CC"  cfg={cfg} setCfg={setCfg} workflowContacts={workflowContacts} />
+                    <EmailRoutingField fieldKey="bcc" label="Hidden Recipients"  hint="BCC" cfg={cfg} setCfg={setCfg} workflowContacts={workflowContacts} />
                 </div>
             </div>
 
@@ -971,27 +1010,17 @@ const WorkflowForm = ({ cfg, setCfg }) => {
                                 <div className="approver-list">
                                     {(cfg.costApprovers || []).map((ap, j) => (
                                         <div key={j} className="approver-row compact">
-                                            <div className="approver-inputs">
-                                                <input
-                                                    placeholder="Name"
-                                                    value={ap.name || ""}
-                                                    onChange={(e) => {
-                                                        const ca = [...(cfg.costApprovers || [])];
-                                                        ca[j] = { ...ca[j], name: e.target.value };
-                                                        setCfg({ ...cfg, costApprovers: ca });
-                                                    }}
-                                                />
-                                                <input
-                                                    placeholder="Email"
-                                                    type="email"
-                                                    value={ap.email || ""}
-                                                    onChange={(e) => {
-                                                        const ca = [...(cfg.costApprovers || [])];
-                                                        ca[j] = { ...ca[j], email: e.target.value };
-                                                        setCfg({ ...cfg, costApprovers: ca });
-                                                    }}
-                                                />
-                                            </div>
+                                            <WorkflowPersonSuggest
+                                                layout="cost"
+                                                showRole={false}
+                                                contacts={workflowContacts}
+                                                value={{ role: "", name: ap.name || "", email: ap.email || "" }}
+                                                onChange={(v) => {
+                                                    const ca = [...(cfg.costApprovers || [])];
+                                                    ca[j] = { ...ca[j], name: v.name, email: v.email };
+                                                    setCfg({ ...cfg, costApprovers: ca });
+                                                }}
+                                            />
                                             <button
                                                 type="button" className="btn-remove-item"
                                                 onClick={() => {
@@ -1097,6 +1126,7 @@ const ProjectWorkflowEditor = ({ project, onClose, onSaved }) => {
     // project-level services (admin only)
     const [projectServices, setProjectServices] = useState([]);
     const [cloudServices, setCloudServices] = useState([]);
+    const [workflowContacts, setWorkflowContacts] = useState([]);
 
     const projectEnvsKey = Array.isArray(project?.environments) ? project.environments.join("\u0001") : "";
 
@@ -1148,6 +1178,24 @@ const ProjectWorkflowEditor = ({ project, onClose, onSaved }) => {
     }, [project?.id, projectEnvsKey]);
 
     useEffect(() => { load(); }, [load]);
+
+    useEffect(() => {
+        if (!project?.id) {
+            setWorkflowContacts([]);
+            return;
+        }
+        let cancelled = false;
+        fetchWorkflowDirectoryContacts({ excludeProjectId: project.id })
+            .then((rows) => {
+                if (!cancelled) setWorkflowContacts(Array.isArray(rows) ? rows : []);
+            })
+            .catch(() => {
+                if (!cancelled) setWorkflowContacts([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [project?.id]);
 
     const removeManagedEnv = (env) => {
         setManagedEnvs((prev) => prev.filter((e) => e !== env));
@@ -1469,7 +1517,7 @@ const ProjectWorkflowEditor = ({ project, onClose, onSaved }) => {
                                     </div>
 
                                     {/* Active form */}
-                                    <WorkflowForm cfg={activeCfg} setCfg={setActiveCfg} />
+                                    <WorkflowForm cfg={activeCfg} setCfg={setActiveCfg} workflowContacts={workflowContacts} />
                                 </>
                             )}
                         </>

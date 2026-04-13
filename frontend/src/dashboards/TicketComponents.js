@@ -62,6 +62,7 @@ import {
     toDisplayTicketStatus
 } from '../services/ticketService';
 import { getEffectiveWorkflow } from '../services/projectWorkflowService';
+import { fetchWorkflowDirectoryContacts } from "../services/workflowDirectoryService";
 import EmailChipsInput from "../components/EmailChipsInput";
 import { useTheme } from "../services/ThemeContext";
 
@@ -2302,6 +2303,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
     const [error, setError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [savedEmails, setSavedEmails] = useState([]);
+    const [contactHints, setContactHints] = useState([]);
     const [workflowAutoKey, setWorkflowAutoKey] = useState("");
     
     useEffect(() => {
@@ -2321,6 +2323,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             });
             setError('');
             setSavedEmails(getSavedCcEmails());
+            setContactHints([]);
             setWorkflowPreview(null);
             setWorkflowAutoKey("");
         }
@@ -2328,6 +2331,21 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
 
     const selectedProjectId = (projects || []).find((p) => p.name === formData.productName)?.id;
     const selectedProject = (projects || []).find((p) => p.name === formData.productName);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        let cancelled = false;
+        fetchWorkflowDirectoryContacts({ excludeProjectId: selectedProjectId || "" })
+            .then((rows) => {
+                if (!cancelled) setContactHints(Array.isArray(rows) ? rows : []);
+            })
+            .catch(() => {
+                if (!cancelled) setContactHints([]);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [isOpen, selectedProjectId]);
     const availableEnvironments = useMemo(() => {
         const raw = selectedProject && Array.isArray(selectedProject.environments)
             ? selectedProject.environments.filter(Boolean)
@@ -2621,6 +2639,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                                     .filter(Boolean)
                                             }
                                             savedEmails={savedEmails}
+                                            contactHints={contactHints}
                                             placeholder="Type email and press Enter"
                                             inputLocked
                                         />
@@ -2644,6 +2663,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                             value={formData.ccEmail}
                                             onChange={(ccEmail) => setFormData((prev) => ({ ...prev, ccEmail }))}
                                             savedEmails={savedEmails}
+                                            contactHints={contactHints}
                                             lockedEmails={
                                                 (workflowPreview?.emailRouting?.ccMandatory || [])
                                                     .map((e) => String(e).trim().toLowerCase())
@@ -2668,6 +2688,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                             value={formData.bccEmail}
                                             onChange={(bccEmail) => setFormData((prev) => ({ ...prev, bccEmail }))}
                                             savedEmails={savedEmails}
+                                            contactHints={contactHints}
                                             lockedEmails={
                                                 (workflowPreview?.emailRouting?.bccMandatory || [])
                                                     .map((e) => String(e).trim().toLowerCase())
