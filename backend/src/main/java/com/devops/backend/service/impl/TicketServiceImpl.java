@@ -23,6 +23,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -49,6 +53,7 @@ public class TicketServiceImpl implements TicketService {
     private final EmailService emailService;
     private final WebSocketEventService webSocketEventService;
     private final ActivityLogService activityLogService;
+    private final CacheManager cacheManager;
     private static final Pattern EMAIL_IN_PAREN_PATTERN = Pattern.compile("\\(([^()\\s]+@[^()\\s]+)\\)");
     /** Designation: Role — Name · email@domain */
     private static final Pattern DESIGNATION_EMAIL_PATTERN = Pattern.compile(
@@ -71,6 +76,31 @@ public class TicketServiceImpl implements TicketService {
         STATUS_TRANSITIONS.put(TicketStatus.COMPLETED, Set.of(TicketStatus.CLOSED, TicketStatus.IN_PROGRESS));
         STATUS_TRANSITIONS.put(TicketStatus.CLOSED, Set.of(TicketStatus.COMPLETED, TicketStatus.IN_PROGRESS));
         STATUS_TRANSITIONS.put(TicketStatus.REJECTED, Set.of());
+    }
+
+    private static final String TICKET_DELETED_READONLY_MSG =
+            "This ticket is in the recycle bin and cannot be changed. Restore it from Admin → Deleted tickets to continue.";
+
+    private void evictTicketCaches() {
+        for (String cacheName : List.of(
+                "ticket-stats",
+                "ticket-stats-user",
+                "tickets-unassigned",
+                "tickets-assignee",
+                "tickets-active-assignee",
+                "tickets-completed-assignee"
+        )) {
+            Cache cache = cacheManager.getCache(cacheName);
+            if (cache != null) {
+                cache.clear();
+            }
+        }
+    }
+
+    private void assertTicketWritable(Ticket ticket) {
+        if (ticket.isDeleted()) {
+            throw new IllegalStateException(TICKET_DELETED_READONLY_MSG);
+        }
     }
     
     @Override
@@ -124,6 +154,7 @@ public class TicketServiceImpl implements TicketService {
         ticket.addTimelineEntry(TicketStatus.CREATED, userName, userEmail, "Ticket created");
         
         Ticket savedTicket = ticketRepository.save(ticket);
+        evictTicketCaches();
         log.info("Ticket created successfully: {}", ticketId);
 
         activityLogService.logActivity(
@@ -156,15 +187,53 @@ public class TicketServiceImpl implements TicketService {
     }
     
     @Override
-    public TicketResponse getTicketById(String ticketId) {
+    public TicketResponse getTicketById(String ticketId, boolean includeSoftDeleted) {
         Ticket ticket = ticketRepository.findById(ticketId)
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
+        if (ticket.isDeleted() && !includeSoftDeleted) {
+            throw new ResourceNotFoundException("Ticket not found with ID: " + ticketId);
+        }
         return mapToResponse(ticket);
+    }
+
+    @Override
+    public List<TicketResponse> getDeletedTickets() {
+        return ticketRepository.findSoftDeletedTicketsOrderByUpdatedAtDesc()
+                .stream()
+                .map(this::mapToResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public TicketResponse restoreTicket(String ticketId, String userName, String userEmail) {
+        Ticket ticket = ticketRepository.findById(ticketId)
+                .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
+        if (!ticket.isDeleted()) {
+            throw new IllegalArgumentException("Ticket is not in the recycle bin");
+        }
+        ticket.setDeleted(false);
+        ticket.setDeletedAt(null);
+        ticket.setDeletedBy(null);
+        ticket.setDeletedByEmail(null);
+        ticket.setUpdatedAt(Instant.now());
+        ticket.addTimelineEntry(ticket.getStatus(), userName, userEmail, "Ticket restored from recycle bin");
+        Ticket saved = ticketRepository.save(ticket);
+        evictTicketCaches();
+        activityLogService.logActivity(
+                "TICKET_RESTORED", "TICKET", ticketId,
+                userName != null && !userName.isBlank() ? userName : "Unknown",
+                userEmail != null && !userEmail.isBlank() ? userEmail : "",
+                "Ticket restored: " + ticketId,
+                Map.of("ticketId", ticketId));
+        TicketResponse response = mapToResponse(saved);
+        eventPublisher.publishTicketEvent("restored", response);
+        webSocketEventService.broadcastTicketUpdated(saved);
+        return response;
     }
     
     @Override
     public List<TicketResponse> getAllTickets() {
-        return ticketRepository.findAllByOrderByCreatedAtDesc()
+        return ticketRepository.findActiveTicketsOrderByCreatedAtDesc()
                 .stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
@@ -172,7 +241,7 @@ public class TicketServiceImpl implements TicketService {
     
     @Override
     public List<TicketResponse> getTicketsByRequester(String requesterEmail) {
-        return ticketRepository.findByRequesterEmailOrderByCreatedAtDesc(requesterEmail)
+        return ticketRepository.findActiveByRequesterEmailOrderByCreatedAtDesc(requesterEmail)
                 .stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
@@ -198,17 +267,92 @@ public class TicketServiceImpl implements TicketService {
         
         return ticketPage.map(this::mapToResponse);
     }
+
+    /**
+     * Reopen is allowed when the stored requester email matches any common JWT email claim
+     * (Azure AD often differs between {@code email}, {@code preferred_username}, and {@code upn}).
+     * Legacy tickets with no stored email fall back to display-name match.
+     */
+    private boolean isOriginalRequesterForReopen(Ticket ticket, String userName, String userEmail, Jwt jwt) {
+        String stored = ticket.getRequesterEmail();
+        if (stored != null && !stored.isBlank()) {
+            String normStored = stored.trim().toLowerCase(Locale.ROOT);
+            if (userEmail != null && !userEmail.isBlank()
+                    && normStored.equals(userEmail.trim().toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+            if (jwt != null) {
+                for (String claim : List.of("email", "preferred_username", "upn", "unique_name")) {
+                    String v = jwt.getClaimAsString(claim);
+                    if (v != null && !v.isBlank() && normStored.equals(v.trim().toLowerCase(Locale.ROOT))) {
+                        return true;
+                    }
+                }
+                List<String> emails = jwt.getClaimAsStringList("emails");
+                if (emails != null) {
+                    for (String e : emails) {
+                        if (e != null && !e.isBlank() && normStored.equals(e.trim().toLowerCase(Locale.ROOT))) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        }
+        return ticket.getRequestedBy() != null && userName != null
+                && ticket.getRequestedBy().trim().equalsIgnoreCase(userName.trim());
+    }
     
     @Override
-    public TicketResponse updateTicketStatus(String ticketId, UpdateStatusRequest request, 
-                                              String userName, String userEmail) {
+    public TicketResponse updateTicketStatus(String ticketId, UpdateStatusRequest request,
+                                              String userName, String userEmail, Jwt jwt) {
         log.info("Updating ticket {} status to {} by {}", ticketId, request.getNewStatus(), userName);
         
         Ticket ticket = ticketRepository.findById(ticketId)
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
-        
-        // Manual workflow mode: allow status transition to any state.
-        
+        assertTicketWritable(ticket);
+
+        if (Boolean.TRUE.equals(request.getReopen())) {
+            if (ticket.getStatus() != TicketStatus.CLOSED) {
+                throw new IllegalArgumentException("Only closed tickets can be reopened");
+            }
+            if (!isOriginalRequesterForReopen(ticket, userName, userEmail, jwt)) {
+                throw new IllegalArgumentException("Only the original requester can reopen this ticket");
+            }
+            if (request.getNewStatus() != TicketStatus.CREATED) {
+                throw new IllegalArgumentException("Reopen must target CREATED status");
+            }
+            TicketStatus previousStatus = ticket.getStatus();
+            ticket.setStatus(TicketStatus.CREATED);
+            ticket.setAssignedTo(null);
+            ticket.setAssignedToEmail(null);
+            ticket.setUpdatedAt(Instant.now());
+            String reopenNote = request.getNotes() != null && !request.getNotes().isBlank()
+                    ? request.getNotes()
+                    : "Ticket reopened — returned to unassigned queue";
+            ticket.addTimelineEntry(TicketStatus.CREATED, userName, userEmail, reopenNote);
+            Ticket savedTicket = ticketRepository.save(ticket);
+            evictTicketCaches();
+            activityLogService.logActivity(
+                    "STATUS_CHANGED", "TICKET", ticketId,
+                    userName, userEmail,
+                    "Ticket reopened from " + previousStatus + " to CREATED",
+                    Map.of("previousStatus", String.valueOf(previousStatus),
+                            "newStatus", "CREATED",
+                            "notes", reopenNote));
+            TicketResponse response = mapToResponse(savedTicket);
+            eventPublisher.publishTicketEvent("status-updated", response);
+            webSocketEventService.broadcastTicketStatusChanged(savedTicket);
+            try {
+                emailService.sendTicketStatusEmail(savedTicket, previousStatus);
+            } catch (Exception e) {
+                log.error("Failed to queue email for ticket {}: {}", ticketId, e.getMessage());
+            }
+            return response;
+        }
+
+        // Manual workflow mode: allow status transition to any state (validated by role in controller where needed).
+
         TicketStatus previousStatus = ticket.getStatus();
         ticket.setStatus(request.getNewStatus());
         ticket.setUpdatedAt(Instant.now());
@@ -221,6 +365,7 @@ public class TicketServiceImpl implements TicketService {
                 request.getNotes() != null ? request.getNotes() : "Status changed to " + request.getNewStatus());
         
         Ticket savedTicket = ticketRepository.save(ticket);
+        evictTicketCaches();
         log.info("Ticket {} status updated successfully", ticketId);
 
         activityLogService.logActivity(
@@ -427,6 +572,7 @@ public class TicketServiceImpl implements TicketService {
         
         Ticket ticket = ticketRepository.findById(request.getTicketId())
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + request.getTicketId()));
+        assertTicketWritable(ticket);
         
         if (ticket.getStatus() == TicketStatus.CLOSED) {
             throw new IllegalStateException("Cannot submit cost on a closed ticket.");
@@ -456,6 +602,7 @@ public class TicketServiceImpl implements TicketService {
         ticket.addTimelineEntry(TicketStatus.COST_APPROVAL_PENDING, userName, userEmail, notes);
         
         Ticket savedTicket = ticketRepository.save(ticket);
+        evictTicketCaches();
         
         sendCostApprovalEmail(savedTicket, userName);
         
@@ -480,6 +627,7 @@ public class TicketServiceImpl implements TicketService {
     public TicketResponse toggleTicketActive(String ticketId, ToggleActiveRequest request, String userName, String userEmail) {
         Ticket ticket = ticketRepository.findById(ticketId)
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
+        assertTicketWritable(ticket);
 
         ticket.setActive(request.isActive());
         ticket.setUpdatedAt(Instant.now());
@@ -490,6 +638,7 @@ public class TicketServiceImpl implements TicketService {
         ticket.addNote(userName, userEmail, note);
 
         Ticket saved = ticketRepository.save(ticket);
+        evictTicketCaches();
         TicketResponse response = mapToResponse(saved);
         eventPublisher.publishTicketEvent("active-toggled", response);
         
@@ -506,11 +655,13 @@ public class TicketServiceImpl implements TicketService {
         
         Ticket ticket = ticketRepository.findById(ticketId)
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
+        assertTicketWritable(ticket);
         
         ticket.setUpdatedAt(Instant.now());
         ticket.addNote(userName, userEmail, request.getNotes(), request.getAttachments());
         
         Ticket savedTicket = ticketRepository.save(ticket);
+        evictTicketCaches();
         log.info("Note added to ticket {} successfully", ticketId);
 
         activityLogService.logActivity(
@@ -534,6 +685,7 @@ public class TicketServiceImpl implements TicketService {
         
         Ticket ticket = ticketRepository.findById(ticketId)
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
+        assertTicketWritable(ticket);
         
         ticket.setAssignedTo(request.getAssigneeName());
         ticket.setAssignedToEmail(request.getAssigneeEmail());
@@ -542,6 +694,7 @@ public class TicketServiceImpl implements TicketService {
                 "Ticket assigned to " + request.getAssigneeName());
         
         Ticket savedTicket = ticketRepository.save(ticket);
+        evictTicketCaches();
         log.info("Ticket {} assigned successfully", ticketId);
 
         activityLogService.logActivity(
@@ -563,45 +716,61 @@ public class TicketServiceImpl implements TicketService {
     }
     
     @Override
-    public void deleteTicket(String ticketId) {
-        log.info("Deleting ticket: {}", ticketId);
-        
-        if (!ticketRepository.existsById(ticketId)) {
-            throw new ResourceNotFoundException("Ticket not found with ID: " + ticketId);
+    public void deleteTicket(String ticketId, String userName, String userEmail) {
+        log.info("Soft-deleting ticket: {} by {} ({})", ticketId, userName, userEmail);
+
+        Ticket ticket = ticketRepository.findById(ticketId)
+                .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
+        if (ticket.isDeleted()) {
+            log.info("Ticket {} already in recycle bin — idempotent skip", ticketId);
+            return;
         }
-        
-        ticketRepository.deleteById(ticketId);
+
+        Instant now = Instant.now();
+        ticket.setDeleted(true);
+        ticket.setDeletedAt(now);
+        ticket.setDeletedBy(userName != null && !userName.isBlank() ? userName : "Unknown");
+        ticket.setDeletedByEmail(userEmail != null && !userEmail.isBlank() ? userEmail : "");
+        ticket.setUpdatedAt(now);
+        ticket.addTimelineEntry(ticket.getStatus(), ticket.getDeletedBy(), ticket.getDeletedByEmail(),
+                "Ticket moved to recycle bin (soft delete)");
+        Ticket saved = ticketRepository.save(ticket);
+        evictTicketCaches();
+
         eventPublisher.publishTicketEvent("deleted", Map.of("ticketId", ticketId));
 
+        String actorName = userName != null && !userName.isBlank() ? userName : "Unknown";
+        String actorEmail = userEmail != null && !userEmail.isBlank() ? userEmail : "";
         activityLogService.logActivity(
                 "TICKET_DELETED", "TICKET", ticketId,
-                "system", "system",
-                "Ticket deleted: " + ticketId,
+                actorName, actorEmail,
+                "Ticket moved to recycle bin: " + ticketId,
                 Map.of("ticketId", ticketId));
 
-        // Broadcast real-time WebSocket event
         webSocketEventService.broadcastTicketDeleted(ticketId);
-        
-        log.info("Ticket {} deleted successfully", ticketId);
+        webSocketEventService.broadcastTicketUpdated(saved);
+
+        log.info("Ticket {} moved to recycle bin", ticketId);
     }
     
     @Override
+    @Cacheable("ticket-stats")
     public TicketStatsResponse getTicketStats() {
-        long total = ticketRepository.count();
+        long total = ticketRepository.countActiveTickets();
         
         Map<TicketStatus, Long> byStatus = new EnumMap<>(TicketStatus.class);
         for (TicketStatus status : TicketStatus.values()) {
-            byStatus.put(status, ticketRepository.countByStatus(status));
+            byStatus.put(status, ticketRepository.countActiveByStatus(status));
         }
         
         Map<RequestType, Long> byRequestType = new EnumMap<>(RequestType.class);
         for (RequestType type : RequestType.values()) {
-            byRequestType.put(type, ticketRepository.countByRequestType(type));
+            byRequestType.put(type, ticketRepository.countActiveByRequestType(type));
         }
         
         Map<Environment, Long> byEnvironment = new EnumMap<>(Environment.class);
         for (Environment env : Environment.values()) {
-            byEnvironment.put(env, ticketRepository.countByEnvironment(env));
+            byEnvironment.put(env, ticketRepository.countActiveByEnvironment(env));
         }
         
         return TicketStatsResponse.builder()
@@ -626,8 +795,9 @@ public class TicketServiceImpl implements TicketService {
     }
     
     @Override
+    @Cacheable(value = "ticket-stats-user", key = "#userEmail")
     public TicketStatsResponse getTicketStatsByUser(String userEmail) {
-        List<Ticket> userTickets = ticketRepository.findByRequesterEmailOrderByCreatedAtDesc(userEmail);
+        List<Ticket> userTickets = ticketRepository.findActiveByRequesterEmailOrderByCreatedAtDesc(userEmail);
         
         long total = userTickets.size();
         
@@ -661,12 +831,66 @@ public class TicketServiceImpl implements TicketService {
                 .build();
     }
     
+    private static final int SEARCH_QUERY_MAX_LEN = 160;
+
+    /**
+     * Mongo-safe substring match: wraps {@link Pattern#quote} so user input cannot inject regex operators.
+     */
+    private String buildSafeContainsRegex(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String t = raw.trim();
+        if (t.isEmpty() || t.length() > SEARCH_QUERY_MAX_LEN) {
+            return null;
+        }
+        return ".*" + Pattern.quote(t) + ".*";
+    }
+
+    private String buildRequesterEmailAnchorRegex(String email) {
+        if (email == null) {
+            return "^$";
+        }
+        String e = email.trim();
+        if (e.isEmpty()) {
+            return "^$";
+        }
+        return "^" + Pattern.quote(e) + "$";
+    }
+
     @Override
     public List<TicketResponse> searchTickets(String searchTerm) {
-        return ticketRepository.searchTickets(searchTerm)
-                .stream()
+        String pat = buildSafeContainsRegex(searchTerm);
+        if (pat == null) {
+            return List.of();
+        }
+        return ticketRepository.searchTickets(pat).stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<TicketResponse> searchMyTickets(String searchTerm, String requesterEmail) {
+        String pat = buildSafeContainsRegex(searchTerm);
+        if (pat == null) {
+            return List.of();
+        }
+        String emailPat = buildRequesterEmailAnchorRegex(requesterEmail);
+        return ticketRepository.searchMyTickets(pat, emailPat).stream()
+                .map(this::mapToResponse)
+                .collect(Collectors.toList());
+    }
+
+    @Override
+    public List<TicketResponse> searchTicketsSuggest(String searchTerm, int limit) {
+        int lim = Math.min(Math.max(limit, 1), 25);
+        return searchTickets(searchTerm).stream().limit(lim).collect(Collectors.toList());
+    }
+
+    @Override
+    public List<TicketResponse> searchMyTicketsSuggest(String searchTerm, String requesterEmail, int limit) {
+        int lim = Math.min(Math.max(limit, 1), 25);
+        return searchMyTickets(searchTerm, requesterEmail).stream().limit(lim).collect(Collectors.toList());
     }
     
     // Helper methods
@@ -805,6 +1029,7 @@ public class TicketServiceImpl implements TicketService {
         
         Ticket ticket = ticketRepository.findById(ticketId)
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with id: " + ticketId));
+        assertTicketWritable(ticket);
         
         String previousAssignee = ticket.getAssignedTo();
         
@@ -822,6 +1047,7 @@ public class TicketServiceImpl implements TicketService {
                                request.getNewAssigneeName(), notes);
         
         Ticket savedTicket = ticketRepository.save(ticket);
+        evictTicketCaches();
         log.info("Ticket {} forwarded successfully", ticketId);
         
         TicketResponse response = mapToResponse(savedTicket);
@@ -830,26 +1056,29 @@ public class TicketServiceImpl implements TicketService {
     }
     
     @Override
+    @Cacheable("tickets-unassigned")
     public List<TicketResponse> getUnassignedTickets() {
         log.info("Fetching unassigned tickets");
-        List<Ticket> tickets = ticketRepository.findByAssignedToIsNullAndStatus(TicketStatus.CREATED);
+        List<Ticket> tickets = ticketRepository.findActiveUnassignedByStatus(TicketStatus.CREATED);
         return tickets.stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }
     
     @Override
+    @Cacheable(value = "tickets-assignee", key = "#assigneeEmail")
     public List<TicketResponse> getTicketsByAssignee(String assigneeEmail) {
         log.info("Fetching tickets assigned to: {}", assigneeEmail);
-        List<Ticket> tickets = ticketRepository.findByAssignedToEmail(assigneeEmail);
+        List<Ticket> tickets = ticketRepository.findActiveByAssignedToEmail(assigneeEmail);
         return tickets.stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }
     
     @Override
-    public List<TicketResponse> getActiveTickets() {
-        log.info("Fetching active tickets");
+    @Cacheable(value = "tickets-active-assignee", key = "#assigneeEmail")
+    public List<TicketResponse> getActiveTickets(String assigneeEmail) {
+        log.info("Fetching active tickets for assignee: {}", assigneeEmail);
         List<TicketStatus> activeStatuses = Arrays.asList(
             TicketStatus.ACCEPTED,
             TicketStatus.MANAGER_APPROVAL_PENDING,
@@ -857,23 +1086,34 @@ public class TicketServiceImpl implements TicketService {
             TicketStatus.ACTION_REQUIRED,
             TicketStatus.ON_HOLD
         );
-        List<Ticket> tickets = ticketRepository.findByStatusIn(activeStatuses);
+        String normalizedEmail = assigneeEmail != null ? assigneeEmail.trim().toLowerCase(Locale.ROOT) : "";
+        List<Ticket> tickets = ticketRepository.findActiveByStatusIn(activeStatuses);
         return tickets.stream()
+                .filter(t -> {
+                    String assigned = t.getAssignedToEmail();
+                    return assigned != null && assigned.trim().toLowerCase(Locale.ROOT).equals(normalizedEmail);
+                })
                 .filter(Ticket::isActive)
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }
     
     @Override
-    public List<TicketResponse> getCompletedTickets() {
-        log.info("Fetching completed tickets");
+    @Cacheable(value = "tickets-completed-assignee", key = "#assigneeEmail")
+    public List<TicketResponse> getCompletedTickets(String assigneeEmail) {
+        log.info("Fetching completed tickets for assignee: {}", assigneeEmail);
         List<TicketStatus> completedStatuses = Arrays.asList(
             TicketStatus.COMPLETED,
             TicketStatus.CLOSED,
             TicketStatus.REJECTED
         );
-        List<Ticket> tickets = ticketRepository.findByStatusIn(completedStatuses);
+        String normalizedEmail = assigneeEmail != null ? assigneeEmail.trim().toLowerCase(Locale.ROOT) : "";
+        List<Ticket> tickets = ticketRepository.findActiveByStatusIn(completedStatuses);
         return tickets.stream()
+                .filter(t -> {
+                    String assigned = t.getAssignedToEmail();
+                    return assigned != null && assigned.trim().toLowerCase(Locale.ROOT).equals(normalizedEmail);
+                })
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }
@@ -890,9 +1130,9 @@ public class TicketServiceImpl implements TicketService {
             wf.setInfrastructure(mergedInfra);
             ticket.setWorkflowSnapshotJson(workflowSnapshotService.serialize(wf));
             if (wf.getEmailRouting() != null) {
-                ticket.setWorkflowEmailTo(copyEmailList(wf.getEmailRouting().getTo()));
-                ticket.setWorkflowEmailCc(copyEmailList(wf.getEmailRouting().getCc()));
-                ticket.setWorkflowEmailBcc(copyEmailList(wf.getEmailRouting().getBcc()));
+                ticket.setWorkflowEmailTo(copyEmailListFromApprovers(wf.getEmailRouting().getTo()));
+                ticket.setWorkflowEmailCc(copyEmailListFromApprovers(wf.getEmailRouting().getCc()));
+                ticket.setWorkflowEmailBcc(copyEmailListFromApprovers(wf.getEmailRouting().getBcc()));
                 ticket.setWorkflowEmailToMandatory(copyEmailList(wf.getEmailRouting().getToMandatory()));
                 ticket.setWorkflowEmailCcMandatory(copyEmailList(wf.getEmailRouting().getCcMandatory()));
                 ticket.setWorkflowEmailBccMandatory(copyEmailList(wf.getEmailRouting().getBccMandatory()));
@@ -925,6 +1165,22 @@ public class TicketServiceImpl implements TicketService {
                 .filter(Objects::nonNull)
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+        return out.isEmpty() ? null : out;
+    }
+
+    private static List<String> copyEmailListFromApprovers(List<WorkflowApprover> raw) {
+        if (raw == null) {
+            return null;
+        }
+        List<String> out = raw.stream()
+                .filter(Objects::nonNull)
+                .map(WorkflowApprover::getEmail)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(s -> s.toLowerCase(Locale.ROOT))
+                .distinct()
                 .collect(Collectors.toList());
         return out.isEmpty() ? null : out;
     }
@@ -970,9 +1226,11 @@ public class TicketServiceImpl implements TicketService {
         if (wf.getEmailRouting() != null && wf.getEmailRouting().getCc() != null) {
             wf.getEmailRouting().getCc().stream()
                     .filter(Objects::nonNull)
+                    .map(WorkflowApprover::getEmail)
+                    .filter(Objects::nonNull)
                     .map(String::trim)
                     .filter(s -> !s.isEmpty())
-                    .forEach(e -> cc.add(e.toLowerCase()));
+                    .forEach(e -> cc.add(e.toLowerCase(Locale.ROOT)));
         }
         if (!cc.isEmpty()) {
             ticket.setCcEmail(String.join(", ", cc));
@@ -1168,6 +1426,10 @@ public class TicketServiceImpl implements TicketService {
                 .reason(ticket.getReason())
                 .otherQueryDetails(ticket.getOtherQueryDetails())
                 .attachments(ticket.getAttachments())
+                .deleted(ticket.isDeleted())
+                .deletedAt(ticket.getDeletedAt())
+                .deletedBy(ticket.getDeletedBy())
+                .deletedByEmail(ticket.getDeletedByEmail())
                 .build();
     }
 
@@ -1175,6 +1437,7 @@ public class TicketServiceImpl implements TicketService {
     public void dispatchManagerApprovalEmail(String ticketId) {
         Ticket ticket = ticketRepository.findById(ticketId)
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
+        assertTicketWritable(ticket);
         sendManagerApprovalEmail(ticket, latestManagerApprovalPendingNotes(ticket));
     }
 

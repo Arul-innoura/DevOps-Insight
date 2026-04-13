@@ -19,7 +19,7 @@ import java.util.UUID;
 @Slf4j
 public class BlobStorageService {
 
-    private static final long MAX_FILE_BYTES = 5L * 1024 * 1024; // 5 MB
+    private static final long MAX_FILE_BYTES = 12L * 1024 * 1024; // 12 MB (ticket note attachments)
 
     private final BlobContainerClient containerClient;
     private final String containerUrl;
@@ -44,7 +44,7 @@ public class BlobStorageService {
             throw new IllegalArgumentException("File must not be empty");
         }
         if (file.getSize() > MAX_FILE_BYTES) {
-            throw new IllegalArgumentException("File exceeds 5 MB limit: " + file.getOriginalFilename());
+            throw new IllegalArgumentException("File exceeds 12 MB limit: " + file.getOriginalFilename());
         }
 
         String originalName = sanitizeFilename(

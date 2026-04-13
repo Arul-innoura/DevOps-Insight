@@ -25,4 +25,9 @@ public class UpdateStatusRequest {
      * When moving to MANAGER_APPROVAL_PENDING, the approver who should receive the email (must match UI selection).
      */
     private String approvalTargetEmail;
+
+    /**
+     * Requester-only: reopen a closed ticket back to the unassigned queue ({@code CREATED}, assignee cleared).
+     */
+    private Boolean reopen;
 }

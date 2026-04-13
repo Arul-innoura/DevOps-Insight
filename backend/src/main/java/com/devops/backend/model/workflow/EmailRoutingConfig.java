@@ -1,5 +1,6 @@
 package com.devops.backend.model.workflow;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -13,12 +14,15 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class EmailRoutingConfig {
+    @JsonDeserialize(using = FlexibleWorkflowApproverListDeserializer.class)
     @Builder.Default
-    private List<String> to = new ArrayList<>();
+    private List<WorkflowApprover> to = new ArrayList<>();
+    @JsonDeserialize(using = FlexibleWorkflowApproverListDeserializer.class)
     @Builder.Default
-    private List<String> cc = new ArrayList<>();
+    private List<WorkflowApprover> cc = new ArrayList<>();
+    @JsonDeserialize(using = FlexibleWorkflowApproverListDeserializer.class)
     @Builder.Default
-    private List<String> bcc = new ArrayList<>();
+    private List<WorkflowApprover> bcc = new ArrayList<>();
 
     /** Subset of {@code to} that are mandatory — users cannot remove these from ticket routing. */
     @Builder.Default

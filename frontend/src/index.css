@@ -5313,7 +5313,7 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
 .email-routing-editor {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   background: #fff;
 }
 .email-routing-empty {
@@ -5363,13 +5363,35 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
 }
 .email-mandatory-label { letter-spacing: 0.02em; }
 
-.email-routing-addr {
+.email-routing-addr-block {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: flex-start;
+}
+
+.email-routing-meta {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #64748b;
+  line-height: 1.2;
+}
+
+.email-routing-meta.name {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.email-routing-addr {
   font-size: 0.85rem;
   color: #374151;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  max-width: 100%;
 }
 .email-routing-row.is-mandatory .email-routing-addr { color: #5b21b6; font-weight: 500; }
 
@@ -5389,6 +5411,83 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   margin-left: 6px;
 }
 .email-routing-remove:hover { background: #fee2e2; color: #dc2626; }
+
+.email-routing-add-block {
+  padding: 10px 12px 12px;
+  border-top: 1px dashed #e5e7eb;
+  background: #fafafa;
+}
+
+.email-routing-add-actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.email-routing-add-hint {
+  margin: 8px 0 0;
+  font-size: 0.72rem;
+  color: #94a3b8;
+  line-height: 1.35;
+}
+
+.workflow-routing-person-fields {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr;
+  gap: 8px;
+}
+
+.workflow-routing-person-fields input {
+  padding: 10px 12px;
+  border: 1.5px solid var(--border-color, #e5e7eb);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  background: #fff;
+}
+
+.workflow-routing-person-fields input:focus {
+  outline: none;
+  border-color: var(--accent-color, #2563eb);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+
+@media (max-width: 720px) {
+  .workflow-routing-person-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Portal-mounted suggestion panel (escapes modal overflow) */
+.wf-suggest-portal {
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.18);
+}
+
+.workflow-person-suggest-dropdown-inner {
+  padding: 4px 0;
+}
+
+.wf-suggest-portal .workflow-person-suggest-option {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid #f3f4f6;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  color: #374151;
+}
+
+.wf-suggest-portal .workflow-person-suggest-option:last-child {
+  border-bottom: none;
+}
+
+.wf-suggest-portal .workflow-person-suggest-option:hover {
+  background: #f0fdf4;
+}
 
 .email-routing-add-wrap {
   position: relative;
@@ -5561,6 +5660,25 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
 [data-theme="dark"] .email-routing-add-row { background: #0d1117; border-top-color: #21262d; }
 [data-theme="dark"] .email-routing-add-input { color: #c9d1d9; }
 [data-theme="dark"] .email-routing-add-btn { background: #161b22; border-color: #30363d; color: #8b949e; }
+[data-theme="dark"] .wf-suggest-portal {
+  background: #161b22;
+  border-color: #30363d;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.55);
+}
+[data-theme="dark"] .wf-suggest-portal .workflow-person-suggest-option {
+  border-bottom-color: #21262d;
+  color: #c9d1d9;
+}
+[data-theme="dark"] .wf-suggest-portal .workflow-person-suggest-option:hover {
+  background: #1f2937;
+}
+[data-theme="dark"] .workflow-routing-person-fields input {
+  background: #0d1117;
+  border-color: #30363d;
+  color: #c9d1d9;
+}
+[data-theme="dark"] .email-routing-meta { color: #8b949e; }
+[data-theme="dark"] .email-routing-meta.name { color: #e6edf3; }
 [data-theme="dark"] .email-routing-suggest {
   background: #161b22;
   border-color: #30363d;
@@ -7592,6 +7710,180 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
 .search-box-mini svg {
   color: var(--jira-text-subtle);
   flex-shrink: 0;
+}
+
+/* --- Ticket hub search (Admin / DevOps header + User requests) --- */
+.ticket-search-bar {
+  position: relative;
+  min-width: 240px;
+  max-width: min(440px, 46vw);
+  z-index: 5;
+}
+
+.ticket-search-bar--header {
+  width: min(400px, 40vw);
+}
+
+.ticket-search-bar--user {
+  flex: 1;
+  min-width: 200px;
+  max-width: 560px;
+}
+
+.user-requests-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+
+.ticket-search-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--jira-bg-card, #fff);
+  border: 1px solid var(--jira-border, #dfe1e6);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.ticket-search-inner:focus-within {
+  border-color: var(--jira-blue, #0052cc);
+  box-shadow: 0 0 0 3px rgba(0, 82, 204, 0.12);
+}
+
+.ticket-search-inner.is-loading {
+  opacity: 0.96;
+}
+
+.ticket-search-icon {
+  color: var(--jira-text-subtle, #5e6c84);
+  flex-shrink: 0;
+}
+
+.ticket-search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  outline: none;
+  font-size: 14px;
+  color: var(--jira-text, #172b4d);
+}
+
+.ticket-search-input::placeholder {
+  color: var(--jira-text-subtle, #5e6c84);
+}
+
+.ticket-search-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  margin: 0;
+  border: none;
+  background: transparent;
+  color: var(--jira-text-subtle, #5e6c84);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.ticket-search-clear:hover {
+  background: rgba(9, 30, 66, 0.06);
+  color: var(--jira-text, #172b4d);
+}
+
+.ticket-search-spinner {
+  color: var(--jira-blue, #0052cc);
+  flex-shrink: 0;
+}
+
+.ticket-search-suggestions {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 4px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  max-height: min(360px, 52vh);
+  overflow-y: auto;
+  background: var(--jira-bg-card, #fff);
+  border: 1px solid var(--jira-border, #dfe1e6);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(9, 30, 66, 0.18);
+}
+
+.ticket-search-suggest-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.ticket-search-suggest-row:hover {
+  background: rgba(0, 82, 204, 0.08);
+}
+
+.ticket-search-suggest-id {
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--jira-blue, #0052cc);
+}
+
+.ticket-search-suggest-title {
+  font-size: 13px;
+  color: var(--jira-text, #172b4d);
+}
+
+.ticket-search-suggest-meta {
+  font-size: 11px;
+  color: var(--jira-text-subtle, #5e6c84);
+}
+
+.ticket-search-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--jira-text-subtle, #5e6c84);
+  background: var(--jira-bg-card, #fff);
+  border: 1px dashed var(--jira-border, #dfe1e6);
+  border-radius: 10px;
+}
+
+.ticket-filter-search-input {
+  width: 100%;
+  min-width: 180px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--jira-border, #dfe1e6);
+  font-size: 13px;
+  background: var(--jira-bg-card, #fff);
+  color: var(--jira-text, #172b4d);
+}
+
+.ticket-filter-search-input:focus {
+  outline: none;
+  border-color: var(--jira-blue, #0052cc);
+  box-shadow: 0 0 0 2px rgba(0, 82, 204, 0.1);
+}
+
+.filter-group--search-wide {
+  min-width: min(100%, 240px);
 }
 
 /* --- Content Header Jira Style --- */
@@ -12338,6 +12630,11 @@ select:focus {
   border: 1px solid var(--border-color);
   border-radius: 14px;
   overflow: hidden;
+}
+
+/* Allow autocomplete dropdowns to extend past section cards inside the full-page workflow editor */
+.workflow-modal-body .workflow-section {
+  overflow: visible;
 }
 
 .workflow-section-header {

@@ -37,6 +37,8 @@ import {
     Loader2,
     Ban,
     Forward,
+    RotateCcw,
+    Lock,
     Paperclip,
     Image,
     File,
@@ -45,21 +47,24 @@ import {
     Eye
 } from 'lucide-react';
 import { 
-    TICKET_STATUS, 
+    TICKET_STATUS,
+    TICKET_FILTER_BUCKET,
     getStatusColors,
     REQUEST_TYPES,
     REQUEST_TYPE_TO_API_ENUM,
     ENVIRONMENTS,
     normalizeEnvironmentLabel,
     getDynamicAllowedTransitions,
-    STATUS_TRANSITIONS,
     createTicket,
     updateTicketStatus,
     addTicketNote,
     uploadNoteAttachments,
     getSavedCcEmails,
     saveCcEmail,
-    toDisplayTicketStatus
+    toDisplayTicketStatus,
+    ticketRequesterMatchesCurrentUser,
+    NOTE_ATTACHMENT_MAX_BYTES,
+    NOTE_ATTACHMENT_MAX_MB
 } from '../services/ticketService';
 import { getEffectiveWorkflow } from '../services/projectWorkflowService';
 import { fetchWorkflowDirectoryContacts } from "../services/workflowDirectoryService";
@@ -880,23 +885,45 @@ export const TicketCard = ({ ticket, onClick, showActions = false, onStatusChang
 };
 
 // ============ TICKET FILTERS COMPONENT ============
-export const TicketFilters = ({ filters, onFilterChange }) => {
+export const TicketFilters = ({
+    filters,
+    onFilterChange,
+    hideAssignMeOption = false,
+    hideStatusFilter = false,
+    showAssigneeFilter = false,
+    searchPlaceholder = "Filter this list (id, product, assignee…)"
+}) => {
+    useEffect(() => {
+        if (!hideAssignMeOption) return;
+        if (filters.status !== TICKET_FILTER_BUCKET.ASSIGNED_ME) return;
+        onFilterChange({ ...filters, status: null });
+    }, [hideAssignMeOption, filters, onFilterChange]);
+
+    const statusValue =
+        hideAssignMeOption && filters.status === TICKET_FILTER_BUCKET.ASSIGNED_ME
+            ? ""
+            : filters.status || "";
     return (
         <div className="ticket-filters">
-            <div className="filter-group">
-                <label>Status</label>
-                <select 
-                    value={filters.status || ''} 
-                    onChange={e => onFilterChange({ ...filters, status: e.target.value || null })}
-                >
-                    <option value="">All</option>
-                    {Object.values(TICKET_STATUS).map(status => (
-                        <option key={status} value={status}>
-                            {STATUS_DISPLAY_CONFIG[status]?.label || status}
-                        </option>
-                    ))}
-                </select>
-            </div>
+            {!hideStatusFilter && (
+                <div className="filter-group">
+                    <label>Status</label>
+                    <select 
+                        value={statusValue} 
+                        onChange={e => onFilterChange({ ...filters, status: e.target.value || null })}
+                    >
+                        <option value={TICKET_FILTER_BUCKET.ALL}>All</option>
+                        <option value={TICKET_FILTER_BUCKET.UNASSIGNED}>Unassigned</option>
+                        {!hideAssignMeOption && (
+                            <option value={TICKET_FILTER_BUCKET.ASSIGNED_ME}>Assign me</option>
+                        )}
+                        <option value={TICKET_FILTER_BUCKET.IN_PROGRESS}>In progress</option>
+                        <option value={TICKET_FILTER_BUCKET.PENDING}>Pending</option>
+                        <option value={TICKET_FILTER_BUCKET.COMPLETED}>Completed</option>
+                        <option value={TICKET_FILTER_BUCKET.CLOSED}>Closed</option>
+                    </select>
+                </div>
+            )}
             
             <div className="filter-group">
                 <label>Type</label>
@@ -923,12 +950,25 @@ export const TicketFilters = ({ filters, onFilterChange }) => {
                     ))}
                 </select>
             </div>
+            {showAssigneeFilter && (
+                <div className="filter-group">
+                    <label>DevOps member</label>
+                    <input
+                        type="search"
+                        className="ticket-filter-search-input"
+                        placeholder="Assigned name or email"
+                        value={filters.assignedTo || ''}
+                        onChange={e => onFilterChange({ ...filters, assignedTo: e.target.value || null })}
+                    />
+                </div>
+            )}
             
-            <div className="filter-group">
-                <label>Search</label>
+            <div className="filter-group filter-group--search-wide">
+                <label>Refine</label>
                 <input 
-                    type="text"
-                    placeholder="Search tickets..."
+                    type="search"
+                    className="ticket-filter-search-input"
+                    placeholder={searchPlaceholder}
                     value={filters.search || ''}
                     onChange={e => onFilterChange({ ...filters, search: e.target.value || null })}
                 />
@@ -936,6 +976,20 @@ export const TicketFilters = ({ filters, onFilterChange }) => {
         </div>
     );
 };
+
+/** DevOps/Admin manual status list only — workflow steps (manager/cost approved, on hold, etc.) are driven by approvals, not this menu. */
+const DEVOPS_EXPLICIT_STATUS_OPTIONS = [
+    TICKET_STATUS.CREATED,
+    TICKET_STATUS.ACCEPTED,
+    TICKET_STATUS.IN_PROGRESS,
+    TICKET_STATUS.COMPLETED,
+    TICKET_STATUS.CLOSED,
+];
+
+const REOPEN_ACTION_VALUE = "REOPEN::APPLY";
+const ASSIGN_SELF_ACTION_VALUE = "ASSIGN_SELF::APPLY";
+/** DevOps: placeholder menu row (must stay enabled so the action menu can open; Apply is disabled for this value). */
+const DEVOPS_NO_ACTIONS_INFO = "__DEVOPS_NO_ACTIONS__";
 
 // ============ DETAIL FIELD COMPONENT (for modal) ============
 const DetailField = ({ icon: Icon, label, value, mono = false, pill = false, pillColor }) => {
@@ -1139,9 +1193,14 @@ export const TicketDetailsModal = ({
     onToggleActiveStatus,
     onRequestCostApproval,
     /** DevOps: open forward-to-teammate flow (parent shows picker modal). */
-    onForward
+    onForward,
+    /** DevOps: quick claim action for unassigned queue */
+    onAssignToSelf,
+    /** Admin: restore soft-deleted ticket from recycle bin */
+    onRestoreTicket
 }) => {
     const [note, setNote] = useState('');
+    const [reopenNote, setReopenNote] = useState('');
     const [selectedStatus, setSelectedStatus] = useState('');
     // Each item: { file, name, size, status: 'pending'|'uploading'|'done'|'error', url?, error? }
     const [pendingFiles, setPendingFiles] = useState([]);
@@ -1154,19 +1213,24 @@ export const TicketDetailsModal = ({
     const { theme } = useTheme();
 
     useEffect(() => {
-        if (ticket?.id) setPendingCostApproverEmail(null);
+        if (ticket?.id) {
+            setPendingCostApproverEmail(null);
+            setReopenNote("");
+        }
     }, [ticket?.id]);
 
     if (!ticket) return null;
 
-    const accent = getTypeAccent(ticket.requestType);
-    const allowedTransitions = getDynamicAllowedTransitions(ticket);
+    const ticketIsDeleted = !!ticket.deleted;
+    const effectiveCanManage = canManage && !ticketIsDeleted;
+    const effectiveCostEstimate = canSubmitCostEstimate && !ticketIsDeleted;
 
+    const accent = getTypeAccent(ticket.requestType);
     // Get simplified action label with icon indicator
     const getStatusActionLabel = (status) => {
         if (status === TICKET_STATUS.ACCEPTED) return "Assign";
         const config = STATUS_DISPLAY_CONFIG[status];
-        if (status === TICKET_STATUS.COST_APPROVAL_PENDING) return "💰 Submit Cost Estimate";
+        if (status === TICKET_STATUS.COST_APPROVAL_PENDING) return "Submit cost estimate";
         if (!config) return status;
         return config.label;
     };
@@ -1189,7 +1253,7 @@ export const TicketDetailsModal = ({
     const approvalActions = configuredApprovalPeople.map((p) => {
         const role = (p.role || "Approver").trim();
         const name = (p.name || "").trim() || p.email;
-        const label = canManage ? `${role} — ${name} · ${p.email}` : `${role} — ${name}`;
+        const label = effectiveCanManage ? `${role} — ${name} · ${p.email}` : `${role} — ${name}`;
         return {
             value: `APPROVAL::${p.email}`,
             label,
@@ -1213,7 +1277,7 @@ export const TicketDetailsModal = ({
         configuredCostApprovers.length > 0;
 
     const costApprovalActions =
-        canSubmitCostEstimate
+        effectiveCostEstimate
             ? configuredCostApprovers.length > 0
                 ? configuredCostApprovers.map((p) => {
                       const role = p.role || "Cost approver";
@@ -1228,7 +1292,7 @@ export const TicketDetailsModal = ({
                 : [
                       {
                           value: OPEN_COST_TOOL_ACTION,
-                          label: "💰 Cost approval — open estimate tool",
+                          label: "Cost approval — open estimate tool",
                           type: "openCostTool"
                       }
                   ]
@@ -1240,56 +1304,56 @@ export const TicketDetailsModal = ({
 
     // Users can always close their own ticket (unless already closed)
     const userCloseAction = ticket.status !== TICKET_STATUS.CLOSED
-        ? [{ value: `STATUS::${TICKET_STATUS.CLOSED}`, label: '🔒 Close Ticket', type: 'status', status: TICKET_STATUS.CLOSED }]
+        ? [{ value: `STATUS::${TICKET_STATUS.CLOSED}`, label: "Close ticket", type: "status", status: TICKET_STATUS.CLOSED }]
         : [];
 
-    // DevOps-friendly short action labels based on destination status
+    const isRequesterReopen = !canManage && ticketRequesterMatchesCurrentUser(ticket, user);
+
+    const userReopenSelectAction =
+        ticket.status === TICKET_STATUS.CLOSED && isRequesterReopen
+            ? [{ value: REOPEN_ACTION_VALUE, label: "Reopen ticket", type: "reopen" }]
+            : [];
+
+    // DevOps/Admin: only primary lifecycle targets (not on hold, cost/manager approved, etc.).
     const getDevOpsActionLabel = (status) => {
         switch (status) {
-            case TICKET_STATUS.ACCEPTED:               return '👤 Assign';
-            case TICKET_STATUS.MANAGER_APPROVAL_PENDING: return '📤 Send for Approval';
-            case TICKET_STATUS.MANAGER_APPROVED:       return '✔ Mark Approved';
-            case TICKET_STATUS.COST_APPROVAL_PENDING:  return '💰 Cost Estimate';
-            case TICKET_STATUS.COST_APPROVED:          return '✔ Cost Approved';
-            case TICKET_STATUS.IN_PROGRESS:            return '▶ In Progress';
-            case TICKET_STATUS.ACTION_REQUIRED:        return '⚠ Action Required';
-            case TICKET_STATUS.COMPLETED:              return '✅ Complete';
-            case TICKET_STATUS.CLOSED:                 return '🔒 Close';
-            default: return getStatusActionLabel(status);
+            case TICKET_STATUS.CREATED:
+                return "Ticket raised (unassigned queue)";
+            case TICKET_STATUS.ACCEPTED:
+                return "Assigned";
+            case TICKET_STATUS.IN_PROGRESS:
+                return "In progress";
+            case TICKET_STATUS.COMPLETED:
+                return "Completed";
+            case TICKET_STATUS.CLOSED:
+                return "Closed";
+            default:
+                return getStatusActionLabel(status);
         }
     };
 
-    // Context-aware transitions — no more dumping all statuses.
-    // MANAGER_APPROVAL_PENDING is excluded from status actions for both DevOps and users
-    // because sending for approval is handled by the "Request Approval" optgroup (pick the person directly).
-    const normalizedTicketStatus = toDisplayTicketStatus(ticket.status);
-    const devOpsTransitionBase =
-        STATUS_TRANSITIONS[ticket.status] ||
-        STATUS_TRANSITIONS[normalizedTicketStatus] ||
-        [];
-    let smartTransitions = (canManage ? devOpsTransitionBase : getDynamicAllowedTransitions(ticket))
-        .filter((s) => s !== TICKET_STATUS.MANAGER_APPROVAL_PENDING)
-        .filter((s) => !(s === TICKET_STATUS.COST_APPROVAL_PENDING && !canSubmitCostEstimate));
-    if (
-        canManage &&
-        canSubmitCostEstimate &&
-        normalizedTicketStatus !== TICKET_STATUS.CLOSED &&
-        !smartTransitions.includes(TICKET_STATUS.COST_APPROVAL_PENDING)
-    ) {
-        smartTransitions = [...smartTransitions, TICKET_STATUS.COST_APPROVAL_PENDING];
-    }
-
-    const defaultActions = smartTransitions.map((s) => ({
-        value: `STATUS::${s}`,
-        label: canManage ? getDevOpsActionLabel(s) : getStatusActionLabel(s),
-        type: "status",
-        status: s
-    }));
+    // MANAGER_APPROVAL_PENDING is excluded — use "Send for approval" in the separate group.
+    // DevOps/Admin: hide manual status list only on the true unassigned queue (raised + no assignee).
+    // Tickets already in progress etc. still get the menu even if assignee fields are missing from the payload.
+    const inDevOpsUnassignedQueue =
+        effectiveCanManage &&
+        ticket.status === TICKET_STATUS.CREATED;
+    const smartTransitions = effectiveCanManage && !inDevOpsUnassignedQueue ? [...DEVOPS_EXPLICIT_STATUS_OPTIONS] : [];
+    const defaultActions = effectiveCanManage
+        ? inDevOpsUnassignedQueue && typeof onAssignToSelf === "function"
+            ? [{ value: ASSIGN_SELF_ACTION_VALUE, label: "Assign", type: "assign-self" }]
+            : smartTransitions.map((s) => ({
+                  value: `STATUS::${s}`,
+                  label: getDevOpsActionLabel(s),
+                  type: "status",
+                  status: s,
+              }))
+        : [];
 
     // Users: approval requests + close only. DevOps: status + manager approval + cost approver targets.
-    const selectableActions = canManage
+    const selectableActions = effectiveCanManage
         ? [...defaultActions, ...approvalActions, ...costApprovalActions]
-        : [...userCloseAction, ...approvalActionsForUser];
+        : [...userReopenSelectAction, ...userCloseAction, ...approvalActionsForUser];
 
     const selectedApprovalAction = selectedStatus.startsWith("APPROVAL::")
         ? approvalActions.find((a) => a.value === selectedStatus)
@@ -1298,15 +1362,25 @@ export const TicketDetailsModal = ({
     const applySelectedAction = (actionNoteText) => {
         if (!selectedStatus) return;
 
+        if (selectedStatus === DEVOPS_NO_ACTIONS_INFO) {
+            setSelectedStatus("");
+            return;
+        }
+
         if (selectedStatus === OPEN_COST_TOOL_ACTION) {
-            if (!canSubmitCostEstimate || !onRequestCostApproval) return;
+            if (!effectiveCostEstimate || !onRequestCostApproval) return;
             onRequestCostApproval(ticket, { costApproverEmail: pendingCostApproverEmail || undefined });
+            setSelectedStatus("");
+            return;
+        }
+        if (selectedStatus === ASSIGN_SELF_ACTION_VALUE) {
+            if (typeof onAssignToSelf === "function") onAssignToSelf(ticket.id);
             setSelectedStatus("");
             return;
         }
 
         if (selectedStatus.startsWith(COST_APPROVAL_PREFIX)) {
-            if (!canSubmitCostEstimate || !onRequestCostApproval) return;
+            if (!effectiveCostEstimate || !onRequestCostApproval) return;
             const email = selectedStatus.slice(COST_APPROVAL_PREFIX.length).trim();
             if (email) {
                 setPendingCostApproverEmail(email);
@@ -1318,9 +1392,24 @@ export const TicketDetailsModal = ({
 
         if (!onStatusChange) return;
 
+        if (selectedStatus === REOPEN_ACTION_VALUE) {
+            const r = reopenNote.trim();
+            if (!r) return;
+            onStatusChange(
+                ticket.id,
+                TICKET_STATUS.CREATED,
+                `Ticket reopened — returned to unassigned queue. Requester note: ${r}`,
+                { reopen: true }
+            );
+            setReopenNote("");
+            setNote("");
+            setSelectedStatus("");
+            return;
+        }
+
         if (selectedStatus.startsWith("STATUS::")) {
             const statusValue = selectedStatus.replace("STATUS::", "");
-            if (statusValue === TICKET_STATUS.COST_APPROVAL_PENDING && canSubmitCostEstimate && onRequestCostApproval) {
+            if (statusValue === TICKET_STATUS.COST_APPROVAL_PENDING && effectiveCostEstimate && onRequestCostApproval) {
                 onRequestCostApproval(ticket, { costApproverEmail: pendingCostApproverEmail || undefined });
                 setSelectedStatus('');
                 return;
@@ -1347,7 +1436,7 @@ export const TicketDetailsModal = ({
             setSelectedStatus('');
             return;
         }
-        if (selectedStatus === TICKET_STATUS.COST_APPROVAL_PENDING && canSubmitCostEstimate && onRequestCostApproval) {
+        if (selectedStatus === TICKET_STATUS.COST_APPROVAL_PENDING && effectiveCostEstimate && onRequestCostApproval) {
             onRequestCostApproval(ticket, { costApproverEmail: pendingCostApproverEmail || undefined });
             setSelectedStatus('');
             return;
@@ -1359,12 +1448,12 @@ export const TicketDetailsModal = ({
 
     /** Choosing a cost approver opens the same cost tool window as the primary button (auto-calc / autofill / send). */
     const handleActionSelectChange = (value) => {
-        if (value === OPEN_COST_TOOL_ACTION && canSubmitCostEstimate && onRequestCostApproval) {
+        if (value === OPEN_COST_TOOL_ACTION && effectiveCostEstimate && onRequestCostApproval) {
             onRequestCostApproval(ticket, { costApproverEmail: pendingCostApproverEmail || undefined });
             setSelectedStatus("");
             return;
         }
-        if (canSubmitCostEstimate && onRequestCostApproval && value.startsWith(COST_APPROVAL_PREFIX)) {
+        if (effectiveCostEstimate && onRequestCostApproval && value.startsWith(COST_APPROVAL_PREFIX)) {
             const email = value.slice(COST_APPROVAL_PREFIX.length).trim();
             if (email) {
                 setPendingCostApproverEmail(email);
@@ -1397,7 +1486,7 @@ export const TicketDetailsModal = ({
     };
 
     const handleNoteFiles = async (files) => {
-        const MAX_SIZE = 5 * 1024 * 1024;
+        const MAX_SIZE = NOTE_ATTACHMENT_MAX_BYTES;
         const list = Array.from(files || []).slice(0, 10);
 
         // Validate client-side first
@@ -1406,7 +1495,7 @@ export const TicketDetailsModal = ({
             name: f.name,
             size: f.size,
             status: f.size > MAX_SIZE ? 'error' : 'pending',
-            error: f.size > MAX_SIZE ? 'Exceeds 5 MB limit' : null,
+            error: f.size > MAX_SIZE ? `Exceeds ${NOTE_ATTACHMENT_MAX_MB} MB limit` : null,
             url: null,
         }));
 
@@ -1524,21 +1613,28 @@ export const TicketDetailsModal = ({
                 return "blue";
             })();
             const rawNotes = entry?.notes ? normalizeFlowNotes(entry.notes).slice(0, 80) : '';
-            const notesForTooltip = canManage ? rawNotes : maskCostText(rawNotes);
+            const notesForTooltip = effectiveCanManage ? rawNotes : maskCostText(rawNotes);
             return { id: `${entry?.timestamp || "x"}-${idx}`, label, tone, user: entry?.user || '', timestamp: entry?.timestamp || '', notes: notesForTooltip };
         });
     const canForwardTicket =
         typeof onForward === "function" &&
+        !ticketIsDeleted &&
         !!ticket.assignedTo &&
         ![TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(ticket.status);
 
     const runtimeBarTone = runtimeBarToneForStatus(timelineStatusKey(ticket.status), theme);
 
     const actionDropdownGroups = [];
-    if (canManage && defaultActions.length > 0) {
+    if (effectiveCanManage && defaultActions.length > 0) {
         actionDropdownGroups.push({
             title: "Status",
             items: defaultActions.map((a) => ({ value: a.value, label: a.label })),
+        });
+    }
+    if (!canManage && userReopenSelectAction.length > 0) {
+        actionDropdownGroups.push({
+            title: "Closed ticket",
+            items: userReopenSelectAction.map((a) => ({ value: a.value, label: a.label })),
         });
     }
     if (!canManage && userCloseAction.length > 0) {
@@ -1547,7 +1643,7 @@ export const TicketDetailsModal = ({
             items: userCloseAction.map((a) => ({ value: a.value, label: a.label })),
         });
     }
-    if (canManage && (approvalActions.length > 0 || costApprovalActions.length > 0)) {
+    if (effectiveCanManage && (approvalActions.length > 0 || costApprovalActions.length > 0)) {
         actionDropdownGroups.push({
             title: "Request & cost approval",
             items: [
@@ -1563,14 +1659,22 @@ export const TicketDetailsModal = ({
         });
     }
     if (
-        canManage &&
+        effectiveCanManage &&
         defaultActions.length === 0 &&
         approvalActions.length === 0 &&
         costApprovalActions.length === 0
     ) {
         actionDropdownGroups.push({
             title: "",
-            items: [{ value: "__none__", label: "No actions available", disabled: true }],
+            items: [
+                {
+                    value: DEVOPS_NO_ACTIONS_INFO,
+                    label: inDevOpsUnassignedQueue
+                        ? "Assign this ticket from the list first — then status and workflow actions appear here"
+                        : "No workflow actions — add approvers / cost approvers in project workflow settings",
+                    disabled: false,
+                },
+            ],
         });
     }
 
@@ -1612,6 +1716,38 @@ export const TicketDetailsModal = ({
                     {/* LEFT: Main content */}
                     <div className="jdm-main">
 
+                        {ticketIsDeleted && (
+                            <div
+                                className="jdm-section"
+                                style={{
+                                    background: "var(--surface-warn, #fffbeb)",
+                                    border: "1px solid var(--border-warn, #fcd34d)",
+                                    borderRadius: 8
+                                }}
+                            >
+                                <div className="jdm-section-title" style={{ color: "#92400e" }}>
+                                    Recycle bin
+                                </div>
+                                <p className="jdm-description" style={{ marginBottom: onRestoreTicket ? 12 : 0 }}>
+                                    This ticket was removed from active queues. It is read-only until restored.
+                                    {ticket.deletedAt && (
+                                        <>
+                                            {" "}
+                                            <span style={{ color: "var(--text-muted, #64748b)" }}>
+                                                Deleted {new Date(ticket.deletedAt).toLocaleString()}
+                                                {ticket.deletedBy ? ` · ${ticket.deletedBy}` : ""}.
+                                            </span>
+                                        </>
+                                    )}
+                                </p>
+                                {onRestoreTicket && (
+                                    <button type="button" className="jdm-btn-primary" onClick={() => onRestoreTicket(ticket.id)}>
+                                        Restore ticket
+                                    </button>
+                                )}
+                            </div>
+                        )}
+
                         {/* Description */}
                         {ticket.description && (
                             <div className="jdm-section">
@@ -1644,6 +1780,49 @@ export const TicketDetailsModal = ({
                                 })}
                             </div>
                         </div>
+
+                        {!canManage &&
+                            ticket.status === TICKET_STATUS.CLOSED &&
+                            isRequesterReopen && (
+                                <div className="jdm-section">
+                                    <div className="jdm-section-title">
+                                        <RotateCcw size={14} /> Reopen
+                                    </div>
+                                    <p className="jdm-description" style={{ marginBottom: 12, fontSize: "0.9rem" }}>
+                                        Send this request back to the unassigned queue. Full history is kept. Add a short note
+                                        for the team (required). You can also choose <strong>Reopen ticket</strong> under
+                                        Actions and click Apply.
+                                    </p>
+                                    <textarea
+                                        className="jdm-textarea"
+                                        value={reopenNote}
+                                        onChange={(e) => setReopenNote(e.target.value)}
+                                        placeholder="Why are you reopening? What should the team do next?"
+                                        rows={3}
+                                        style={{ marginBottom: 12 }}
+                                    />
+                                    <button
+                                        type="button"
+                                        className="jdm-btn-primary"
+                                        disabled={!reopenNote.trim()}
+                                        onClick={() => {
+                                            const r = reopenNote.trim();
+                                            if (!r || !onStatusChange) return;
+                                            onStatusChange(
+                                                ticket.id,
+                                                TICKET_STATUS.CREATED,
+                                                `Ticket reopened — returned to unassigned queue. Requester note: ${r}`,
+                                                { reopen: true }
+                                            );
+                                            setReopenNote("");
+                                            setSelectedStatus("");
+                                        }}
+                                    >
+                                        <RotateCcw size={16} style={{ marginRight: 8, verticalAlign: "middle" }} />
+                                        Reopen ticket
+                                    </button>
+                                </div>
+                            )}
 
                         {/* Service Details */}
                         <div className="jdm-section">
@@ -1713,6 +1892,12 @@ export const TicketDetailsModal = ({
                                 ) : (
                                 <div className="jdm-ticket-action-picker">
                                     <div className="jdm-ticket-action-picker-label">Change status or route</div>
+                                    {effectiveCanManage && inDevOpsUnassignedQueue && (
+                                        <p className="jdm-hint-text" style={{ marginBottom: 10 }}>
+                                            Assign this ticket from the list first — manual status changes unlock after it leaves the
+                                            unassigned queue.
+                                        </p>
+                                    )}
                                     <div className="jdm-ticket-action-picker-row">
                                     <TicketActionMenu
                                         key={ticket.id}
@@ -1725,29 +1910,36 @@ export const TicketDetailsModal = ({
                                         type="button"
                                         className="jdm-btn-primary jdm-ticket-action-apply"
                                         onClick={handleStatusChange}
-                                        disabled={!selectedStatus}
+                                        disabled={
+                                            !selectedStatus ||
+                                            (selectedStatus === REOPEN_ACTION_VALUE && !reopenNote.trim()) ||
+                                            selectedStatus === DEVOPS_NO_ACTIONS_INFO
+                                        }
                                     >
                                         Apply
                                     </button>
                                     </div>
                                     <p className="jdm-ticket-action-picker-hint">
                                         Pick a status update or an approval / cost step, then apply. Notes above are sent when relevant.
+                                        {selectedStatus === REOPEN_ACTION_VALUE
+                                            ? " Reopen requires the note in the Reopen section above."
+                                            : ""}
                                     </p>
                                 </div>
                                 )}
                                 {!canManage && managerRespondedApproved && approvalActions.length > 0 && (
                                     <p className="jdm-hint-text" style={{ marginTop: 6, color: '#15803d' }}>
-                                        ✓ Manager has already approved — you can still re-send or escalate to another approver.
+                                        Manager has already approved — you can still re-send or escalate to another approver.
                                     </p>
                                 )}
                             </div>
                         )}
-                        {canManage && ticket.status === TICKET_STATUS.MANAGER_APPROVAL_PENDING && (
+                        {effectiveCanManage && ticket.status === TICKET_STATUS.MANAGER_APPROVAL_PENDING && (
                             <div className="jdm-section">
                                 <div className="jdm-section-title"><Clock size={14} /> Awaiting Response</div>
                                 {managerRespondedApproved ? (
                                     <p className="jdm-hint-text" style={{ color: "#15803d", fontWeight: 500 }}>
-                                        ✓ Approved - Apply <strong>Approved</strong> to continue
+                                        Approved — apply <strong>Approved</strong> in Actions to continue
                                     </p>
                                 ) : (
                                     <p className="jdm-hint-text">
@@ -1759,17 +1951,17 @@ export const TicketDetailsModal = ({
                         {!canManage && ticket.status === TICKET_STATUS.MANAGER_APPROVAL_PENDING && managerRespondedApproved && (
                             <div className="jdm-section">
                                 <p className="jdm-hint-text" style={{ color: "#15803d" }}>
-                                    ✓ Approved - Processing will continue shortly
+                                    Approved — processing will continue shortly
                                 </p>
                             </div>
                         )}
-                        {canManage && ticket.status === TICKET_STATUS.COST_APPROVAL_PENDING && (
+                        {effectiveCanManage && ticket.status === TICKET_STATUS.COST_APPROVAL_PENDING && (
                             <div className="jdm-section">
                                 <div className="jdm-section-title"><Clock size={14} /> Cost Approval In Progress</div>
                                 <p className="jdm-hint-text">
                                     Waiting for configured cost manager approval from email link. Status updates automatically.
                                 </p>
-                                {canSubmitCostEstimate && (
+                                {effectiveCostEstimate && (
                                     <p className="jdm-hint-text" style={{ marginTop: 8 }}>
                                         To resend or revise, pick a cost line under{" "}
                                         <strong>Request & cost approval</strong> in Actions (same as manager approval).
@@ -1777,10 +1969,10 @@ export const TicketDetailsModal = ({
                                 )}
                             </div>
                         )}
-                        {canManage && canSubmitCostEstimate && onRequestCostApproval && requiresCostApproval && (
+                        {effectiveCanManage && effectiveCostEstimate && onRequestCostApproval && requiresCostApproval && (
                             <div className="jdm-section">
                                 <div className="jdm-section-title"><Database size={14} /> Cost approval</div>
-                                {canSubmitCostEstimate && onRequestCostApproval ? (
+                                {effectiveCostEstimate && onRequestCostApproval ? (
                                     <>
                                         <p className="jdm-hint-text">
                                             Open the cost tool to auto-calculate from the workflow, edit if needed, then send the approval request to the selected cost approver.
@@ -1830,7 +2022,7 @@ export const TicketDetailsModal = ({
                         )}
 
                         {/* Add Note */}
-                        {onAddNote && (
+                        {onAddNote && !ticketIsDeleted && (
                             <div className="jdm-section">
                                 <div className="jdm-section-title"><MessageSquare size={14} /> Add Note</div>
                                 <textarea
@@ -1861,7 +2053,7 @@ export const TicketDetailsModal = ({
                                         userSelect: 'none',
                                     }}
                                 >
-                                    <Paperclip size={13} /> Attach files (max 5 MB each)
+                                    <Paperclip size={13} /> Attach files (max {NOTE_ATTACHMENT_MAX_MB} MB each)
                                 </label>
 
                                 {/* Pending / uploaded files list */}
@@ -2005,7 +2197,7 @@ export const TicketDetailsModal = ({
                                     <span className="jdm-tag env">{ticket.environment}</span>
                                 </div>
                             )}
-                            {canManage && (ticket.estimatedCost || ticket.costCurrency) && (
+                            {effectiveCanManage && (ticket.estimatedCost || ticket.costCurrency) && (
                                 <div className="jdm-sidebar-field">
                                     <div className="jdm-sidebar-label"><DollarSign size={12} /> Cost</div>
                                     <span className="jdm-sidebar-value">
@@ -2335,7 +2527,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
     useEffect(() => {
         if (!isOpen) return;
         let cancelled = false;
-        fetchWorkflowDirectoryContacts({ excludeProjectId: selectedProjectId || "" })
+        fetchWorkflowDirectoryContacts({})
             .then((rows) => {
                 if (!cancelled) setContactHints(Array.isArray(rows) ? rows : []);
             })
@@ -2418,13 +2610,19 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
 
         // Extract only the non-mandatory (optional/editable) emails for each field.
         // Mandatory emails are shown as locked chips directly from workflowPreview — not stored in formData.
+        const routingEntryEmail = (e) => {
+            if (e == null) return "";
+            if (typeof e === "string") return String(e).trim().toLowerCase();
+            return String(e.email || "").trim().toLowerCase();
+        };
+
         const optionalOnly = (list, mandatoryList) => {
             const mandatorySet = new Set(
                 (mandatoryList || []).map((e) => String(e).trim().toLowerCase()).filter(Boolean)
             );
             return [...new Set(
                 (list || [])
-                    .map((e) => String(e).trim().toLowerCase())
+                    .map(routingEntryEmail)
                     .filter((e) => e && !mandatorySet.has(e))
             )];
         };
@@ -2648,7 +2846,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                         </small>
                                         {(workflowPreview?.emailRouting?.toMandatory || []).length > 0 && (
                                             <small style={{ color: '#6d28d9', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                                                <span style={{ fontSize: '0.7rem' }}>🔒</span>
+                                                <Lock size={12} aria-hidden />
                                                 Some To addresses are mandatory — set by your admin.
                                             </small>
                                         )}
@@ -2672,7 +2870,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                         />
                                         {(workflowPreview?.emailRouting?.ccMandatory || []).length > 0 && (
                                             <small style={{ color: '#6d28d9', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                                                <span style={{ fontSize: '0.7rem' }}>🔒</span>
+                                                <Lock size={12} aria-hidden />
                                                 Locked emails are mandatory — set by your admin.
                                             </small>
                                         )}
@@ -2698,7 +2896,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                         />
                                         {(workflowPreview?.emailRouting?.bccMandatory || []).length > 0 && (
                                             <small style={{ color: '#6d28d9', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
-                                                <span style={{ fontSize: '0.7rem' }}>🔒</span>
+                                                <Lock size={12} aria-hidden />
                                                 Locked BCC emails are mandatory — set by your admin.
                                             </small>
                                         )}

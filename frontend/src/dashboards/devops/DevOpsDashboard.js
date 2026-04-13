@@ -27,7 +27,6 @@ import {
     WifiOff,
     Bell,
     Settings,
-    Search,
     TrendingUp,
     Zap,
     Eye,
@@ -61,6 +60,8 @@ import {
     getAssignedTickets,
     getActiveTicketsForDevOps,
     TICKET_STATUS,
+    TICKET_FILTER_BUCKET,
+    ticketMatchesPrimaryStatusFilter,
     getDevOpsTeamMembers,
     updateDevOpsAvailability,
     upsertDevOpsTeamMember,
@@ -88,6 +89,7 @@ import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
+import TicketSearchBar from "../../components/TicketSearchBar";
 import { useTheme } from "../../services/ThemeContext";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
@@ -296,7 +298,9 @@ export const DevOpsDashboard = () => {
     const [rotaMeta, setRotaMeta] = useState({ rotationMode: "DAILY", leaveByDate: {} });
     const [actionLoading, setActionLoading] = useState("");
     const [isSyncing, setIsSyncing] = useState(false);
-    const [searchQuery, setSearchQuery] = useState('');
+    const [ticketSearch, setTicketSearch] = useState({ query: "", remote: null, loading: false });
+    const [ticketDataVersion, setTicketDataVersion] = useState(0);
+    const ticketSearchRef = useRef(ticketSearch);
     const [soundSettings, setSoundSettings] = useState({
         enabled: getSoundEnabled(),
         volume: getVolume()
@@ -306,13 +310,20 @@ export const DevOpsDashboard = () => {
     const isLoadingRef = useRef(false);
     const activeSectionRef = useRef(activeSection);
     const requestTabRef = useRef(requestTab);
+    const filtersRef = useRef(filters);
     const didUpsertSelfRef = useRef(false);
     
     // Real-time connection status
-    const { isConnected, syncMethod } = useConnectionStatus();
+    const { isConnected } = useConnectionStatus();
     
     const [showStatusSelector, setShowStatusSelector] = useState(false);
     const statusRowRef = useRef(null);
+    const lower = (v) => String(v || "").trim().toLowerCase();
+    const isMine = useCallback((ticket) => {
+        const byEmail = lower(ticket?.assignedToEmail);
+        if (byEmail && byEmail === lower(userEmail)) return true;
+        return lower(ticket?.assignedTo) === lower(userName);
+    }, [userEmail, userName]);
 
     // Derived permission state
     const isReadOnly = myAvailability === DEVOPS_AVAILABILITY_STATUS.AWAY || myAvailability === DEVOPS_AVAILABILITY_STATUS.BUSY;
@@ -330,6 +341,32 @@ export const DevOpsDashboard = () => {
     // Keep ref in sync
     useEffect(() => { activeSectionRef.current = activeSection; }, [activeSection]);
     useEffect(() => { requestTabRef.current = requestTab; }, [requestTab]);
+    useEffect(() => {
+        ticketSearchRef.current = ticketSearch;
+    }, [ticketSearch]);
+    useEffect(() => {
+        filtersRef.current = filters;
+    }, [filters]);
+
+    // "Assign me" is hidden on Unassigned + My Tickets — drop stale bucket if the list was rebuilt (e.g. ticket back to queue).
+    const hideAssignMeForRequestsTab =
+        requestTab === "unassigned" || requestTab === "myTickets";
+    useEffect(() => {
+        if (!hideAssignMeForRequestsTab || filters.status !== TICKET_FILTER_BUCKET.ASSIGNED_ME) return;
+        const cleared = { ...filters, status: null };
+        setFilters(cleared);
+        if (activeSection === "requests") {
+            applySectionFilter(tickets, requestTab, cleared);
+        }
+    }, [requestTab, filters.status, filters, tickets, activeSection, hideAssignMeForRequestsTab]);
+
+    useEffect(() => {
+        if (activeSection !== "requests" || requestTab !== "unassigned") return;
+        if (filters.status) return;
+        const withDefault = { ...filters, status: TICKET_FILTER_BUCKET.UNASSIGNED };
+        setFilters(withDefault);
+        applySectionFilter(tickets, requestTab, withDefault);
+    }, [activeSection, requestTab, filters, tickets]);
     
     useEffect(() => {
         if (didUpsertSelfRef.current) return;
@@ -342,16 +379,16 @@ export const DevOpsDashboard = () => {
     }, [userName, userEmail]);
 
     const recalcSectionCounts = useCallback((allTickets) => {
-        const unassigned = allTickets.filter(t => !t.assignedTo && t.status === TICKET_STATUS.CREATED);
-        const myTickets = allTickets.filter(t => t.assignedTo === userName && t.status !== TICKET_STATUS.CLOSED);
+        const unassigned = allTickets;
+        const myTickets = allTickets.filter(t => isMine(t) && t.status !== TICKET_STATUS.CLOSED);
         const active = allTickets.filter(t =>
             [TICKET_STATUS.ACCEPTED, TICKET_STATUS.MANAGER_APPROVAL_PENDING,
                 TICKET_STATUS.MANAGER_APPROVED, TICKET_STATUS.COST_APPROVAL_PENDING, TICKET_STATUS.COST_APPROVED,
                 TICKET_STATUS.IN_PROGRESS, TICKET_STATUS.ACTION_REQUIRED,
-                TICKET_STATUS.ON_HOLD].includes(t.status)
+                TICKET_STATUS.ON_HOLD].includes(t.status) && isMine(t)
         );
-        const history = allTickets.filter(t => t.status === TICKET_STATUS.COMPLETED);
-        const closed = allTickets.filter(t => t.status === TICKET_STATUS.CLOSED);
+        const history = allTickets.filter(t => t.status === TICKET_STATUS.COMPLETED && isMine(t));
+        const closed = allTickets.filter(t => t.status === TICKET_STATUS.CLOSED && isMine(t));
         setSectionCounts({
             unassigned: unassigned.length,
             myTickets: myTickets.length,
@@ -359,7 +396,7 @@ export const DevOpsDashboard = () => {
             history: history.length,
             closed: closed.length
         });
-    }, [userName]);
+    }, [isMine]);
 
     const upsertTicketLocally = useCallback((updatedTicket) => {
         if (!updatedTicket?.id) return;
@@ -415,6 +452,7 @@ export const DevOpsDashboard = () => {
             if (activeSectionRef.current === 'requests') {
                 applySectionFilter(allTickets, requestTabRef.current);
             }
+            setTicketDataVersion((v) => v + 1);
             setIsInitialLoading(false);
         } finally {
             isLoadingRef.current = false;
@@ -440,6 +478,26 @@ export const DevOpsDashboard = () => {
     // Real-time sync via WebSocket - silent background updates
     useRealTimeSync({
         onRefresh: () => loadTickets(true), // Silent refresh
+        onPatchEvent: (type, data) => {
+            if (!data?.id) return;
+            if (
+                type !== "ticket:created" &&
+                type !== "ticket:updated" &&
+                type !== "ticket:status_changed"
+            ) return;
+            setTickets((prev) => {
+                const idx = prev.findIndex((t) => t.id === data.id);
+                if (idx < 0) return prev;
+                const merged = { ...prev[idx], ...data };
+                const next = [...prev];
+                next[idx] = merged;
+                recalcSectionCounts(next);
+                if (activeSectionRef.current === "requests") {
+                    applySectionFilter(next, requestTabRef.current, filtersRef.current);
+                }
+                return next;
+            });
+        },
         playNewTicketSound: true,
         playUpdateSound: true,
         enableWebSocket: true,
@@ -479,28 +537,34 @@ export const DevOpsDashboard = () => {
         loadTickets(false); // Show syncing for manual refresh
     };
     
-    const applySectionFilter = (ticketList, section) => {
-        let result = [...ticketList];
-        
+    const applySectionFilter = (fullTicketList, section, filtersOverride = null) => {
+        const f = filtersOverride || filtersRef.current;
+        const ts = ticketSearchRef.current;
+        let result = [...fullTicketList];
+        if (ts.query.trim() && !ts.loading && ts.remote != null) {
+            const ids = new Set(ts.remote.map((t) => t.id));
+            result = result.filter((t) => ids.has(t.id));
+        }
+
         switch (section) {
             case 'unassigned':
-                result = result.filter(t => !t.assignedTo && t.status === TICKET_STATUS.CREATED);
+                result = result.filter(() => true);
                 break;
             case 'myTickets':
                 // My Tickets shows all assigned tickets except closed (closed go to Archive > Closed)
-                result = result.filter(t => t.assignedTo === userName && t.status !== TICKET_STATUS.CLOSED);
+                result = result.filter(t => isMine(t) && t.status !== TICKET_STATUS.CLOSED);
                 break;
             case 'active':
                 result = result.filter(t => 
                     [TICKET_STATUS.ACCEPTED, TICKET_STATUS.MANAGER_APPROVAL_PENDING, 
                      TICKET_STATUS.MANAGER_APPROVED, TICKET_STATUS.COST_APPROVAL_PENDING, TICKET_STATUS.COST_APPROVED,
                      TICKET_STATUS.IN_PROGRESS, TICKET_STATUS.ACTION_REQUIRED, 
-                     TICKET_STATUS.ON_HOLD].includes(t.status)
+                     TICKET_STATUS.ON_HOLD].includes(t.status) && isMine(t)
                 );
                 break;
             case 'history':
                 // Completed only — closed tickets have their own section
-                result = result.filter(t => t.status === TICKET_STATUS.COMPLETED);
+                result = result.filter(t => t.status === TICKET_STATUS.COMPLETED && isMine(t));
                 break;
             case 'profile':
                 result = [];
@@ -509,7 +573,7 @@ export const DevOpsDashboard = () => {
                 result = [];
                 break;
             case 'closed':
-                result = result.filter(t => t.status === TICKET_STATUS.CLOSED);
+                result = result.filter(t => t.status === TICKET_STATUS.CLOSED && isMine(t));
                 break;
             case 'rota':
                 result = [];
@@ -519,32 +583,55 @@ export const DevOpsDashboard = () => {
         }
         
         // Apply additional filters
-        if (filters.status) {
-            result = result.filter(t => t.status === filters.status);
+        if (f.status) {
+            const ctx = { userName, userEmail };
+            result = result.filter((t) => ticketMatchesPrimaryStatusFilter(t, f.status, ctx));
         }
-        if (filters.requestType) {
-            result = result.filter(t => t.requestType === filters.requestType);
+        if (f.requestType) {
+            result = result.filter(t => t.requestType === f.requestType);
         }
-        if (filters.environment) {
-            result = result.filter(t => t.environment === filters.environment);
+        if (f.environment) {
+            result = result.filter(t => t.environment === f.environment);
         }
-        if (filters.search) {
-            const searchLower = filters.search.toLowerCase();
-            result = result.filter(t => 
-                t.id.toLowerCase().includes(searchLower) ||
-                t.productName?.toLowerCase().includes(searchLower) ||
-                t.requestedBy?.toLowerCase().includes(searchLower) ||
-                t.description?.toLowerCase().includes(searchLower)
+        if (section === 'unassigned' && f.assignedTo) {
+            const assigneeNeedle = String(f.assignedTo).toLowerCase().trim();
+            result = result.filter((t) =>
+                (t.assignedTo || "").toLowerCase().includes(assigneeNeedle) ||
+                (t.assignedToEmail || "").toLowerCase().includes(assigneeNeedle)
             );
+        }
+        if (f.search) {
+            const searchLower = String(f.search).toLowerCase().trim();
+            result = result.filter((t) => {
+                const id = (t.id || "").toLowerCase();
+                const tail = id.includes("-") ? id.split("-").pop() : id;
+                return (
+                    id.includes(searchLower) ||
+                    tail.includes(searchLower) ||
+                    (t.productName || "").toLowerCase().includes(searchLower) ||
+                    (t.requestedBy || "").toLowerCase().includes(searchLower) ||
+                    (t.requesterEmail || "").toLowerCase().includes(searchLower) ||
+                    (t.description || "").toLowerCase().includes(searchLower) ||
+                    (t.assignedTo || "").toLowerCase().includes(searchLower) ||
+                    (t.assignedToEmail || "").toLowerCase().includes(searchLower) ||
+                    (t.environment || "").toLowerCase().includes(searchLower) ||
+                    (t.projectId || "").toLowerCase().includes(searchLower)
+                );
+            });
         }
         
         setFilteredTickets(result);
     };
+
+    useEffect(() => {
+        if (activeSection !== "requests") return;
+        applySectionFilter(tickets, requestTabRef.current, filtersRef.current);
+    }, [ticketSearch, tickets, activeSection, requestTab]);
     
     const handleFilterChange = (newFilters) => {
         setFilters(newFilters);
         if (activeSection === 'requests') {
-            applySectionFilter(tickets, requestTab);
+            applySectionFilter(tickets, requestTab, newFilters);
         }
     };
     
@@ -559,7 +646,16 @@ export const DevOpsDashboard = () => {
         if (TICKET_TABS.includes(section)) {
             setActiveSection('requests');
             setRequestTab(section);
-            applySectionFilter(tickets, section);
+            const clearAssignMe =
+                (section === 'unassigned' || section === 'myTickets') &&
+                filters.status === TICKET_FILTER_BUCKET.ASSIGNED_ME;
+            if (clearAssignMe) {
+                const cleared = { ...filters, status: null };
+                setFilters(cleared);
+                applySectionFilter(tickets, section, cleared);
+            } else {
+                applySectionFilter(tickets, section);
+            }
             return;
         }
         setActiveSection(section);
@@ -588,10 +684,22 @@ export const DevOpsDashboard = () => {
     
     const handleStatusChange = async (ticketId, newStatus, notes, meta = {}) => {
         setTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId ? { ...ticket, status: newStatus } : ticket
+            ticket.id === ticketId
+                ? {
+                    ...ticket,
+                    status: newStatus,
+                    ...(meta.reopen ? { assignedTo: null, assignedToEmail: null } : {}),
+                }
+                : ticket
         )));
         setFilteredTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId ? { ...ticket, status: newStatus } : ticket
+            ticket.id === ticketId
+                ? {
+                    ...ticket,
+                    status: newStatus,
+                    ...(meta.reopen ? { assignedTo: null, assignedToEmail: null } : {}),
+                }
+                : ticket
         )));
         try {
             setActionLoading("Updating ticket status...");
@@ -650,6 +758,12 @@ export const DevOpsDashboard = () => {
     const handleAssignToSelf = async (ticketId) => {
         try {
             setActionLoading("Assigning ticket...");
+            await updateTicketStatus(
+                ticketId,
+                TICKET_STATUS.ACCEPTED,
+                { name: userName, email: userEmail },
+                "Ticket assigned for processing"
+            );
             const updated = await assignTicket(ticketId, userName, { name: userName, email: userEmail });
             upsertTicketLocally(updated);
         } catch (error) {
@@ -963,6 +1077,15 @@ export const DevOpsDashboard = () => {
                             <span className="sb-user-name">{userName}</span>
                             <span className="sb-user-email">{userEmail}</span>
                         </div>
+                        {requestTab !== 'unassigned' && (
+                            <button
+                                className={`btn-filter ${showFilters ? 'active' : ''}`}
+                                onClick={() => setShowFilters(!showFilters)}
+                            >
+                                <Filter size={16} />
+                                Filters
+                            </button>
+                        )}
                     </div>
                     <div className="sb-footer-actions">
                         <span className="sb-role-badge devops">DevOps</span>
@@ -1033,15 +1156,15 @@ export const DevOpsDashboard = () => {
                             )}
                         </div>
                         <div className="header-actions">
-                            <div className="search-box-mini">
-                                <Search size={16} />
-                                <input 
-                                    type="text" 
-                                    placeholder="Search tickets..." 
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
+                            {activeSection === "requests" && (
+                                <TicketSearchBar
+                                    scope="global"
+                                    ticketDataVersion={ticketDataVersion}
+                                    onPickTicket={(t) => setSelectedTicket(t)}
+                                    onSearchStateChange={setTicketSearch}
+                                    className="ticket-search-bar--header"
                                 />
-                            </div>
+                            )}
                             <button 
                                 className={`btn-icon ${isSyncing ? 'syncing' : ''}`}
                                 onClick={handleManualRefresh}
@@ -1127,17 +1250,6 @@ export const DevOpsDashboard = () => {
                                         </button>
                                     ))}
                                 </div>
-                            </div>
-                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'var(--surface-subtle, #f9fafb)', borderRadius: 8 }}>
-                                <h4 style={{ marginBottom: '0.5rem', color: '#111827' }}>Connection Status</h4>
-                                <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>
-                                    Sync Method: <strong>WebSocket (Fastest)</strong>
-                                </p>
-                                <p style={{ fontSize: '0.875rem', color: '#4b5563', marginTop: '0.25rem' }}>
-                                    Status: <strong style={{ color: isConnected ? '#059669' : '#dc2626' }}>
-                                        {isConnected ? 'Connected' : 'Connecting...'}
-                                    </strong>
-                                </p>
                             </div>
                         </div>
                     </div>
@@ -1390,8 +1502,8 @@ export const DevOpsDashboard = () => {
                             )}
                             {activeSection === 'requests' && requestTab === 'active' && (
                                 <SectionHeader 
-                                    title="All Active Tickets" 
-                                    description="Team-wide active requests"
+                                    title="My Active Tickets" 
+                                    description="Your active assigned requests"
                                     count={sectionCounts.active}
                                     icon={Activity}
                                 />
@@ -1413,19 +1525,29 @@ export const DevOpsDashboard = () => {
                                 />
                             )}
                         </div>
-                        <button 
-                            className={`btn-filter ${showFilters ? 'active' : ''}`}
-                            onClick={() => setShowFilters(!showFilters)}
-                        >
-                            <Filter size={16} />
-                            Filters
-                        </button>
                     </div>
                     
-                    {showFilters && (
+                    {showFilters && requestTab !== 'unassigned' && (
                         <TicketFilters 
                             filters={filters}
                             onFilterChange={handleFilterChange}
+                            hideAssignMeOption={
+                                requestTab === 'unassigned' || requestTab === 'myTickets'
+                            }
+                        />
+                    )}
+                    {requestTab === 'unassigned' && (
+                        <TicketFilters
+                            filters={filters}
+                            onFilterChange={(newFilters) =>
+                                handleFilterChange({
+                                    ...newFilters,
+                                    status: newFilters?.status || TICKET_FILTER_BUCKET.PENDING
+                                })
+                            }
+                            hideAssignMeOption
+                            showAssigneeFilter
+                            searchPlaceholder="Search queue (id, person/email, environment, project id…)"
                         />
                     )}
                     
@@ -1439,14 +1561,14 @@ export const DevOpsDashboard = () => {
                                 {requestTab === 'history' && <History size={48} />}
                                 {requestTab === 'closed' && <CheckCircle size={48} />}
                                 <h3>
-                                    {requestTab === 'unassigned' && "No unassigned tickets"}
+                                    {requestTab === 'unassigned' && "No tickets found"}
                                     {requestTab === 'myTickets' && "No tickets assigned to you"}
                                     {requestTab === 'active' && "No active tickets"}
                                     {requestTab === 'history' && "No completed tickets yet"}
                                     {requestTab === 'closed' && "No closed tickets yet"}
                                 </h3>
                                 <p>
-                                    {requestTab === 'unassigned' && "All tickets have been assigned. Great job, team!"}
+                                    {requestTab === 'unassigned' && "No tickets match the current queue filters."}
                                     {requestTab === 'myTickets' && "Assign tickets from the Unassigned queue to get started."}
                                     {requestTab === 'active' && "No tickets are currently being processed."}
                                     {requestTab === 'history' && "Completed tickets will appear here."}
@@ -1479,6 +1601,7 @@ export const DevOpsDashboard = () => {
                     user={{ name: userName, email: userEmail }}
                     canManage={true}
                     canSubmitCostEstimate
+                    onAssignToSelf={handleAssignToSelf}
                     onRequestCostApproval={(t, opts) => {
                         openCostEstimateWindow(t.id, opts?.costApproverEmail);
                     }}

@@ -7,7 +7,11 @@ let msalInitializationPromise = null;
 
 export const initializeMsal = async () => {
     if (!msalInitializationPromise) {
-        msalInitializationPromise = msalInstance.initialize();
+        msalInitializationPromise = (async () => {
+            await msalInstance.initialize();
+            // Required after any redirect (login, token renew, logout return) or inProgress/auth state can stay wrong.
+            await msalInstance.handleRedirectPromise();
+        })();
     }
     await msalInitializationPromise;
     return msalInstance;

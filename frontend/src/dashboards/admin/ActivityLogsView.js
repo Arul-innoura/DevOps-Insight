@@ -10,6 +10,7 @@ const ACTION_STYLES = {
     TICKET_ASSIGNED: { bg: "#f5f3ff", color: "#6d28d9", label: "Assigned" },
     NOTE_ADDED:      { bg: "#f9fafb", color: "#4b5563", label: "Note Added" },
     TICKET_DELETED:  { bg: "#fef2f2", color: "#dc2626", label: "Deleted" },
+    TICKET_RESTORED: { bg: "#ecfdf5", color: "#047857", label: "Restored" },
     COST_SUBMITTED:  { bg: "#ecfdf5", color: "#059669", label: "Cost Submitted" },
 };
 

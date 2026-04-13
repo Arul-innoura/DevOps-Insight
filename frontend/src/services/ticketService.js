@@ -54,6 +54,100 @@ export const TICKET_STATUS = {
     CLOSED: "Closed"
 };
 
+/** Primary list filters (not individual workflow states like manager/cost pending). */
+export const TICKET_FILTER_BUCKET = {
+    ALL: "",
+    UNASSIGNED: "UNASSIGNED",
+    ASSIGNED_ME: "ASSIGNED_ME",
+    IN_PROGRESS: "IN_PROGRESS",
+    PENDING: "PENDING",
+    COMPLETED: "COMPLETED",
+    CLOSED: "CLOSED"
+};
+
+/** Per-file limit for ticket note attachments (must match backend BlobStorageService). */
+export const NOTE_ATTACHMENT_MAX_BYTES = 12 * 1024 * 1024;
+export const NOTE_ATTACHMENT_MAX_MB = 12;
+
+const TICKET_FILTER_BUCKET_VALUES = new Set(Object.values(TICKET_FILTER_BUCKET));
+
+/**
+ * Whether the signed-in user is the ticket requester (handles MSAL username vs id token email).
+ * @param {object} ticket
+ * @param {{ email?: string, username?: string, preferredUsername?: string, upn?: string, uniqueName?: string, name?: string, emailAliases?: string[] }} user
+ */
+export function ticketRequesterMatchesCurrentUser(ticket, user) {
+    const req = String(ticket?.requesterEmail ?? "").trim().toLowerCase();
+    const add = (set, v) => {
+        const s = String(v ?? "").trim().toLowerCase();
+        if (s) set.add(s);
+    };
+    const candidates = new Set();
+    add(candidates, user?.email);
+    add(candidates, user?.username);
+    add(candidates, user?.preferredUsername);
+    add(candidates, user?.upn);
+    add(candidates, user?.uniqueName);
+    if (Array.isArray(user?.emailAliases)) user.emailAliases.forEach((e) => add(candidates, e));
+    if (req && candidates.size > 0) {
+        for (const c of candidates) {
+            if (c === req) return true;
+        }
+    }
+    if (!req && ticket?.requestedBy && user?.name) {
+        return (
+            String(ticket.requestedBy).trim().toLowerCase() === String(user.name).trim().toLowerCase()
+        );
+    }
+    return false;
+}
+
+/**
+ * @param {object} ticket
+ * @param {string} bucket — {@link TICKET_FILTER_BUCKET} value, or legacy exact {@code ticket.status} string
+ * @param {{ userName?: string, userEmail?: string }} [ctx]
+ */
+export function ticketMatchesPrimaryStatusFilter(ticket, bucket, ctx = {}) {
+    if (!bucket) return true;
+    if (!TICKET_FILTER_BUCKET_VALUES.has(bucket)) {
+        return (ticket?.status || "") === bucket;
+    }
+    const st = ticket?.status;
+    const { userName = "", userEmail = "" } = ctx;
+    const nm = String(userName || "").trim();
+    const em = String(userEmail || "").trim().toLowerCase();
+    const assignee = ticket?.assignedTo;
+    const assigneeEmail = String(ticket?.assignedToEmail || "").trim().toLowerCase();
+
+    switch (bucket) {
+        case TICKET_FILTER_BUCKET.UNASSIGNED:
+            return (
+                st === TICKET_STATUS.CREATED &&
+                !String(assignee || "").trim() &&
+                !String(assigneeEmail || "").trim()
+            );
+        case TICKET_FILTER_BUCKET.ASSIGNED_ME:
+            return (
+                st !== TICKET_STATUS.CLOSED &&
+                ((nm && assignee === nm) || (em && assigneeEmail && assigneeEmail === em))
+            );
+        case TICKET_FILTER_BUCKET.IN_PROGRESS:
+            return st === TICKET_STATUS.IN_PROGRESS;
+        case TICKET_FILTER_BUCKET.PENDING:
+            return (
+                st !== TICKET_STATUS.IN_PROGRESS &&
+                st !== TICKET_STATUS.COMPLETED &&
+                st !== TICKET_STATUS.CLOSED
+            );
+        case TICKET_FILTER_BUCKET.COMPLETED:
+            return st === TICKET_STATUS.COMPLETED;
+        case TICKET_FILTER_BUCKET.CLOSED:
+            return st === TICKET_STATUS.CLOSED;
+        default:
+            return true;
+    }
+}
+
 /**
  * DevOps may open/send cost only after manager approval (first submit) or to resubmit while cost approval is pending.
  * Blocks once cost is approved, or duplicate send from Manager Approved while cost is already pending.
@@ -655,7 +749,11 @@ const mapTicket = (ticket) => {
         workflowStages: ticket.workflowStages || null,
         workflowConfiguration: ticket.workflowConfiguration || null,
         currentApprovalLevel: ticket.currentApprovalLevel ?? null,
-        totalApprovalLevels: ticket.totalApprovalLevels ?? null
+        totalApprovalLevels: ticket.totalApprovalLevels ?? null,
+        deleted: !!ticket.deleted,
+        deletedAt: ticket.deletedAt ?? null,
+        deletedBy: ticket.deletedBy || "",
+        deletedByEmail: ticket.deletedByEmail || ""
     };
 };
 
@@ -736,6 +834,22 @@ export const getTicketById = async (ticketId) => {
     return mapTicket(raw);
 };
 
+/** DevOps/Admin: server-side ticket search (id fragment e.g. 0002, product name, description, assignees…). */
+export const searchTicketsApi = async (q) => {
+    const t = String(q || "").trim();
+    if (!t) return [];
+    const raw = await apiRequest(`/tickets/search?q=${encodeURIComponent(t)}`);
+    return mapTickets(raw);
+};
+
+/** Current user as requester only — same scope as my-tickets. */
+export const searchMyTicketsApi = async (q) => {
+    const t = String(q || "").trim();
+    if (!t) return [];
+    const raw = await apiRequest(`/tickets/my-search?q=${encodeURIComponent(t)}`);
+    return mapTickets(raw);
+};
+
 export const getActiveTicketsForDevOps = async () => {
     const all = await getAllTickets();
     return all.filter((ticket) => ticket.isActive !== false);
@@ -743,6 +857,7 @@ export const getActiveTicketsForDevOps = async () => {
 
 export const updateTicketStatus = async (ticketId, newStatus, _user, notes = "", options = {}) => {
     const body = { newStatus: toApiStatus(newStatus), notes: notes ?? "" };
+    if (options.reopen) body.reopen = true;
     if (options.approvalTargetEmail && String(options.approvalTargetEmail).trim()) {
         body.approvalTargetEmail = String(options.approvalTargetEmail).trim();
     }
@@ -767,7 +882,7 @@ export const addTicketNote = async (ticketId, _user, notes, attachments = []) =>
 
 /**
  * Upload files for a note attachment to Azure Blob Storage via backend.
- * Each file must be ≤ 5 MB. Returns { uploaded: [{url, name, type, size}], errors: [] }.
+ * Each file must be ≤ {@link NOTE_ATTACHMENT_MAX_MB} MB. Returns { uploaded: [{url, name, type, size}], errors: [] }.
  */
 export const uploadNoteAttachments = async (ticketId, files) => {
     const formData = new FormData();
@@ -854,6 +969,21 @@ export const getCompletedTickets = async () => mapTickets(await apiRequest("/tic
 export const deleteTicket = async (ticketId) => {
     await apiRequest(`/tickets/${ticketId}`, { method: "DELETE" });
     emitDataChange("tickets", "delete");
+};
+
+/** Admin: tickets in the recycle bin (soft-deleted). */
+export const getDeletedTickets = async () => {
+    const data = await apiRequest("/tickets/deleted");
+    return mapTickets(data);
+};
+
+/** Admin: restore a soft-deleted ticket. */
+export const restoreTicket = async (ticketId) => {
+    const updated = await apiRequest(`/tickets/${encodeURIComponent(ticketId)}/restore`, {
+        method: "POST"
+    });
+    emitDataChange("tickets", "restore");
+    return mapTicket(updated);
 };
 
 export const toggleTicketActiveStatus = async (ticketId, user, isActive) => {

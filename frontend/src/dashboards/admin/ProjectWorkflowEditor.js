@@ -711,64 +711,86 @@ const normalizeApprovalLevels = (levels = []) =>
         };
     });
 
-const normalizeCfg = (raw) => ({
-    ...emptyWorkflow(),
-    ...(raw || {}),
-    infrastructure: { ...emptyInfra(), ...(raw?.infrastructure || {}) },
-    approvalLevels: normalizeApprovalLevels(raw?.approvalLevels || []),
-    notificationPreferences: { ...emptyNotif(), ...(raw?.notificationPreferences || {}) },
-    emailRouting: { to: [], cc: [], bcc: [], toMandatory: [], ccMandatory: [], bccMandatory: [], ...(raw?.emailRouting || {}) },
-    managers: raw?.managers || [],
-    costApprovers: raw?.costApprovers || []
-});
+/** Normalize To/CC/BCC entries to { email, name, role } (legacy string arrays supported). */
+const normalizeRoutingRecipients = (arr) =>
+    (Array.isArray(arr) ? arr : [])
+        .map((item) => {
+            if (typeof item === "string") {
+                const email = item.trim().toLowerCase();
+                return email && email.includes("@") ? { email, name: "", role: "" } : null;
+            }
+            const email = String(item?.email || "").trim().toLowerCase();
+            if (!email || !email.includes("@")) return null;
+            return {
+                email,
+                name: String(item?.name || "").trim(),
+                role: String(item?.role || "").trim()
+            };
+        })
+        .filter(Boolean);
+
+const normalizeCfg = (raw) => {
+    const er = raw?.emailRouting || {};
+    return {
+        ...emptyWorkflow(),
+        ...(raw || {}),
+        infrastructure: { ...emptyInfra(), ...(raw?.infrastructure || {}) },
+        approvalLevels: normalizeApprovalLevels(raw?.approvalLevels || []),
+        notificationPreferences: { ...emptyNotif(), ...(raw?.notificationPreferences || {}) },
+        emailRouting: {
+            to: normalizeRoutingRecipients(er.to),
+            cc: normalizeRoutingRecipients(er.cc),
+            bcc: normalizeRoutingRecipients(er.bcc),
+            toMandatory: Array.isArray(er.toMandatory) ? [...er.toMandatory] : [],
+            ccMandatory: Array.isArray(er.ccMandatory) ? [...er.ccMandatory] : [],
+            bccMandatory: Array.isArray(er.bccMandatory) ? [...er.bccMandatory] : []
+        },
+        managers: raw?.managers || [],
+        costApprovers: raw?.costApprovers || []
+    };
+};
 
 // ─── Email Routing Row Editor ─────────────────────────────────────────────────
 const EmailRoutingField = ({ label, hint, fieldKey, cfg, setCfg, workflowContacts = [] }) => {
-    const [addInput, setAddInput] = useState("");
-    const [showSuggest, setShowSuggest] = useState(false);
-    const skipBlurAddRef = useRef(false);
+    const [draft, setDraft] = useState({ role: "", name: "", email: "" });
     const mandatoryKey = `${fieldKey}Mandatory`;
-    const emails = cfg.emailRouting?.[fieldKey] || [];
+    const recipients = cfg.emailRouting?.[fieldKey] || [];
     const mandatory = cfg.emailRouting?.[mandatoryKey] || [];
+    const mandatorySet = useMemo(
+        () => new Set((mandatory || []).map((m) => String(m).trim().toLowerCase()).filter(Boolean)),
+        [mandatory]
+    );
 
-    const updateRouting = (newEmails, newMandatory) => {
-        setCfg({ ...cfg, emailRouting: { ...cfg.emailRouting, [fieldKey]: newEmails, [mandatoryKey]: newMandatory } });
+    const updateRouting = (nextRecipients, newMandatory) => {
+        setCfg({ ...cfg, emailRouting: { ...cfg.emailRouting, [fieldKey]: nextRecipients, [mandatoryKey]: newMandatory } });
     };
 
-    const handleAddEmail = () => {
-        const email = addInput.trim().toLowerCase();
-        if (!email || !email.includes("@") || emails.includes(email)) {
-            setAddInput("");
-            setShowSuggest(false);
-            return;
-        }
-        updateRouting([...emails, email], mandatory);
-        setAddInput("");
-        setShowSuggest(false);
+    const commitDraft = () => {
+        const email = String(draft.email || "").trim().toLowerCase();
+        if (!email || !email.includes("@")) return;
+        if (recipients.some((r) => r.email === email)) return;
+        updateRouting(
+            [...recipients, { email, name: String(draft.name || "").trim(), role: "" }],
+            mandatory
+        );
+        setDraft({ role: "", name: "", email: "" });
     };
 
-    const handleRemove = (email) => {
-        updateRouting(emails.filter(e => e !== email), mandatory.filter(m => m !== email));
+    const handleRemove = (emailKey) => {
+        const em = String(emailKey || "").trim().toLowerCase();
+        updateRouting(
+            recipients.filter((r) => r.email !== em),
+            mandatory.filter((m) => m !== em)
+        );
     };
 
-    const toggleMandatory = (email, checked) => {
+    const toggleMandatory = (emailKey, checked) => {
+        const em = String(emailKey || "").trim().toLowerCase();
         const newMandatory = checked
-            ? [...mandatory.filter(m => m !== email), email]
-            : mandatory.filter(m => m !== email);
-        updateRouting(emails, newMandatory);
+            ? [...mandatory.filter((m) => m !== em), em]
+            : mandatory.filter((m) => m !== em);
+        updateRouting(recipients, newMandatory);
     };
-
-    const q = addInput.trim().toLowerCase();
-    const routingSuggestions = (workflowContacts || [])
-        .filter((c) => c && c.email && String(c.email).includes("@"))
-        .filter((c) => {
-            const em = String(c.email).trim().toLowerCase();
-            if (!q) return !emails.includes(em);
-            const nm = String(c.name || "").toLowerCase();
-            const rl = String(c.role || "").toLowerCase();
-            return !emails.includes(em) && (em.includes(q) || nm.includes(q) || rl.includes(q));
-        })
-        .slice(0, 10);
 
     return (
         <div className="workflow-input-group">
@@ -777,16 +799,17 @@ const EmailRoutingField = ({ label, hint, fieldKey, cfg, setCfg, workflowContact
                 <span className="label-hint">{hint}</span>
             </label>
             <div className="email-routing-editor">
-                {emails.length === 0 && (
+                {recipients.length === 0 && (
                     <div className="email-routing-empty">No recipients added yet.</div>
                 )}
-                {emails.map((email) => {
-                    const isMandatory = mandatory.includes(email);
+                {recipients.map((row) => {
+                    const email = row.email;
+                    const isMandatory = mandatorySet.has(email);
                     return (
-                        <div key={email} className={`email-routing-row${isMandatory ? ' is-mandatory' : ''}`}>
+                        <div key={email} className={`email-routing-row${isMandatory ? " is-mandatory" : ""}`}>
                             <label
-                                className={`email-mandatory-chk${isMandatory ? ' checked' : ''}`}
-                                title={isMandatory ? 'Mandatory — users cannot remove this email' : 'Click to make mandatory'}
+                                className={`email-mandatory-chk${isMandatory ? " checked" : ""}`}
+                                title={isMandatory ? "Mandatory — users cannot remove this email" : "Click to make mandatory"}
                             >
                                 <input
                                     type="checkbox"
@@ -796,71 +819,50 @@ const EmailRoutingField = ({ label, hint, fieldKey, cfg, setCfg, workflowContact
                                 <span className="email-mandatory-icon">
                                     <Lock size={11} />
                                 </span>
-                                <span className="email-mandatory-label">{isMandatory ? 'Mandatory' : 'Optional'}</span>
+                                <span className="email-mandatory-label">{isMandatory ? "Mandatory" : "Optional"}</span>
                             </label>
-                            <span className="email-routing-addr">{email}</span>
+                            <div className="email-routing-addr-block">
+                                {row.name ? <span className="email-routing-meta name">{row.name}</span> : null}
+                                <span className="email-routing-addr">{email}</span>
+                            </div>
                             <button
                                 type="button"
                                 className="email-routing-remove"
                                 onClick={() => handleRemove(email)}
-                                title="Remove email"
+                                title="Remove recipient"
                             >
                                 <X size={13} />
                             </button>
                         </div>
                     );
                 })}
-                <div className="email-routing-add-wrap">
-                    <div className="email-routing-add-row">
-                        <input
-                            type="email"
-                            className="email-routing-add-input"
-                            placeholder={`Add ${hint} email and press Enter…`}
-                            value={addInput}
-                            onChange={(e) => {
-                                setAddInput(e.target.value);
-                                setShowSuggest(true);
-                            }}
-                            onKeyDown={(e) => {
-                                if (e.key === "Enter") { e.preventDefault(); handleAddEmail(); }
-                            }}
-                            onFocus={() => setShowSuggest(true)}
-                            onBlur={() => {
-                                setTimeout(() => {
-                                    setShowSuggest(false);
-                                    if (!skipBlurAddRef.current) handleAddEmail();
-                                    skipBlurAddRef.current = false;
-                                }, 180);
-                            }}
-                        />
-                        <button type="button" className="email-routing-add-btn" onClick={handleAddEmail} tabIndex={-1}>
-                            <Plus size={14} />
+                <div
+                    className="email-routing-add-block"
+                    onKeyDown={(e) => {
+                        if (e.key !== "Enter" || e.shiftKey) return;
+                        if (e.target && e.target.tagName === "INPUT") {
+                            e.preventDefault();
+                            commitDraft();
+                        }
+                    }}
+                >
+                    <WorkflowPersonSuggest
+                        layout="routing"
+                        showRole={false}
+                        contacts={(workflowContacts || []).filter(
+                            (c) => c && String(c.email || "").trim() && !recipients.some((r) => r.email === String(c.email).trim().toLowerCase())
+                        )}
+                        value={draft}
+                        onChange={setDraft}
+                    />
+                    <div className="email-routing-add-actions">
+                        <button type="button" className="btn-add-item small" onClick={commitDraft}>
+                            <Plus size={12} /> Add {hint}
                         </button>
                     </div>
-                    {showSuggest && routingSuggestions.length > 0 && (
-                        <div className="email-routing-suggest">
-                            {routingSuggestions.map((c) => (
-                                <button
-                                    key={c.email}
-                                    type="button"
-                                    className="email-routing-suggest-item"
-                                    onMouseDown={(e) => e.preventDefault()}
-                                    onClick={() => {
-                                        const email = String(c.email).trim().toLowerCase();
-                                        if (!email || emails.includes(email)) return;
-                                        skipBlurAddRef.current = true;
-                                        updateRouting([...emails, email], mandatory);
-                                        setAddInput("");
-                                        setShowSuggest(false);
-                                    }}
-                                >
-                                    <span className="email-routing-suggest-name">{c.name || c.email}</span>
-                                    {c.name && <span className="email-routing-suggest-email">{c.email}</span>}
-                                    {c.role && <span className="email-routing-suggest-role">{c.role}</span>}
-                                </button>
-                            ))}
-                        </div>
-                    )}
+                    <p className="email-routing-add-hint">
+                        Type name or email — pick a suggestion to auto-fill, edit if needed, then click Add {hint}.
+                    </p>
                 </div>
             </div>
         </div>
@@ -1185,7 +1187,7 @@ const ProjectWorkflowEditor = ({ project, onClose, onSaved }) => {
             return;
         }
         let cancelled = false;
-        fetchWorkflowDirectoryContacts({ excludeProjectId: project.id })
+        fetchWorkflowDirectoryContacts({})
             .then((rows) => {
                 if (!cancelled) setWorkflowContacts(Array.isArray(rows) ? rows : []);
             })

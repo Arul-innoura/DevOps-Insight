@@ -89,4 +89,10 @@ public class TicketResponse {
     private String reason;
     private String otherQueryDetails;
     private List<String> attachments;
+
+    /** Soft-deleted (admin recycle bin); not editable until restored */
+    private boolean deleted;
+    private Instant deletedAt;
+    private String deletedBy;
+    private String deletedByEmail;
 }

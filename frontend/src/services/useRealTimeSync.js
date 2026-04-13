@@ -19,6 +19,7 @@ import {
  */
 export const useRealTimeSync = ({
     onRefresh,
+    onPatchEvent,
     playNewTicketSound = false,
     playUpdateSound = true,
     enableWebSocket = true,
@@ -70,7 +71,7 @@ export const useRealTimeSync = ({
         const usePolling = !enableWebSocket || wsBrokenUsePolling;
         if (usePolling) {
             onRefreshRef.current?.();
-            const pollMs = pollingInterval || 8000;
+            const pollMs = pollingInterval || 15000;
             const timer = setInterval(() => onRefreshRef.current?.(), pollMs);
             return () => clearInterval(timer);
         }
@@ -80,6 +81,7 @@ export const useRealTimeSync = ({
             if (didInitialLoad.current && playNewTicketSound) {
                 playNewTicketNotification();
             }
+            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_CREATED, data);
             debouncedRefresh();
         };
 
@@ -88,6 +90,7 @@ export const useRealTimeSync = ({
             if (didInitialLoad.current && playUpdateSound) {
                 playShortNotification();
             }
+            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_UPDATED, data);
             debouncedRefresh();
         };
 
@@ -108,6 +111,7 @@ export const useRealTimeSync = ({
                 }
             }
             
+            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, data);
             debouncedRefresh();
         };
         

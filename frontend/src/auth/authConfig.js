@@ -1,3 +1,7 @@
+const appPublicPath = (process.env.PUBLIC_URL || "").replace(/\/$/, "");
+const defaultAppBase = () =>
+    typeof window !== "undefined" ? `${window.location.origin}${appPublicPath}` : "";
+
 export const msalConfig = {
     auth: {
         // Replace with your Azure AD Application (client) ID
@@ -8,8 +12,9 @@ export const msalConfig = {
 
         // Runtime origin when unset. In Azure Portal register EVERY URL you use (e.g. http://192.168.1.68:3000
         // and https://your.domain.com) as SPA redirect URIs, or login fails on the domain.
-        redirectUri: process.env.REACT_APP_REDIRECT_URI || window.location.origin,
-        postLogoutRedirectUri: process.env.REACT_APP_POST_LOGOUT_REDIRECT_URI || `${window.location.origin}/login`
+        redirectUri: process.env.REACT_APP_REDIRECT_URI || defaultAppBase(),
+        postLogoutRedirectUri:
+            process.env.REACT_APP_POST_LOGOUT_REDIRECT_URI || `${defaultAppBase()}/login`
     },
     cache: {
         cacheLocation: "sessionStorage",

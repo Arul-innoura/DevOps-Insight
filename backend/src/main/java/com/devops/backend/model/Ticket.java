@@ -149,6 +149,17 @@ public class Ticket {
     // Attachments (store file references or URLs)
     @Builder.Default
     private List<String> attachments = new ArrayList<>();
+
+    /**
+     * Soft-delete (admin): hidden from normal queues; ticket cannot be modified until restored.
+     */
+    @Builder.Default
+    @Indexed
+    private boolean deleted = false;
+
+    private Instant deletedAt;
+    private String deletedBy;
+    private String deletedByEmail;
     
     /**
      * Add a timeline entry for status change

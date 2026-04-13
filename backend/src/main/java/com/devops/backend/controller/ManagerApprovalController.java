@@ -85,6 +85,12 @@ public class ManagerApprovalController {
                     .errorMessage("Ticket not found")
                     .build());
         }
+        if (ticket.isDeleted()) {
+            return ResponseEntity.ok(ManagerApprovalTokenInfo.builder()
+                    .valid(false)
+                    .errorMessage("This ticket is no longer active (recycle bin). Approval cannot proceed.")
+                    .build());
+        }
         
         ManagerApprovalTokenInfo.ManagerApprovalTokenInfoBuilder infoBuilder = ManagerApprovalTokenInfo.builder()
                 .valid(true)
@@ -143,6 +149,13 @@ public class ManagerApprovalController {
         
         Ticket ticket = ticketRepository.findById(approvalToken.getTicketId())
                 .orElseThrow(() -> new ResourceNotFoundException("Ticket not found"));
+
+        if (ticket.isDeleted()) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "This ticket is in the recycle bin and cannot be updated."
+            ));
+        }
         
         boolean isApproved = "approve".equalsIgnoreCase(request.getAction());
         String tokenType = approvalToken.getTokenType() != null ? approvalToken.getTokenType() : "MANAGER_APPROVAL";

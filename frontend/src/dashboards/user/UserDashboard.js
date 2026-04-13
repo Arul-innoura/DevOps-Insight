@@ -12,7 +12,6 @@ import {
     WifiOff,
     Bell,
     Mail,
-    Search,
     Settings,
     TrendingUp,
     BarChart3,
@@ -34,6 +33,7 @@ import {
     toggleTicketActiveStatus,
     addTicketNote,
     TICKET_STATUS,
+    ticketMatchesPrimaryStatusFilter,
     getDevOpsTeamMembers,
     getProjects,
     getManagers,
@@ -51,6 +51,7 @@ import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
+import TicketSearchBar from "../../components/TicketSearchBar";
 import { useTheme } from "../../services/ThemeContext";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
@@ -64,8 +65,22 @@ export const UserDashboard = () => {
     
     const account = accounts[0];
     const userName = account?.name || "Standard User";
-    const userEmail = account?.username || "user@company.com";
+    const idClaims = account?.idTokenClaims || {};
+    const userEmail =
+        (typeof idClaims.email === "string" && idClaims.email) ||
+        (typeof idClaims.preferred_username === "string" && idClaims.preferred_username) ||
+        account?.username ||
+        "user@company.com";
     const userPrincipalName = account?.username || "";
+    const ticketUserIdentity = {
+        name: userName,
+        email: userEmail,
+        username: account?.username,
+        preferredUsername: idClaims.preferred_username,
+        upn: idClaims.upn,
+        uniqueName: idClaims.unique_name,
+        emailAliases: Array.isArray(idClaims.emails) ? idClaims.emails : undefined,
+    };
     
     const [tickets, setTickets] = useState([]);
     const [filteredTickets, setFilteredTickets] = useState([]);
@@ -80,6 +95,9 @@ export const UserDashboard = () => {
     const [managers, setManagers] = useState([]);
     const [actionLoading, setActionLoading] = useState("");
     const [isSyncing, setIsSyncing] = useState(false);
+    const [ticketSearch, setTicketSearch] = useState({ query: "", remote: null, loading: false });
+    const [ticketDataVersion, setTicketDataVersion] = useState(0);
+    const ticketSearchRef = useRef(ticketSearch);
     const [showSettings, setShowSettings] = useState(false);
     const [soundSettings, setSoundSettings] = useState(getSoundSettings());
     const [emailNotifPrefs, setEmailNotifPrefs] = useState(null);
@@ -94,6 +112,9 @@ export const UserDashboard = () => {
     
     // Keep refs in sync
     useEffect(() => { filtersRef.current = filters; }, [filters]);
+    useEffect(() => {
+        ticketSearchRef.current = ticketSearch;
+    }, [ticketSearch]);
     useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
     useEffect(() => {
@@ -159,6 +180,7 @@ export const UserDashboard = () => {
             setManagers(managerList);
             setTickets(userTickets);
             applyFilters(userTickets, filtersRef.current, activeTabRef.current);
+            setTicketDataVersion((v) => v + 1);
             setSelectedTicket((prev) => {
                 if (!prev?.id) return prev;
                 const latest = userTickets.find((t) => t.id === prev.id);
@@ -174,6 +196,23 @@ export const UserDashboard = () => {
     // Real-time updates via WebSocket - silent background refresh
     useRealTimeSync({
         onRefresh: () => loadTickets(true), // Silent refresh on real-time events
+        onPatchEvent: (type, data) => {
+            if (!data?.id) return;
+            if (
+                type !== "ticket:created" &&
+                type !== "ticket:updated" &&
+                type !== "ticket:status_changed"
+            ) return;
+            setTickets((prev) => {
+                const idx = prev.findIndex((t) => t.id === data.id);
+                if (idx < 0) return prev;
+                const merged = { ...prev[idx], ...data };
+                const next = [...prev];
+                next[idx] = merged;
+                applyFilters(next, filtersRef.current, activeTabRef.current);
+                return next;
+            });
+        },
         playUpdateSound: true,
         enableWebSocket: true,
         enableSSE: false,
@@ -190,13 +229,18 @@ export const UserDashboard = () => {
         return unsubscribe;
     }, [loadTickets]);
 
-    const { isConnected, syncMethod } = useConnectionStatus();
+    const { isConnected } = useConnectionStatus();
     const lastSyncTime = null;
     const forceRefresh = () => loadTickets(false);
     
-    const applyFilters = (ticketList, currentFilters, tab) => {
-        let result = [...ticketList];
-        
+    const applyFilters = (fullTicketList, currentFilters, tab) => {
+        const ts = ticketSearchRef.current;
+        let result = [...fullTicketList];
+        if (ts.query.trim() && !ts.loading && ts.remote != null) {
+            const ids = new Set(ts.remote.map((t) => t.id));
+            result = result.filter((t) => ids.has(t.id));
+        }
+
         // Apply tab filter
         if (tab === 'all') {
             // All tab excludes closed — closed tickets have their own dedicated section
@@ -218,7 +262,8 @@ export const UserDashboard = () => {
         
         // Apply other filters
         if (currentFilters.status) {
-            result = result.filter(t => t.status === currentFilters.status);
+            const ctx = { userName, userEmail };
+            result = result.filter((t) => ticketMatchesPrimaryStatusFilter(t, currentFilters.status, ctx));
         }
         if (currentFilters.requestType) {
             result = result.filter(t => t.requestType === currentFilters.requestType);
@@ -227,12 +272,18 @@ export const UserDashboard = () => {
             result = result.filter(t => t.environment === currentFilters.environment);
         }
         if (currentFilters.search) {
-            const searchLower = currentFilters.search.toLowerCase();
-            result = result.filter(t => 
-                t.id.toLowerCase().includes(searchLower) ||
-                t.productName?.toLowerCase().includes(searchLower) ||
-                t.description?.toLowerCase().includes(searchLower)
-            );
+            const searchLower = String(currentFilters.search).toLowerCase().trim();
+            result = result.filter((t) => {
+                const id = (t.id || "").toLowerCase();
+                const tail = id.includes("-") ? id.split("-").pop() : id;
+                return (
+                    id.includes(searchLower) ||
+                    tail.includes(searchLower) ||
+                    (t.productName || "").toLowerCase().includes(searchLower) ||
+                    (t.description || "").toLowerCase().includes(searchLower) ||
+                    (t.requestedBy || "").toLowerCase().includes(searchLower)
+                );
+            });
         }
         
         setFilteredTickets(result);
@@ -247,6 +298,11 @@ export const UserDashboard = () => {
         setActiveTab(tab);
         applyFilters(tickets, filters, tab);
     };
+
+    useEffect(() => {
+        if (activeSection !== "requests") return;
+        applyFilters(tickets, filtersRef.current, activeTabRef.current);
+    }, [ticketSearch, tickets, activeSection, activeTab]);
     
     const handleTicketCreated = () => {
         toast.success('Request Created', 'Your request has been submitted successfully');
@@ -292,12 +348,26 @@ export const UserDashboard = () => {
 
     const handleStatusChange = async (ticketId, newStatus, notes, meta = {}) => {
         try {
-            setActionLoading("Sending approval request...");
+            setActionLoading(
+                meta.reopen
+                    ? "Reopening ticket..."
+                    : newStatus === TICKET_STATUS.MANAGER_APPROVAL_PENDING
+                        ? "Sending approval request..."
+                        : "Updating ticket..."
+            );
             await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes, meta);
             await loadTickets();
-            toast.success("Approval Triggered", "Approval request has been sent.");
+            if (meta.reopen) {
+                toast.success("Ticket reopened", "Your request is back in the team queue. History is unchanged.");
+            } else if (newStatus === TICKET_STATUS.MANAGER_APPROVAL_PENDING) {
+                toast.success("Approval triggered", "Approval request has been sent.");
+            } else if (newStatus === TICKET_STATUS.CLOSED) {
+                toast.success("Ticket closed", "This request is now closed.");
+            } else {
+                toast.success("Updated", "Your ticket was updated.");
+            }
         } catch (error) {
-            toast.error("Error", error.message || "Could not trigger approval");
+            toast.error("Error", error.message || "Could not update the ticket");
         } finally {
             setActionLoading("");
         }
@@ -623,17 +693,6 @@ export const UserDashboard = () => {
                                     ))}
                                 </div>
                             </div>
-                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'var(--surface-subtle, #f9fafb)', borderRadius: 8 }}>
-                                <h4 style={{ marginBottom: '0.5rem', color: '#111827' }}>Connection Status</h4>
-                                <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>
-                                    Sync Method: <strong>WebSocket (Fastest)</strong>
-                                </p>
-                                <p style={{ fontSize: '0.875rem', color: '#4b5563', marginTop: '0.25rem' }}>
-                                    Status: <strong style={{ color: isConnected ? '#059669' : '#dc2626' }}>
-                                        {isConnected ? 'Connected' : 'Connecting...'}
-                                    </strong>
-                                </p>
-                            </div>
                         </div>
                     </div>
                 ) : activeSection === 'monitoring' ? (
@@ -729,7 +788,14 @@ export const UserDashboard = () => {
                 <>
                 {/* Filters only */}
                 <div className="tickets-section">
-                    <div className="tickets-header">
+                    <div className="tickets-header user-requests-toolbar">
+                        <TicketSearchBar
+                            scope="mine"
+                            ticketDataVersion={ticketDataVersion}
+                            onPickTicket={(t) => setSelectedTicket(t)}
+                            onSearchStateChange={setTicketSearch}
+                            className="ticket-search-bar--user"
+                        />
                         <button 
                             className={`btn-filter ${showFilters ? 'active' : ''}`}
                             onClick={() => setShowFilters(!showFilters)}
@@ -788,7 +854,7 @@ export const UserDashboard = () => {
                 isOpen={isCreateModalOpen}
                 onClose={() => setIsCreateModalOpen(false)}
                 onSubmit={handleTicketCreated}
-                user={{ name: userName, email: userEmail }}
+                user={ticketUserIdentity}
                 projects={projects}
                 managers={managers}
             />
@@ -797,7 +863,7 @@ export const UserDashboard = () => {
                 <TicketDetailsModal 
                     ticket={selectedTicket}
                     onClose={() => setSelectedTicket(null)}
-                    user={{ name: userName, email: userEmail }}
+                    user={ticketUserIdentity}
                     onStatusChange={handleStatusChange}
                     canManage={false}
                     onAddNote={handleAddNote}

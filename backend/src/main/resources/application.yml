@@ -13,6 +13,14 @@ spring:
   mongodb:
     uri: ${MONGODB_URI:mongodb+srv://infraUser:3DVK5Rx5MFP2NkKT@ops-cluster.9tb2ted.mongodb.net/}
     database: ${MONGODB_DATABASE:devops_portal}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+  cache:
+    type: redis
 
   security:
     oauth2:

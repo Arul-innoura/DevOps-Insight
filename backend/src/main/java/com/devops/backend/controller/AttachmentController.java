@@ -1,5 +1,8 @@
 package com.devops.backend.controller;
 
+import com.devops.backend.exception.ResourceNotFoundException;
+import com.devops.backend.model.Ticket;
+import com.devops.backend.repository.TicketRepository;
 import com.devops.backend.service.BlobStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,7 +20,7 @@ import java.util.Map;
 /**
  * Handles file uploads for ticket note attachments.
  * Files are stored in Azure Blob Storage under ticket-notes/{ticketId}/...
- * Maximum per file: 5 MB. Maximum per request: 10 files.
+ * Maximum per file: 12 MB. Maximum per request: 10 files.
  */
 @RestController
 @RequestMapping("/api/tickets")
@@ -28,6 +31,7 @@ public class AttachmentController {
     private static final int MAX_FILES_PER_REQUEST = 10;
 
     private final BlobStorageService blobStorageService;
+    private final TicketRepository ticketRepository;
 
     /**
      * POST /api/tickets/{ticketId}/attachments/upload
@@ -42,6 +46,13 @@ public class AttachmentController {
 
         if (files == null || files.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "No files provided"));
+        }
+
+        Ticket ticket = ticketRepository.findById(ticketId)
+                .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
+        if (ticket.isDeleted()) {
+            throw new IllegalStateException(
+                    "This ticket is in the recycle bin and cannot receive new attachments. Restore the ticket first.");
         }
 
         List<Map<String, String>> uploaded = new ArrayList<>();

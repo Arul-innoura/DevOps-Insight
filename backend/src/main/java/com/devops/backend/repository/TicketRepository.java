@@ -21,6 +21,7 @@ public interface TicketRepository extends MongoRepository<Ticket, String> {
     
     // Find by requester email
     List<Ticket> findByRequesterEmailOrderByCreatedAtDesc(String requesterEmail);
+
     Page<Ticket> findByRequesterEmail(String requesterEmail, Pageable pageable);
     
     // Find by status
@@ -30,11 +31,14 @@ public interface TicketRepository extends MongoRepository<Ticket, String> {
     // Find by multiple statuses
     List<Ticket> findByStatusInOrderByCreatedAtDesc(List<TicketStatus> statuses);
     List<Ticket> findByStatusIn(List<TicketStatus> statuses);
+
     
     // Find by assignee
     List<Ticket> findByAssignedToOrderByCreatedAtDesc(String assignedTo);
     List<Ticket> findByAssignedToEmail(String assignedToEmail);
+
     List<Ticket> findByAssignedToIsNullAndStatus(TicketStatus status);
+
     
     // Find by environment
     List<Ticket> findByEnvironmentOrderByCreatedAtDesc(Environment environment);
@@ -54,13 +58,33 @@ public interface TicketRepository extends MongoRepository<Ticket, String> {
     // Count by requester
     long countByRequesterEmail(String requesterEmail);
     
-    // Search by product name or description
-    @Query("{ '$or': [ " +
+    /**
+     * Full-text style search on active tickets. {@code ?0} must be a safe regex (e.g. from {@link java.util.regex.Pattern#quote} wrapped in .*).
+     */
+    @Query("{ '$and': [ { 'deleted': { $ne: true } }, { '$or': [ " +
            "{ 'productName': { '$regex': ?0, '$options': 'i' } }, " +
            "{ 'description': { '$regex': ?0, '$options': 'i' } }, " +
-           "{ 'id': { '$regex': ?0, '$options': 'i' } } " +
-           "] }")
-    List<Ticket> searchTickets(String searchTerm);
+           "{ 'id': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'requestedBy': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'requesterEmail': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'assignedTo': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'assignedToEmail': { '$regex': ?0, '$options': 'i' } } " +
+           "] } ] }")
+    List<Ticket> searchTickets(String regexPattern);
+
+    /**
+     * Search only tickets raised by the given requester (email match, case-insensitive via regex {@code ?1}).
+     */
+    @Query("{ '$and': [ { 'deleted': { $ne: true } }, { 'requesterEmail': { '$regex': ?1, '$options': 'i' } }, { '$or': [ " +
+           "{ 'productName': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'description': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'id': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'requestedBy': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'requesterEmail': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'assignedTo': { '$regex': ?0, '$options': 'i' } }, " +
+           "{ 'assignedToEmail': { '$regex': ?0, '$options': 'i' } } " +
+           "] } ] }")
+    List<Ticket> searchMyTickets(String regexPattern, String requesterEmailRegex);
     
     // Find tickets created between dates
     List<Ticket> findByCreatedAtBetweenOrderByCreatedAtDesc(Instant start, Instant end);
@@ -68,6 +92,7 @@ public interface TicketRepository extends MongoRepository<Ticket, String> {
     // Complex query for filtering
     @Query("{ " +
            "$and: [ " +
+           "  { 'deleted': { $ne: true } }, " +
            "  { $or: [ { 'status': ?0 }, { ?0: null } ] }, " +
            "  { $or: [ { 'requestType': ?1 }, { ?1: null } ] }, " +
            "  { $or: [ { 'environment': ?2 }, { ?2: null } ] }, " +
@@ -79,6 +104,40 @@ public interface TicketRepository extends MongoRepository<Ticket, String> {
     
     // Find all ordered by created date
     List<Ticket> findAllByOrderByCreatedAtDesc();
+
+    /** Not soft-deleted ({@code deleted} absent or not {@code true}); legacy documents without the field match. */
+    @Query(value = "{ 'deleted': { $ne: true } }", sort = "{ 'createdAt' : -1 }")
+    List<Ticket> findActiveTicketsOrderByCreatedAtDesc();
+
+    @Query(value = "{ 'deleted': true }", sort = "{ 'updatedAt' : -1 }")
+    List<Ticket> findSoftDeletedTicketsOrderByUpdatedAtDesc();
+
+    @Query(value = "{ 'requesterEmail': ?0, 'deleted': { $ne: true } }", sort = "{ 'createdAt' : -1 }")
+    List<Ticket> findActiveByRequesterEmailOrderByCreatedAtDesc(String requesterEmail);
+
+    @Query("{ 'status': { $in: ?0 }, 'deleted': { $ne: true } }")
+    List<Ticket> findActiveByStatusIn(List<TicketStatus> statuses);
+
+    @Query("{ 'assignedToEmail': ?0, 'deleted': { $ne: true } }")
+    List<Ticket> findActiveByAssignedToEmail(String assignedToEmail);
+
+    @Query("{ 'status': ?0, 'deleted': { $ne: true }, 'assignedTo': null }")
+    List<Ticket> findActiveUnassignedByStatus(TicketStatus status);
+
+    @Query(value = "{ 'deleted': { $ne: true } }", count = true)
+    long countActiveTickets();
+
+    @Query(value = "{ 'status': ?0, 'deleted': { $ne: true } }", count = true)
+    long countActiveByStatus(TicketStatus status);
+
+    @Query(value = "{ 'requestType': ?0, 'deleted': { $ne: true } }", count = true)
+    long countActiveByRequestType(RequestType requestType);
+
+    @Query(value = "{ 'environment': ?0, 'deleted': { $ne: true } }", count = true)
+    long countActiveByEnvironment(Environment environment);
+
+    @Query(value = "{ 'requesterEmail': ?0, 'deleted': { $ne: true } }", count = true)
+    long countActiveByRequesterEmail(String requesterEmail);
 
     // Count tickets whose ID starts with a given prefix (used for sequential ID generation)
     long countByIdStartingWith(String prefix);

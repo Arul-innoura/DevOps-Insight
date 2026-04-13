@@ -13,6 +13,7 @@ import {
     Ticket,
     BarChart3,
     Trash2,
+    ArchiveRestore,
     CheckCircle,
     Clock,
     AlertCircle,
@@ -25,7 +26,6 @@ import {
     WifiOff,
     Bell,
     Settings,
-    Search,
     Zap,
     Calendar,
     Coffee,
@@ -45,11 +45,14 @@ import {
 } from "../TicketComponents";
 import { 
     getAllTickets, 
+    getDeletedTickets,
+    restoreTicket,
     updateTicketStatus,
     addTicketNote,
     deleteTicket,
     getTicketStats,
     TICKET_STATUS,
+    ticketMatchesPrimaryStatusFilter,
     getDevOpsTeamMembers,
     addDevOpsTeamMember,
     DEVOPS_AVAILABILITY_STATUS,
@@ -66,6 +69,7 @@ import {
 } from "../../services/ticketService";
 import { getStatusTimeline } from "../../services/devopsStatusService";
 import RotaCalendarModal from "./RotaCalendarModal";
+import TicketSearchBar from "../../components/TicketSearchBar";
 import { useRealTimeSync, useConnectionStatus } from "../../services/useRealTimeSync";
 import { useToast } from "../../services/ToastNotification";
 import { 
@@ -784,7 +788,8 @@ export const AdminDashboard = () => {
     const [selectedTicket, setSelectedTicket] = useState(null);
     const [activeTab, setActiveTab] = useState('all');
     const [stats, setStats] = useState({});
-    const [viewMode, setViewMode] = useState('tickets'); // 'tickets', 'analytics', 'team', 'projects', 'managers', 'rota', 'statusTimeline', 'activityLogs', 'profile', 'settings'
+    const [viewMode, setViewMode] = useState('tickets'); // 'tickets', 'deletedTickets', 'analytics', ...
+    const [deletedTicketsList, setDeletedTicketsList] = useState([]);
     const [devOpsMembers, setDevOpsMembers] = useState([]);
     const [newMember, setNewMember] = useState({ name: '', email: '' });
     const [projects, setProjects] = useState([]);
@@ -801,7 +806,9 @@ export const AdminDashboard = () => {
     const [leaveDate, setLeaveDate] = useState(new Date().toISOString().split('T')[0]);
     const [actionLoading, setActionLoading] = useState("");
     const [isSyncing, setIsSyncing] = useState(false);
-    const [searchQuery, setSearchQuery] = useState('');
+    const [ticketSearch, setTicketSearch] = useState({ query: "", remote: null, loading: false });
+    const [ticketDataVersion, setTicketDataVersion] = useState(0);
+    const ticketSearchRef = useRef(ticketSearch);
     const [soundSettings, setSoundSettings] = useState({
         enabled: getSoundEnabled(),
         volume: getVolume()
@@ -811,13 +818,19 @@ export const AdminDashboard = () => {
     const isLoadingRef = useRef(false);
     const filtersRef = useRef(filters);
     const activeTabRef = useRef(activeTab);
+    const viewModeRef = useRef(viewMode);
     
     // Real-time connection status
-    const { isConnected, syncMethod } = useConnectionStatus();
+    const { isConnected } = useConnectionStatus();
     
     // Keep refs in sync
     useEffect(() => { filtersRef.current = filters; }, [filters]);
     useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+    useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+    useEffect(() => {
+        ticketSearchRef.current = ticketSearch;
+    }, [ticketSearch]);
+
 
     // Sound settings handlers
     const handleSoundToggle = () => {
@@ -862,6 +875,7 @@ export const AdminDashboard = () => {
             setRotaState(rotaMgmt);
             setRotaSchedule(rotaDays);
             applyFilters(allTickets, filtersRef.current, activeTabRef.current);
+            setTicketDataVersion((v) => v + 1);
             setIsInitialLoading(false);
         } finally {
             isLoadingRef.current = false;
@@ -869,9 +883,29 @@ export const AdminDashboard = () => {
         }
     }, []);
 
+    const loadDeletedTickets = useCallback(async () => {
+        try {
+            setDeletedTicketsList(await getDeletedTickets());
+        } catch (e) {
+            console.error(e);
+            alert(e?.message || "Could not load deleted tickets");
+        }
+    }, []);
+
+    useEffect(() => {
+        if (viewMode === "deletedTickets") {
+            void loadDeletedTickets();
+        }
+    }, [viewMode, loadDeletedTickets]);
+
     // Real-time sync via WebSocket - silent background updates
     useRealTimeSync({
-        onRefresh: () => loadTickets(true), // Silent refresh
+        onRefresh: async () => {
+            await loadTickets(true);
+            if (viewModeRef.current === "deletedTickets") {
+                await loadDeletedTickets();
+            }
+        },
         playUpdateSound: true,
         enableWebSocket: true,
         pollingInterval: null // No polling
@@ -883,9 +917,14 @@ export const AdminDashboard = () => {
         loadTickets(false);
     };
     
-    const applyFilters = (ticketList, currentFilters, tab) => {
-        let result = [...ticketList];
-        
+    const applyFilters = (fullTicketList, currentFilters, tab) => {
+        const ts = ticketSearchRef.current;
+        let result = [...fullTicketList];
+        if (ts.query.trim() && !ts.loading && ts.remote != null) {
+            const ids = new Set(ts.remote.map((t) => t.id));
+            result = result.filter((t) => ids.has(t.id));
+        }
+
         // Apply tab filter
         if (tab === 'all') {
             // All tab excludes closed — closed tickets have their own dedicated tab
@@ -916,7 +955,8 @@ export const AdminDashboard = () => {
         
         // Apply other filters
         if (currentFilters.status) {
-            result = result.filter(t => t.status === currentFilters.status);
+            const ctx = { userName, userEmail };
+            result = result.filter((t) => ticketMatchesPrimaryStatusFilter(t, currentFilters.status, ctx));
         }
         if (currentFilters.requestType) {
             result = result.filter(t => t.requestType === currentFilters.requestType);
@@ -925,13 +965,19 @@ export const AdminDashboard = () => {
             result = result.filter(t => t.environment === currentFilters.environment);
         }
         if (currentFilters.search) {
-            const searchLower = currentFilters.search.toLowerCase();
-            result = result.filter(t => 
-                t.id.toLowerCase().includes(searchLower) ||
-                t.productName?.toLowerCase().includes(searchLower) ||
-                t.requestedBy?.toLowerCase().includes(searchLower) ||
-                t.description?.toLowerCase().includes(searchLower)
-            );
+            const searchLower = currentFilters.search.toLowerCase().trim();
+            result = result.filter((t) => {
+                const id = (t.id || "").toLowerCase();
+                const tail = id.includes("-") ? id.split("-").pop() : id;
+                return (
+                    id.includes(searchLower) ||
+                    tail.includes(searchLower) ||
+                    (t.productName || "").toLowerCase().includes(searchLower) ||
+                    (t.requestedBy || "").toLowerCase().includes(searchLower) ||
+                    (t.description || "").toLowerCase().includes(searchLower) ||
+                    (t.assignedTo || "").toLowerCase().includes(searchLower)
+                );
+            });
         }
         
         setFilteredTickets(result);
@@ -946,13 +992,30 @@ export const AdminDashboard = () => {
         setActiveTab(tab);
         applyFilters(tickets, filters, tab);
     };
+
+    useEffect(() => {
+        if (viewMode !== "tickets") return;
+        applyFilters(tickets, filtersRef.current, activeTabRef.current);
+    }, [ticketSearch, tickets, viewMode]);
     
     const handleStatusChange = async (ticketId, newStatus, notes, meta = {}) => {
         setTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId ? { ...ticket, status: newStatus } : ticket
+            ticket.id === ticketId
+                ? {
+                    ...ticket,
+                    status: newStatus,
+                    ...(meta.reopen ? { assignedTo: null, assignedToEmail: null } : {}),
+                }
+                : ticket
         )));
         setFilteredTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId ? { ...ticket, status: newStatus } : ticket
+            ticket.id === ticketId
+                ? {
+                    ...ticket,
+                    status: newStatus,
+                    ...(meta.reopen ? { assignedTo: null, assignedToEmail: null } : {}),
+                }
+                : ticket
         )));
         try {
             setActionLoading("Updating ticket status...");
@@ -988,17 +1051,41 @@ export const AdminDashboard = () => {
     };
     
     const handleDeleteTicket = async (ticketId) => {
-        if (window.confirm('Are you sure you want to delete this ticket? This action cannot be undone.')) {
-            setTickets((prev) => prev.filter((ticket) => ticket.id !== ticketId));
-            setFilteredTickets((prev) => prev.filter((ticket) => ticket.id !== ticketId));
-            try {
-                setActionLoading("Deleting ticket...");
-                await deleteTicket(ticketId);
-                await loadTickets();
-                setSelectedTicket(null);
-            } finally {
-                setActionLoading("");
+        if (
+            !window.confirm(
+                "Move this ticket to the recycle bin? It will be hidden from queues and cannot be edited until an admin restores it."
+            )
+        ) {
+            return;
+        }
+        try {
+            setActionLoading("Moving ticket to recycle bin...");
+            await deleteTicket(ticketId);
+            await loadTickets(true);
+            if (viewMode === "deletedTickets") {
+                await loadDeletedTickets();
             }
+            setSelectedTicket(null);
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        } finally {
+            setActionLoading("");
+        }
+    };
+
+    const handleRestoreTicket = async (ticketId) => {
+        try {
+            setActionLoading("Restoring ticket...");
+            const updated = await restoreTicket(ticketId);
+            await loadTickets(true);
+            await loadDeletedTickets();
+            if (selectedTicket?.id === ticketId) {
+                setSelectedTicket(updated);
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        } finally {
+            setActionLoading("");
         }
     };
 
@@ -1170,6 +1257,11 @@ export const AdminDashboard = () => {
                                     <span className="sb-item-text">All Requests</span>
                                     {tabCounts.pending > 0 && <span className="sb-badge urgent">{tabCounts.pending}</span>}
                                 </a>
+                                <a href="#" className={`sb-item ${viewMode === 'deletedTickets' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('deletedTickets'); }}>
+                                    <span className="sb-item-icon"><ArchiveRestore size={15} /></span>
+                                    <span className="sb-item-text">Deleted tickets</span>
+                                </a>
                                 <a href="#" className={`sb-item ${viewMode === 'analytics' ? 'active' : ''}`}
                                    onClick={(e) => { e.preventDefault(); setViewMode('analytics'); }}>
                                     <span className="sb-item-icon"><BarChart3 size={15} /></span>
@@ -1268,6 +1360,7 @@ export const AdminDashboard = () => {
                                 <span className="breadcrumb-separator">/</span>
                                 <span>
                                     {viewMode === 'tickets' && 'Requests'}
+                                    {viewMode === 'deletedTickets' && 'Recycle bin'}
                                     {viewMode === 'analytics' && 'Analytics'}
                                     {viewMode === 'monitoring' && 'Monitor'}
                                     {viewMode === 'team' && 'Engineering'}
@@ -1282,6 +1375,7 @@ export const AdminDashboard = () => {
                             </div>
                             <h1>
                                 {viewMode === 'tickets' && 'All Requests'}
+                                {viewMode === 'deletedTickets' && 'Deleted tickets'}
                                 {viewMode === 'analytics' && 'System Analytics'}
                                 {viewMode === 'monitoring' && 'Environment Monitoring'}
                                 {viewMode === 'team' && 'Engineering Team'}
@@ -1298,17 +1392,22 @@ export const AdminDashboard = () => {
                                     Monitor and manage all requests with full administrative access.
                                 </p>
                             )}
+                            {viewMode === 'deletedTickets' && (
+                                <p className="header-subtitle">
+                                    Soft-deleted tickets are read-only here. Restore a ticket to return it to active queues.
+                                </p>
+                            )}
                         </div>
                         <div className="header-actions">
-                            <div className="search-box-mini">
-                                <Search size={16} />
-                                <input 
-                                    type="text" 
-                                    placeholder="Search..." 
-                                    value={searchQuery}
-                                    onChange={(e) => setSearchQuery(e.target.value)}
+                            {viewMode === "tickets" && (
+                                <TicketSearchBar
+                                    scope="global"
+                                    ticketDataVersion={ticketDataVersion}
+                                    onPickTicket={(t) => setSelectedTicket(t)}
+                                    onSearchStateChange={setTicketSearch}
+                                    className="ticket-search-bar--header"
                                 />
-                            </div>
+                            )}
                             <button 
                                 className={`btn-icon ${isSyncing ? 'syncing' : ''}`}
                                 onClick={handleManualRefresh}
@@ -1395,17 +1494,6 @@ export const AdminDashboard = () => {
                                         </button>
                                     ))}
                                 </div>
-                            </div>
-                            <div style={{ marginTop: '1.5rem', padding: '1rem', background: 'var(--surface-subtle, #f9fafb)', borderRadius: 8 }}>
-                                <h4 style={{ marginBottom: '0.5rem', color: '#111827' }}>Connection Status</h4>
-                                <p style={{ fontSize: '0.875rem', color: '#4b5563' }}>
-                                    Sync Method: <strong>WebSocket (Fastest)</strong>
-                                </p>
-                                <p style={{ fontSize: '0.875rem', color: '#4b5563', marginTop: '0.25rem' }}>
-                                    Status: <strong style={{ color: isConnected ? '#059669' : '#dc2626' }}>
-                                        {isConnected ? 'Connected' : 'Connecting...'}
-                                    </strong>
-                                </p>
                             </div>
                         </div>
                     </div>
@@ -1531,6 +1619,48 @@ export const AdminDashboard = () => {
                     />
                 ) : viewMode === 'activityLogs' ? (
                     <ActivityLogsView />
+                ) : viewMode === 'deletedTickets' ? (
+                    <div className="tickets-section">
+                        <div className="tickets-header" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                            <p className="jdm-hint-text" style={{ margin: 0, maxWidth: 640 }}>
+                                These tickets are hidden from DevOps queues and cannot be edited. Use{" "}
+                                <strong>Restore</strong> to bring a ticket back.
+                            </p>
+                            <button type="button" className="btn-filter" onClick={() => void loadDeletedTickets()}>
+                                <RefreshCw size={16} /> Refresh
+                            </button>
+                        </div>
+                        <div className="tickets-list">
+                            {deletedTicketsList.length === 0 ? (
+                                <div className="empty-state">
+                                    <ArchiveRestore size={48} />
+                                    <h3>No deleted tickets</h3>
+                                    <p>The recycle bin is empty.</p>
+                                </div>
+                            ) : (
+                                deletedTicketsList.map((ticket) => (
+                                    <div key={ticket.id} className="ticket-card-wrapper admin-view">
+                                        <TicketCard
+                                            ticket={ticket}
+                                            onClick={() => setSelectedTicket(ticket)}
+                                            showActions={true}
+                                        />
+                                        <div className="admin-actions" onClick={(e) => e.stopPropagation()}>
+                                            <button
+                                                type="button"
+                                                className="admin-btn"
+                                                style={{ background: "#15803d", color: "#fff" }}
+                                                onClick={() => handleRestoreTicket(ticket.id)}
+                                                title="Restore ticket"
+                                            >
+                                                <ArchiveRestore size={14} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
                 ) : viewMode === 'profile' ? (
                     <div className="tickets-section profile-section-wrap">
                         <DashboardProfilePage
@@ -1647,6 +1777,7 @@ export const AdminDashboard = () => {
                     onAddNote={handleAddNote}
                     user={{ name: userName, email: userEmail }}
                     canManage={true}
+                    onRestoreTicket={selectedTicket.deleted ? handleRestoreTicket : undefined}
                 />
             )}
         </div>

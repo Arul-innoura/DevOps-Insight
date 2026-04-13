@@ -114,6 +114,10 @@ export const searchTicketsAPI = async (query) => {
     return apiRequest(`/tickets/search?q=${encodeURIComponent(query)}`);
 };
 
+export const searchMyTicketsAPI = async (query) => {
+    return apiRequest(`/tickets/my-search?q=${encodeURIComponent(query)}`);
+};
+
 /**
  * Get overall ticket statistics (DevOps & Admin)
  */
@@ -189,6 +193,7 @@ export default {
     getAllTickets: getAllTicketsAPI,
     getTicketsWithFilters: getTicketsWithFiltersAPI,
     searchTickets: searchTicketsAPI,
+    searchMyTickets: searchMyTicketsAPI,
     getTicketStats: getTicketStatsAPI,
     updateTicketStatus: updateTicketStatusAPI,
     addTicketNote: addTicketNoteAPI,

@@ -104,9 +104,9 @@ public class WorkflowDirectoryService {
         if (routing == null) {
             return;
         }
-        addEmailStrings(byEmail, routing.getTo());
-        addEmailStrings(byEmail, routing.getCc());
-        addEmailStrings(byEmail, routing.getBcc());
+        addApprovers(byEmail, routing.getTo());
+        addApprovers(byEmail, routing.getCc());
+        addApprovers(byEmail, routing.getBcc());
         addEmailStrings(byEmail, routing.getToMandatory());
         addEmailStrings(byEmail, routing.getCcMandatory());
         addEmailStrings(byEmail, routing.getBccMandatory());

@@ -76,14 +76,51 @@ public class TicketController {
         TicketStatsResponse stats = ticketService.getTicketStatsByUser(userEmail);
         return ResponseEntity.ok(stats);
     }
+
+    /**
+     * Search tickets raised by the current user (same scope as {@code /my-tickets}). User / DevOps / Admin.
+     */
+    @GetMapping("/my-search")
+    @PreAuthorize("hasAnyAuthority('APPROLE_User', 'APPROLE_DevOps', 'APPROLE_Admin')")
+    public ResponseEntity<List<TicketResponse>> searchMyTickets(
+            @RequestParam String q,
+            @AuthenticationPrincipal Jwt jwt) {
+        String userEmail = extractUserEmail(jwt);
+        return ResponseEntity.ok(ticketService.searchMyTickets(q, userEmail));
+    }
+
+    /**
+     * Autocomplete for {@code /my-search}.
+     */
+    @GetMapping("/my-search/suggest")
+    @PreAuthorize("hasAnyAuthority('APPROLE_User', 'APPROLE_DevOps', 'APPROLE_Admin')")
+    public ResponseEntity<List<TicketResponse>> searchMyTicketsSuggest(
+            @RequestParam String q,
+            @RequestParam(name = "limit", defaultValue = "10") int limit,
+            @AuthenticationPrincipal Jwt jwt) {
+        String userEmail = extractUserEmail(jwt);
+        return ResponseEntity.ok(ticketService.searchMyTicketsSuggest(q, userEmail, limit));
+    }
+
+    /**
+     * Soft-deleted tickets (Admin recycle bin). Must be registered before {@code GET /{ticketId}} so "deleted" is not captured as an id.
+     */
+    @GetMapping("/deleted")
+    @PreAuthorize("hasAuthority('APPROLE_Admin')")
+    public ResponseEntity<List<TicketResponse>> getDeletedTickets() {
+        return ResponseEntity.ok(ticketService.getDeletedTickets());
+    }
     
     /**
      * Get a specific ticket by ID
      */
     @GetMapping("/{ticketId}")
     @PreAuthorize("hasAnyAuthority('APPROLE_User', 'APPROLE_DevOps', 'APPROLE_Admin')")
-    public ResponseEntity<TicketResponse> getTicketById(@PathVariable String ticketId) {
-        TicketResponse ticket = ticketService.getTicketById(ticketId);
+    public ResponseEntity<TicketResponse> getTicketById(
+            @PathVariable String ticketId,
+            @AuthenticationPrincipal Jwt jwt) {
+        boolean includeSoftDeleted = hasRole(jwt, "APPROLE_Admin");
+        TicketResponse ticket = ticketService.getTicketById(ticketId, includeSoftDeleted);
         return ResponseEntity.ok(ticket);
     }
     
@@ -111,6 +148,17 @@ public class TicketController {
         return ResponseEntity.ok(tickets);
     }
     
+    /**
+     * Autocomplete for global ticket search (DevOps & Admin). Registered before {@code /search}.
+     */
+    @GetMapping("/search/suggest")
+    @PreAuthorize("hasAnyAuthority('APPROLE_DevOps', 'APPROLE_Admin')")
+    public ResponseEntity<List<TicketResponse>> searchTicketsSuggest(
+            @RequestParam String q,
+            @RequestParam(name = "limit", defaultValue = "10") int limit) {
+        return ResponseEntity.ok(ticketService.searchTicketsSuggest(q, limit));
+    }
+
     /**
      * Search tickets (DevOps & Admin)
      */
@@ -146,12 +194,18 @@ public class TicketController {
         boolean isUserOnly = hasRole(jwt, "APPROLE_User")
                 && !hasRole(jwt, "APPROLE_DevOps")
                 && !hasRole(jwt, "APPROLE_Admin");
-        if (isUserOnly && request.getNewStatus() != TicketStatus.MANAGER_APPROVAL_PENDING) {
+        boolean userReopen = isUserOnly
+                && Boolean.TRUE.equals(request.getReopen())
+                && request.getNewStatus() == TicketStatus.CREATED;
+        if (isUserOnly && !userReopen && request.getNewStatus() != TicketStatus.MANAGER_APPROVAL_PENDING) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         if (isUserOnly && request.getNewStatus() == TicketStatus.MANAGER_APPROVAL_PENDING) {
             Ticket existing = ticketRepository.findById(ticketId)
                     .orElseThrow(() -> new ResourceNotFoundException("Ticket not found with ID: " + ticketId));
+            if (existing.isDeleted()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            }
             if (existing.getStatus() != TicketStatus.ACCEPTED) {
                 log.warn("User {} blocked from requesting approval: ticket {} status is {}", userEmail, ticketId, existing.getStatus());
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
@@ -165,7 +219,7 @@ public class TicketController {
 
         log.info("Updating ticket {} status to {} by {}", ticketId, request.getNewStatus(), userName);
         
-        TicketResponse ticket = ticketService.updateTicketStatus(ticketId, request, userName, userEmail);
+        TicketResponse ticket = ticketService.updateTicketStatus(ticketId, request, userName, userEmail, jwt);
         return ResponseEntity.ok(ticket);
     }
 
@@ -286,9 +340,10 @@ public class TicketController {
      */
     @GetMapping("/active")
     @PreAuthorize("hasAnyAuthority('APPROLE_DevOps', 'APPROLE_Admin')")
-    public ResponseEntity<List<TicketResponse>> getActiveTickets() {
-        log.info("Fetching active tickets");
-        List<TicketResponse> tickets = ticketService.getActiveTickets();
+    public ResponseEntity<List<TicketResponse>> getActiveTickets(@AuthenticationPrincipal Jwt jwt) {
+        String userEmail = extractUserEmail(jwt);
+        log.info("Fetching active tickets for assignee: {}", userEmail);
+        List<TicketResponse> tickets = ticketService.getActiveTickets(userEmail);
         return ResponseEntity.ok(tickets);
     }
     
@@ -297,9 +352,10 @@ public class TicketController {
      */
     @GetMapping("/completed")
     @PreAuthorize("hasAnyAuthority('APPROLE_DevOps', 'APPROLE_Admin')")
-    public ResponseEntity<List<TicketResponse>> getCompletedTickets() {
-        log.info("Fetching completed tickets");
-        List<TicketResponse> tickets = ticketService.getCompletedTickets();
+    public ResponseEntity<List<TicketResponse>> getCompletedTickets(@AuthenticationPrincipal Jwt jwt) {
+        String userEmail = extractUserEmail(jwt);
+        log.info("Fetching completed tickets for assignee: {}", userEmail);
+        List<TicketResponse> tickets = ticketService.getCompletedTickets(userEmail);
         return ResponseEntity.ok(tickets);
     }
     
@@ -310,10 +366,30 @@ public class TicketController {
      */
     @DeleteMapping("/{ticketId}")
     @PreAuthorize("hasAuthority('APPROLE_Admin')")
-    public ResponseEntity<Map<String, String>> deleteTicket(@PathVariable String ticketId) {
-        log.info("Deleting ticket: {}", ticketId);
-        ticketService.deleteTicket(ticketId);
-        return ResponseEntity.ok(Map.of("message", "Ticket deleted successfully", "ticketId", ticketId));
+    public ResponseEntity<Map<String, String>> deleteTicket(
+            @PathVariable String ticketId,
+            @AuthenticationPrincipal Jwt jwt) {
+        String userName = extractUserName(jwt);
+        String userEmail = extractUserEmail(jwt);
+        log.info("Deleting ticket: {} by {} ({})", ticketId, userName, userEmail);
+        ticketService.deleteTicket(ticketId, userName, userEmail);
+        return ResponseEntity.ok(Map.of(
+                "message", "Ticket moved to recycle bin. Restore it from Deleted tickets if needed.",
+                "ticketId", ticketId));
+    }
+
+    /**
+     * Restore a soft-deleted ticket (Admin only).
+     */
+    @PostMapping("/{ticketId}/restore")
+    @PreAuthorize("hasAuthority('APPROLE_Admin')")
+    public ResponseEntity<TicketResponse> restoreTicket(
+            @PathVariable String ticketId,
+            @AuthenticationPrincipal Jwt jwt) {
+        String userName = extractUserName(jwt);
+        String userEmail = extractUserEmail(jwt);
+        TicketResponse ticket = ticketService.restoreTicket(ticketId, userName, userEmail);
+        return ResponseEntity.ok(ticket);
     }
     
     // ==================== Helper Methods ====================
@@ -338,6 +414,9 @@ public class TicketController {
         }
         if (email == null || email.isEmpty()) {
             email = jwt.getClaimAsString("upn");
+        }
+        if (email == null || email.isEmpty()) {
+            email = jwt.getClaimAsString("unique_name");
         }
         return email != null ? email : "unknown@unknown.com";
     }
