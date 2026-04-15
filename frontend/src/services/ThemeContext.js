@@ -1,28 +1,32 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect } from "react";
 
-const THEME_KEY = 'shipit_theme';
-const THEMES = ['light', 'dark', 'retro', 'devops'];
+const THEME_KEY = "shipit_theme";
+/** Application appearance is fixed to light theme only. */
+const LOCKED_THEME = "light";
+const THEMES = [LOCKED_THEME];
 
-const ThemeContext = createContext({ theme: 'light', setTheme: () => {}, themes: THEMES });
+const ThemeContext = createContext({
+    theme: LOCKED_THEME,
+    setTheme: () => {},
+    themes: THEMES
+});
 
 export const ThemeProvider = ({ children }) => {
-    const [theme, setThemeState] = useState(() => {
-        try {
-            const saved = localStorage.getItem(THEME_KEY);
-            return THEMES.includes(saved) ? saved : 'light';
-        } catch { return 'light'; }
-    });
+    const [theme] = useState(LOCKED_THEME);
 
-    const setTheme = (t) => {
-        if (!THEMES.includes(t)) return;
-        setThemeState(t);
-        try { localStorage.setItem(THEME_KEY, t); } catch {}
+    const setTheme = () => {
+        /* Theme switching disabled — always light. */
     };
 
     useEffect(() => {
-        document.documentElement.setAttribute('data-theme', theme);
-        return () => document.documentElement.removeAttribute('data-theme');
-    }, [theme]);
+        try {
+            localStorage.setItem(THEME_KEY, LOCKED_THEME);
+        } catch {
+            /* ignore */
+        }
+        document.documentElement.setAttribute("data-theme", LOCKED_THEME);
+        return () => document.documentElement.setAttribute("data-theme", LOCKED_THEME);
+    }, []);
 
     return (
         <ThemeContext.Provider value={{ theme, setTheme, themes: THEMES }}>

@@ -7,10 +7,33 @@
 let audioContext = null;
 let lastPlayedAt = {};
 let soundEnabled = true;
-let volumeLevel = 0.5; // 0-1 scale
+let volumeLevel = 0.72; // 0-1 scale (default audible in typical offices)
+
+/** Per-event toggles (real-time sounds). Preview / UI tests bypass these. */
+const DEFAULT_SOUND_CATEGORIES = {
+    newTicket: true,
+    statusChange: true,
+    ticketUpdate: true,
+    assignment: true,
+    availability: true,
+    teamRoster: true,
+    dataSync: true
+};
+let soundCategories = { ...DEFAULT_SOUND_CATEGORIES };
 
 // Sound preferences storage key
 const SOUND_PREFS_KEY = 'devops_sound_preferences';
+
+/** Labels for Settings UI */
+export const SOUND_CATEGORY_META = [
+    { key: "newTicket", label: "New ticket", description: "Distinct arrival when a ticket is created" },
+    { key: "statusChange", label: "Status change", description: "Ticket moves through workflow" },
+    { key: "ticketUpdate", label: "Ticket update", description: "Notes, fields, or general ticket edits" },
+    { key: "assignment", label: "Assignment", description: "Ticket assigned or re-assigned" },
+    { key: "availability", label: "Team availability", description: "DevOps availability status changes" },
+    { key: "teamRoster", label: "Team roster", description: "DevOps team member list updates" },
+    { key: "dataSync", label: "Data sync", description: "Background refresh / cache sync signal" }
+];
 
 /**
  * Initialize or get audio context
@@ -23,6 +46,31 @@ const getAudioContext = () => {
         }
     }
     return audioContext;
+};
+
+/**
+ * Resume AudioContext (required after user gesture on most browsers).
+ * Call at the start of every audible routine.
+ */
+const ensureAudioReady = () => {
+    const ctx = getAudioContext();
+    if (!ctx) return null;
+    if (ctx.state === "suspended") {
+        void ctx.resume().catch(() => {});
+    }
+    return ctx;
+};
+
+export const isSoundCategoryEnabled = (key) =>
+    soundCategories[key] !== false;
+
+export const getSoundCategories = () => ({ ...soundCategories });
+
+export const setSoundCategoryEnabled = (key, enabled) => {
+    if (!(key in DEFAULT_SOUND_CATEGORIES)) return;
+    const next = { ...soundCategories, [key]: !!enabled };
+    soundCategories = next;
+    saveSoundPreferences({ categories: next });
 };
 
 /**
@@ -53,7 +101,11 @@ export const loadSoundPreferences = () => {
     try {
         const prefs = JSON.parse(localStorage.getItem(SOUND_PREFS_KEY) || '{}');
         soundEnabled = prefs.enabled !== false;
-        volumeLevel = typeof prefs.volume === 'number' ? prefs.volume : 0.5;
+        volumeLevel = typeof prefs.volume === "number" ? prefs.volume : 0.72;
+        soundCategories = {
+            ...DEFAULT_SOUND_CATEGORIES,
+            ...(typeof prefs.categories === "object" && prefs.categories !== null ? prefs.categories : {})
+        };
     } catch (e) {
         console.warn('[NotificationService] Failed to load preferences:', e);
     }
@@ -67,9 +119,17 @@ export const saveSoundPreferences = (prefs) => {
     try {
         const current = JSON.parse(localStorage.getItem(SOUND_PREFS_KEY) || '{}');
         const updated = { ...current, ...prefs };
+        if (prefs.categories && typeof prefs.categories === "object") {
+            updated.categories = {
+                ...DEFAULT_SOUND_CATEGORIES,
+                ...(current.categories && typeof current.categories === "object" ? current.categories : {}),
+                ...prefs.categories
+            };
+            soundCategories = { ...updated.categories };
+        }
         localStorage.setItem(SOUND_PREFS_KEY, JSON.stringify(updated));
-        if (typeof prefs.enabled === 'boolean') soundEnabled = prefs.enabled;
-        if (typeof prefs.volume === 'number') volumeLevel = prefs.volume;
+        if (typeof prefs.enabled === "boolean") soundEnabled = prefs.enabled;
+        if (typeof prefs.volume === "number") volumeLevel = prefs.volume;
     } catch (e) {
         console.warn('[NotificationService] Failed to save preferences:', e);
     }
@@ -92,7 +152,11 @@ export const setVolume = (volume) => {
 /**
  * Get current sound settings
  */
-export const getSoundSettings = () => ({ enabled: soundEnabled, volume: volumeLevel });
+export const getSoundSettings = () => ({
+    enabled: soundEnabled,
+    volume: volumeLevel,
+    categories: { ...soundCategories }
+});
 export const getSoundEnabled = () => soundEnabled;
 export const getVolume = () => volumeLevel;
 
@@ -130,9 +194,8 @@ const playEnterpriseSound = ({
     if (typeof window === "undefined" || !soundEnabled) return;
     if (!canPlaySound(soundType, 400)) return;
 
-    const ctx = getAudioContext();
+    const ctx = ensureAudioReady();
     if (!ctx) return;
-    if (ctx.state === "suspended") ctx.resume();
 
     const adjustedVolume = baseVolume * volumeLevel;
     const masterGain = ctx.createGain();
@@ -197,9 +260,8 @@ const playHarmonicChord = ({
     if (typeof window === "undefined" || !soundEnabled) return;
     if (!canPlaySound(soundType, 600)) return;
 
-    const ctx = getAudioContext();
+    const ctx = ensureAudioReady();
     if (!ctx) return;
-    if (ctx.state === "suspended") ctx.resume();
 
     const adjustedVolume = baseVolume * volumeLevel;
     const masterGain = ctx.createGain();
@@ -271,7 +333,7 @@ export const playShortNotification = () => {
             { freq: 850, vol: 1 }
         ],
         noteDuration: 0.08,
-        baseVolume: 0.05,
+        baseVolume: 0.078,
         waveType: "sine",
         attack: 0.005,
         decay: 0.02,
@@ -327,70 +389,70 @@ export const playLongNotification = () => {
  */
 export const playNewTicketArrival = () => {
     if (typeof window === "undefined" || !soundEnabled) return;
-    if (!canPlaySound("newTicketArrival", 800)) return;
+    if (!canPlaySound("newTicketArrival", 650)) return;
 
-    const ctx = getAudioContext();
+    const ctx = ensureAudioReady();
     if (!ctx) return;
-    if (ctx.state === "suspended") ctx.resume();
 
-    const vol = 0.11 * volumeLevel;
+    const vol = 0.26 * volumeLevel;
     const now = ctx.currentTime;
 
     const compressor = ctx.createDynamicsCompressor();
-    compressor.threshold.setValueAtTime(-18, now);
-    compressor.knee.setValueAtTime(20, now);
-    compressor.ratio.setValueAtTime(10, now);
+    compressor.threshold.setValueAtTime(-16, now);
+    compressor.knee.setValueAtTime(24, now);
+    compressor.ratio.setValueAtTime(8, now);
     compressor.attack.setValueAtTime(0.002, now);
-    compressor.release.setValueAtTime(0.1, now);
+    compressor.release.setValueAtTime(0.18, now);
     compressor.connect(ctx.destination);
 
     const master = ctx.createGain();
     master.gain.setValueAtTime(vol, now);
     master.connect(compressor);
 
-    // Three-part shape: pop1 (bright) → pop2 (brighter) → tail (warm, longer)
-    const parts = [
-        { freq: 880,  delay: 0,    dur: 0.10, peak: 1.0,  wave: "sine" },
-        { freq: 1100, delay: 0.11, dur: 0.10, peak: 1.0,  wave: "sine" },
-        { freq: 1320, delay: 0.22, dur: 0.22, peak: 0.75, wave: "sine" }
+    // Formal "service bell" — ascending major motif + resolving fifth (≈ 0.95 s)
+    const bells = [
+        { freq: 523.25, delay: 0.0, dur: 0.14, peak: 0.95, wave: "triangle" }, // C5
+        { freq: 659.25, delay: 0.12, dur: 0.14, peak: 1.0, wave: "triangle" }, // E5
+        { freq: 783.99, delay: 0.24, dur: 0.15, peak: 1.0, wave: "triangle" }, // G5
+        { freq: 1046.5, delay: 0.38, dur: 0.16, peak: 0.92, wave: "sine" }, // C6
+        { freq: 783.99, delay: 0.58, dur: 0.28, peak: 0.88, wave: "sine" }, // G5 resolve
+        { freq: 523.25, delay: 0.72, dur: 0.22, peak: 0.55, wave: "sine" } // C5 anchor
     ];
 
-    parts.forEach(({ freq, delay, dur, peak, wave }) => {
+    bells.forEach(({ freq, delay, dur, peak, wave }) => {
         const start = now + delay;
         const end = start + dur;
 
-        // Main tone
         const osc = ctx.createOscillator();
         const g = ctx.createGain();
         osc.type = wave;
         osc.frequency.setValueAtTime(freq, start);
         g.gain.setValueAtTime(0.0001, start);
-        g.gain.exponentialRampToValueAtTime(peak, start + 0.010); // hard attack
-        g.gain.setValueAtTime(peak * 0.6, end - 0.04);
+        g.gain.exponentialRampToValueAtTime(peak, start + 0.018);
+        g.gain.exponentialRampToValueAtTime(peak * 0.55, end - 0.05);
         g.gain.exponentialRampToValueAtTime(0.0001, end);
         osc.connect(g);
         g.connect(master);
         osc.start(start);
-        osc.stop(end + 0.02);
+        osc.stop(end + 0.03);
 
-        // Subtle 2nd-harmonic shimmer for brightness
         const osc2 = ctx.createOscillator();
         const g2 = ctx.createGain();
         osc2.type = "sine";
         osc2.frequency.setValueAtTime(freq * 2, start);
         g2.gain.setValueAtTime(0.0001, start);
-        g2.gain.exponentialRampToValueAtTime(peak * 0.18, start + 0.010);
+        g2.gain.exponentialRampToValueAtTime(peak * 0.12, start + 0.02);
         g2.gain.exponentialRampToValueAtTime(0.0001, end);
         osc2.connect(g2);
         g2.connect(master);
         osc2.start(start);
-        osc2.stop(end + 0.02);
+        osc2.stop(end + 0.03);
     });
 
     setTimeout(() => {
         master.disconnect();
         compressor.disconnect();
-    }, 600);
+    }, 1100);
 };
 
 /**
@@ -401,7 +463,7 @@ export const playSuccessNotification = () => {
     playHarmonicChord({
         fundamentals: [523, 659, 784], // C major chord (C5, E5, G5)
         duration: 0.4,
-        baseVolume: 0.065,
+        baseVolume: 0.09,
         soundType: "success"
     });
 };
@@ -502,7 +564,7 @@ export const playStatusChangeNotification = () => {
             { freq: 988, vol: 0.9 }   // B5
         ],
         noteDuration: 0.11,
-        baseVolume: 0.06,
+        baseVolume: 0.092,
         waveType: "sine",
         attack: 0.012,
         decay: 0.04,
@@ -512,6 +574,24 @@ export const playStatusChangeNotification = () => {
     });
 };
 export const playStatusChangeSound = playStatusChangeNotification;
+
+/** WebSocket: general ticket field / note updates (distinct from status chime). */
+export const playTicketUpdateNotification = () => {
+    playEnterpriseSound({
+        notes: [
+            { freq: 622.25, vol: 0.88 }, // Eb5
+            { freq: 932.33, vol: 1 } // Bb5
+        ],
+        noteDuration: 0.1,
+        baseVolume: 0.074,
+        waveType: "sine",
+        attack: 0.008,
+        decay: 0.035,
+        sustain: 0.55,
+        release: 0.06,
+        soundType: "ticketWsUpdate"
+    });
+};
 
 /**
  * Assignment notification - Ticket assigned to you
@@ -535,15 +615,66 @@ export const playAssignmentNotification = () => {
     });
 };
 
+/** WebSocket: DevOps roster / profile row changed. */
+export const playTeamRosterUpdateNotification = () => {
+    playEnterpriseSound({
+        notes: [
+            { freq: 392, vol: 0.75 },
+            { freq: 494, vol: 0.88 },
+            { freq: 587, vol: 0.92 }
+        ],
+        noteDuration: 0.1,
+        baseVolume: 0.076,
+        waveType: "sine",
+        attack: 0.01,
+        decay: 0.04,
+        sustain: 0.58,
+        release: 0.07,
+        soundType: "teamRosterWs"
+    });
+};
+
+/** WebSocket: availability (Available / Busy / Away) toggled. */
+export const playAvailabilityChangeNotification = () => {
+    playEnterpriseSound({
+        notes: [
+            { freq: 1174.66, vol: 0.95 },
+            { freq: 783.99, vol: 0.82 }
+        ],
+        noteDuration: 0.12,
+        baseVolume: 0.08,
+        waveType: "sine",
+        attack: 0.012,
+        decay: 0.045,
+        sustain: 0.55,
+        release: 0.08,
+        soundType: "availabilityWs"
+    });
+};
+
+/** WebSocket: soft ping when server asks clients to refresh. */
+export const playDataSyncChime = () => {
+    playEnterpriseSound({
+        notes: [{ freq: 528, vol: 1 }],
+        noteDuration: 0.055,
+        baseVolume: 0.055,
+        waveType: "sine",
+        attack: 0.004,
+        decay: 0.02,
+        sustain: 0.35,
+        release: 0.04,
+        soundType: "dataSyncWs"
+    });
+};
+
 /**
  * Completion celebration - Major milestone
  * Rich, satisfying fanfare
  */
 export const playCelebrationNotification = () => {
     // Play chord progression
-    const ctx = getAudioContext();
+    const ctx = ensureAudioReady();
     if (!ctx || !soundEnabled || !canPlaySound("celebration", 1000)) return;
-    if (ctx.state === "suspended") ctx.resume();
     
     const adjustedVolume = 0.06 * volumeLevel;
     const masterGain = ctx.createGain();
@@ -567,7 +698,7 @@ export const playCelebrationNotification = () => {
     // Second chord: G major (delayed)
     setTimeout(() => {
         if (!soundEnabled) return;
-        const ctx2 = getAudioContext();
+        const ctx2 = ensureAudioReady();
         if (!ctx2) return;
         [392, 494, 587, 784].forEach(freq => {
             const osc = ctx2.createOscillator();
@@ -646,6 +777,37 @@ export const playNotification = (type) => {
             break;
         case NOTIFICATION_TYPES.NEW_TICKET:
             playNewTicketArrival();
+            break;
+        default:
+            playShortNotification();
+    }
+};
+
+/** Settings: play the sound mapped to a real-time category (ignores category toggles). */
+export const previewSoundCategory = (key) => {
+    if (typeof window === "undefined" || !soundEnabled) return;
+    void ensureAudioReady()?.resume?.();
+    switch (key) {
+        case "newTicket":
+            playNewTicketArrival();
+            break;
+        case "statusChange":
+            playStatusChangeNotification();
+            break;
+        case "ticketUpdate":
+            playTicketUpdateNotification();
+            break;
+        case "assignment":
+            playAssignmentNotification();
+            break;
+        case "availability":
+            playAvailabilityChangeNotification();
+            break;
+        case "teamRoster":
+            playTeamRosterUpdateNotification();
+            break;
+        case "dataSync":
+            playDataSyncChime();
             break;
         default:
             playShortNotification();

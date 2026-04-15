@@ -71,14 +71,16 @@ import {
 import RotaCalendarModal from "../admin/RotaCalendarModal";
 import { openCostEstimateWindow } from "./openCostEstimateWindow";
 import { useRealTimeSync, useConnectionStatus } from "../../services/useRealTimeSync";
-import { 
-    playShortNotification, 
-    playSuccessNotification,
-    playStatusChangeSound,
+import {
+    playShortNotification,
     setSoundEnabled,
     getSoundEnabled,
     setVolume,
-    getVolume
+    getVolume,
+    getSoundSettings,
+    SOUND_CATEGORY_META,
+    setSoundCategoryEnabled,
+    previewSoundCategory
 } from "../../services/notificationService";
 import AnalyticsDashboard from "../admin/AnalyticsDashboard";
 import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
@@ -86,7 +88,6 @@ import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
 import TicketSearchBar from "../../components/TicketSearchBar";
-import { useTheme } from "../../services/ThemeContext";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
 
@@ -264,7 +265,6 @@ const ForwardTicketModal = ({ ticket, onClose, onForward, currentUser }) => {
 
 export const DevOpsDashboard = () => {
     const { instance, accounts } = useMsal();
-    const { theme, setTheme, themes } = useTheme();
     const account = accounts[0];
     const userName = account?.name || "DevOps Engineer";
     const userEmail = account?.username || "devops@company.com";
@@ -272,7 +272,8 @@ export const DevOpsDashboard = () => {
 
     const [tickets, setTickets] = useState([]);
     const [filteredTickets, setFilteredTickets] = useState([]);
-    const [filters, setFilters] = useState({});
+    /** Default Unassigned Queue view: status = queue only (not org-wide "All"). */
+    const [filters, setFilters] = useState({ status: TICKET_FILTER_BUCKET.UNASSIGNED });
     const [showFilters, setShowFilters] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState(null);
     const [activeSection, setActiveSection] = useState('requests');
@@ -299,9 +300,9 @@ export const DevOpsDashboard = () => {
     const [unassignedPage, setUnassignedPage] = useState(1);
     const UNASSIGNED_PAGE_SIZE = 12;
     const ticketSearchRef = useRef(ticketSearch);
-    const [soundSettings, setSoundSettings] = useState({
-        enabled: getSoundEnabled(),
-        volume: getVolume()
+    const [soundSettings, setSoundSettings] = useState(() => {
+        const s = getSoundSettings();
+        return { enabled: s.enabled, volume: s.volume, categories: { ...s.categories } };
     });
     const [navGroups, setNavGroups] = usePersistedSidebarNav("devops", DEVOPS_SIDEBAR_NAV_DEFAULTS);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
@@ -351,7 +352,10 @@ export const DevOpsDashboard = () => {
         requestTab === "unassigned" || requestTab === "myTickets";
     useEffect(() => {
         if (!hideAssignMeForRequestsTab || filters.status !== TICKET_FILTER_BUCKET.ASSIGNED_ME) return;
-        const cleared = { ...filters, status: null };
+        const cleared = {
+            ...filters,
+            status: requestTab === "unassigned" ? TICKET_FILTER_BUCKET.UNASSIGNED : null
+        };
         setFilters(cleared);
         if (activeSection === "requests") {
             applySectionFilter(tickets, requestTab, cleared);
@@ -488,6 +492,21 @@ export const DevOpsDashboard = () => {
         setSoundSettings(prev => ({ ...prev, volume: newVolume }));
     };
 
+    useEffect(() => {
+        if (activeSection !== "settings") return;
+        const s = getSoundSettings();
+        setSoundSettings({ enabled: s.enabled, volume: s.volume, categories: { ...s.categories } });
+    }, [activeSection]);
+
+    const handleSoundCategoryToggle = (key) => {
+        const next = !soundSettings.categories?.[key];
+        setSoundCategoryEnabled(key, next);
+        setSoundSettings((prev) => ({
+            ...prev,
+            categories: { ...prev.categories, [key]: next }
+        }));
+    };
+
     // Real-time sync via WebSocket - silent background updates
     useRealTimeSync({
         onRefresh: () => loadTickets(true), // Silent refresh
@@ -568,12 +587,31 @@ export const DevOpsDashboard = () => {
         ];
 
         switch (section) {
-            case 'unassigned':
-                // True queue only: raised (CREATED) and not assigned to anyone yet
+            case 'unassigned': {
+                // Default / "Unassigned": true queue only. "All": entire DevOps list (every assignee).
+                // Other status values filter the full list — same semantics as other tabs, scoped to this tab only.
+                const raw = f.status;
+                const isAll =
+                    raw === TICKET_FILTER_BUCKET.ALL ||
+                    (typeof raw === "string" && raw.trim() === "");
+                if (isAll) {
+                    break;
+                }
+                if (raw == null || raw === undefined) {
+                    result = result.filter((t) =>
+                        ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, filterCtx));
+                    break;
+                }
+                const token = String(raw).trim();
+                if (token === TICKET_FILTER_BUCKET.UNASSIGNED) {
+                    result = result.filter((t) =>
+                        ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, filterCtx));
+                    break;
+                }
                 result = result.filter((t) =>
-                    ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, filterCtx)
-                );
+                    ticketMatchesPrimaryStatusFilter(t, token, filterCtx));
                 break;
+            }
             case 'myTickets':
                 // My Tickets shows all assigned tickets except closed (closed go to Archive > Closed)
                 result = result.filter(t => isMine(t) && t.status !== TICKET_STATUS.CLOSED);
@@ -604,7 +642,7 @@ export const DevOpsDashboard = () => {
                 break;
         }
         
-        // Apply additional filters (Unassigned tab is queue-only — status dropdown hidden; skip if stale value)
+        // Status filter for tabs other than Unassigned Queue (that tab handles status inside its case)
         if (f.status && section !== "unassigned") {
             result = result.filter((t) => ticketMatchesPrimaryStatusFilter(t, f.status, filterCtx));
         }
@@ -695,26 +733,25 @@ export const DevOpsDashboard = () => {
         if (TICKET_TABS.includes(section)) {
             setActiveSection('requests');
             setRequestTab(section);
-            const clearAssignMe =
-                (section === 'unassigned' || section === 'myTickets') &&
-                filters.status === TICKET_FILTER_BUCKET.ASSIGNED_ME;
+            const prev = filtersRef.current;
+            let nextFilters = { ...prev };
+
             if (section === "unassigned") {
-                const cleared = {
-                    ...filters,
-                    status: TICKET_FILTER_BUCKET.ALL,
-                    assignedTo: null
-                };
-                setFilters(cleared);
-                applySectionFilter(tickets, section, cleared);
-                return;
+                nextFilters = { ...prev, status: TICKET_FILTER_BUCKET.UNASSIGNED, assignedTo: null };
+            } else if (prev.status === TICKET_FILTER_BUCKET.UNASSIGNED) {
+                // Queue-only bucket does not apply on My Tickets / Active / etc.
+                nextFilters = { ...prev, status: TICKET_FILTER_BUCKET.ALL };
             }
+
+            const clearAssignMe =
+                (section === "unassigned" || section === "myTickets") &&
+                nextFilters.status === TICKET_FILTER_BUCKET.ASSIGNED_ME;
             if (clearAssignMe) {
-                const cleared = { ...filters, status: null };
-                setFilters(cleared);
-                applySectionFilter(tickets, section, cleared);
-            } else {
-                applySectionFilter(tickets, section);
+                nextFilters = { ...nextFilters, status: TICKET_FILTER_BUCKET.ALL };
             }
+
+            setFilters(nextFilters);
+            applySectionFilter(tickets, section, nextFilters);
             return;
         }
         setActiveSection(section);
@@ -1270,36 +1307,48 @@ export const DevOpsDashboard = () => {
                                         <Bell size={16} />
                                     </div>
                                 )}
-                            </div>
-                            <div className="sound-settings" style={{ marginTop: '1.5rem' }}>
-                                <div className="sound-settings-header">
-                                    <span className="sound-settings-title">
-                                        <Settings size={18} style={{ marginRight: 8 }} />
-                                        Theme
-                                    </span>
-                                </div>
-                                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
-                                    {themes.map((t) => (
-                                        <button
-                                            key={t}
-                                            onClick={() => setTheme(t)}
-                                            style={{
-                                                padding: '0.5rem 1.25rem',
-                                                borderRadius: 8,
-                                                border: theme === t ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
-                                                background: theme === t ? 'var(--accent-light)' : 'var(--card-bg)',
-                                                color: 'var(--text-main)',
-                                                fontWeight: theme === t ? 600 : 400,
-                                                cursor: 'pointer',
-                                                textTransform: 'capitalize',
-                                                fontSize: '0.875rem',
-                                                transition: 'all 0.2s ease'
-                                            }}
-                                        >
-                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : t === 'retro' ? '🕹️ Retro' : '🎬 DevOps'}
-                                        </button>
-                                    ))}
-                                </div>
+                                {soundSettings.enabled && (
+                                    <div className="sound-category-grid" style={{ marginTop: "1rem" }}>
+                                        <p style={{ fontSize: "0.8125rem", color: "var(--muted-foreground, #64748b)", margin: "0 0 0.5rem" }}>
+                                            Real-time alerts (each has its own tone). Click page once if no audio (browser unlock).
+                                        </p>
+                                        {SOUND_CATEGORY_META.map(({ key, label, description }) => (
+                                            <div
+                                                key={key}
+                                                className="sound-category-row"
+                                                style={{
+                                                    display: "flex",
+                                                    alignItems: "flex-start",
+                                                    gap: "0.65rem",
+                                                    padding: "0.5rem 0",
+                                                    borderBottom: "1px solid var(--border-color, rgba(0,0,0,0.08))"
+                                                }}
+                                            >
+                                                <input
+                                                    type="checkbox"
+                                                    id={`sound-cat-${key}`}
+                                                    checked={soundSettings.categories?.[key] !== false}
+                                                    onChange={() => handleSoundCategoryToggle(key)}
+                                                    style={{ marginTop: 4, width: 16, height: 16, cursor: "pointer", flexShrink: 0 }}
+                                                />
+                                                <label htmlFor={`sound-cat-${key}`} style={{ flex: 1, cursor: "pointer" }}>
+                                                    <span style={{ fontWeight: 600, fontSize: "0.875rem", display: "block" }}>{label}</span>
+                                                    <span style={{ fontSize: "0.75rem", color: "var(--muted-foreground, #64748b)" }}>{description}</span>
+                                                </label>
+                                                <button
+                                                    type="button"
+                                                    className="quick-btn"
+                                                    style={{ flexShrink: 0, fontSize: "0.75rem", padding: "0.35rem 0.65rem" }}
+                                                    disabled={!soundSettings.enabled}
+                                                    onClick={() => previewSoundCategory(key)}
+                                                    aria-label={`Test ${label} sound`}
+                                                >
+                                                    Test
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -1591,8 +1640,7 @@ export const DevOpsDashboard = () => {
                             filters={filters}
                             onFilterChange={handleFilterChange}
                             hideAssignMeOption
-                            hideStatusFilter
-                            searchPlaceholder="Search queue (id, product, requester, environment, project id…)"
+                            searchPlaceholder="Search list (id, product, assignee, requester, environment…)"
                         />
                     )}
                     

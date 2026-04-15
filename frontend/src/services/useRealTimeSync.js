@@ -7,10 +7,17 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import realTimeService, { WS_MESSAGE_TYPES } from "./stompWebSocketService";
 import { applyCacheInvalidationHint } from "./ticketService";
-import { 
-    playShortNotification, 
+import {
+    playNewTicketArrival,
+    playStatusChangeNotification,
     playSuccessNotification,
-    playNewTicketNotification
+    playAssignmentNotification,
+    playAvailabilityChangeNotification,
+    playTeamRosterUpdateNotification,
+    playDataSyncChime,
+    playTicketUpdateNotification,
+    playWarningNotification,
+    isSoundCategoryEnabled
 } from "./notificationService";
 
 /**
@@ -20,7 +27,7 @@ import {
 export const useRealTimeSync = ({
     onRefresh,
     onPatchEvent,
-    playNewTicketSound = false,
+    playNewTicketSound = true,
     playUpdateSound = true,
     enableWebSocket = true,
     pollingInterval = null // Used when WS is off or after repeated handshake failures
@@ -76,72 +83,109 @@ export const useRealTimeSync = ({
             return () => clearInterval(timer);
         }
         
-        // New ticket created — always play the distinctive arrival chime
         const handleNewTicket = (data) => {
-            if (didInitialLoad.current && playNewTicketSound) {
-                playNewTicketNotification();
+            if (didInitialLoad.current && playNewTicketSound && isSoundCategoryEnabled("newTicket")) {
+                playNewTicketArrival();
             }
             onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_CREATED, data);
             debouncedRefresh();
         };
 
-        // Existing ticket updated (assignment, note, etc.)
-        const handleTicketEvent = (data) => {
-            if (didInitialLoad.current && playUpdateSound) {
-                playShortNotification();
+        const handleTicketUpdated = (data) => {
+            if (didInitialLoad.current && playUpdateSound && isSoundCategoryEnabled("ticketUpdate")) {
+                playTicketUpdateNotification();
             }
             onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_UPDATED, data);
+            debouncedRefresh();
+        };
+
+        const handleTicketDeleted = (data) => {
+            if (didInitialLoad.current && playUpdateSound && isSoundCategoryEnabled("ticketUpdate")) {
+                playWarningNotification();
+            }
+            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_DELETED, data);
+            debouncedRefresh();
+        };
+
+        const handleTicketAssigned = (data) => {
+            if (didInitialLoad.current && playUpdateSound && isSoundCategoryEnabled("assignment")) {
+                playAssignmentNotification();
+            }
+            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_ASSIGNED, data);
+            debouncedRefresh();
+        };
+
+        const handleDevOpsUpdated = (data) => {
+            if (didInitialLoad.current && playUpdateSound && isSoundCategoryEnabled("teamRoster")) {
+                playTeamRosterUpdateNotification();
+            }
+            onPatchEvent?.(WS_MESSAGE_TYPES.DEVOPS_UPDATED, data);
+            debouncedRefresh();
+        };
+
+        const handleAvailabilityChanged = (data) => {
+            if (didInitialLoad.current && playUpdateSound && isSoundCategoryEnabled("availability")) {
+                playAvailabilityChangeNotification();
+            }
+            onPatchEvent?.(WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, data);
+            debouncedRefresh();
+        };
+
+        const handleSyncRequired = (data) => {
+            if (didInitialLoad.current && playUpdateSound && isSoundCategoryEnabled("dataSync")) {
+                playDataSyncChime();
+            }
+            onPatchEvent?.(WS_MESSAGE_TYPES.SYNC_REQUIRED, data);
             debouncedRefresh();
         };
 
         const handleCacheInvalidation = (hint) => {
             applyCacheInvalidationHint(hint);
         };
-        
-        // Handler for status change events
+
         const handleStatusChange = (data) => {
-            console.log('[RealTimeSync] Status changed:', data);
-            
-            if (didInitialLoad.current) {
+            if (didInitialLoad.current && isSoundCategoryEnabled("statusChange")) {
                 const status = data?.status;
-                if (status === 'COMPLETED' || status === 'CLOSED') {
+                if (status === "COMPLETED" || status === "CLOSED") {
                     playSuccessNotification();
                 } else if (playUpdateSound) {
-                    playShortNotification();
+                    playStatusChangeNotification();
                 }
             }
-            
+
             onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, data);
             debouncedRefresh();
         };
-        
+
         // Subscribe to events
         realTimeService.on(WS_MESSAGE_TYPES.TICKET_CREATED, handleNewTicket);
-        realTimeService.on(WS_MESSAGE_TYPES.TICKET_UPDATED, handleTicketEvent);
-        realTimeService.on(WS_MESSAGE_TYPES.TICKET_DELETED, handleTicketEvent);
+        realTimeService.on(WS_MESSAGE_TYPES.TICKET_UPDATED, handleTicketUpdated);
+        realTimeService.on(WS_MESSAGE_TYPES.TICKET_DELETED, handleTicketDeleted);
         realTimeService.on(WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, handleStatusChange);
-        realTimeService.on(WS_MESSAGE_TYPES.TICKET_ASSIGNED, handleTicketEvent);
-        realTimeService.on(WS_MESSAGE_TYPES.DEVOPS_UPDATED, handleTicketEvent);
-        realTimeService.on(WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, handleTicketEvent);
-        realTimeService.on(WS_MESSAGE_TYPES.SYNC_REQUIRED, handleTicketEvent);
+        realTimeService.on(WS_MESSAGE_TYPES.TICKET_ASSIGNED, handleTicketAssigned);
+        realTimeService.on(WS_MESSAGE_TYPES.DEVOPS_UPDATED, handleDevOpsUpdated);
+        realTimeService.on(WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, handleAvailabilityChanged);
+        realTimeService.on(WS_MESSAGE_TYPES.SYNC_REQUIRED, handleSyncRequired);
         realTimeService.on(WS_MESSAGE_TYPES.CACHE_INVALIDATE, handleCacheInvalidation);
         
         // Initial load
         onRefreshRef.current?.();
         
         // Mark initial load complete after delay
-        setTimeout(() => { didInitialLoad.current = true; }, 1000);
+        setTimeout(() => {
+            didInitialLoad.current = true;
+        }, 450);
         
         // Cleanup
         return () => {
             realTimeService.off(WS_MESSAGE_TYPES.TICKET_CREATED, handleNewTicket);
-            realTimeService.off(WS_MESSAGE_TYPES.TICKET_UPDATED, handleTicketEvent);
-            realTimeService.off(WS_MESSAGE_TYPES.TICKET_DELETED, handleTicketEvent);
+            realTimeService.off(WS_MESSAGE_TYPES.TICKET_UPDATED, handleTicketUpdated);
+            realTimeService.off(WS_MESSAGE_TYPES.TICKET_DELETED, handleTicketDeleted);
             realTimeService.off(WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, handleStatusChange);
-            realTimeService.off(WS_MESSAGE_TYPES.TICKET_ASSIGNED, handleTicketEvent);
-            realTimeService.off(WS_MESSAGE_TYPES.DEVOPS_UPDATED, handleTicketEvent);
-            realTimeService.off(WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, handleTicketEvent);
-            realTimeService.off(WS_MESSAGE_TYPES.SYNC_REQUIRED, handleTicketEvent);
+            realTimeService.off(WS_MESSAGE_TYPES.TICKET_ASSIGNED, handleTicketAssigned);
+            realTimeService.off(WS_MESSAGE_TYPES.DEVOPS_UPDATED, handleDevOpsUpdated);
+            realTimeService.off(WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, handleAvailabilityChanged);
+            realTimeService.off(WS_MESSAGE_TYPES.SYNC_REQUIRED, handleSyncRequired);
             realTimeService.off(WS_MESSAGE_TYPES.CACHE_INVALIDATE, handleCacheInvalidation);
             
             if (debounceRef.current) {

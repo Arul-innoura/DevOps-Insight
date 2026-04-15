@@ -2077,7 +2077,16 @@ export const TicketDetailsModal = ({
                                     rows={3}
                                 />
 
-                                {/* File picker */}
+                                {/* Attachments — extra space below before Add Note */}
+                                <div
+                                    style={{
+                                        marginTop: 12,
+                                        marginBottom: 20,
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: 10,
+                                    }}
+                                >
                                 <input
                                     ref={noteFileInputRef}
                                     id={`note-files-${ticket.id}`}
@@ -2090,11 +2099,11 @@ export const TicketDetailsModal = ({
                                 <label
                                     htmlFor={`note-files-${ticket.id}`}
                                     style={{
-                                        marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6,
+                                        display: 'inline-flex', alignItems: 'center', gap: 6,
                                         padding: '6px 12px', borderRadius: 8,
                                         border: '1px dashed var(--border-color, #cbd5e1)', background: 'var(--surface-subtle, #f8fafc)',
                                         color: 'var(--text-sub, #475569)', fontSize: '0.8rem', cursor: 'pointer',
-                                        userSelect: 'none',
+                                        userSelect: 'none', alignSelf: 'flex-start',
                                     }}
                                 >
                                     <Paperclip size={13} /> Attach files (max {NOTE_ATTACHMENT_MAX_MB} MB each)
@@ -2102,7 +2111,7 @@ export const TicketDetailsModal = ({
 
                                 {/* Pending / uploaded files list */}
                                 {pendingFiles.length > 0 && (
-                                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                                         {pendingFiles.map((f, idx) => (
                                             <div
                                                 key={idx}
@@ -2145,10 +2154,11 @@ export const TicketDetailsModal = ({
                                         ))}
                                     </div>
                                 )}
+                                </div>
 
                                 <button
                                     className="jdm-btn-primary"
-                                    style={{ marginTop: 12, alignSelf: 'flex-start' }}
+                                    style={{ marginTop: 4, alignSelf: 'flex-start' }}
                                     onClick={handleAddNote}
                                     disabled={!note.trim() || isAnyUploading}
                                 >
