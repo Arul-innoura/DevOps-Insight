@@ -919,7 +919,7 @@ public class TicketServiceImpl implements TicketService {
         String projectToken = toProjectToken(request.getProductName());
         String idPrefix = "EH-" + requestShortCode + "-" + projectToken + "-";
 
-        long nextSequence = ticketRepository.findByIdStartingWith(idPrefix).stream()
+        long nextSequence = ticketRepository.findAll().stream()
                 .map(Ticket::getId)
                 .filter(Objects::nonNull)
                 .map(String::trim)
