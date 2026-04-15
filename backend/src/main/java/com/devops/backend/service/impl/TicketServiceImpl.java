@@ -772,7 +772,7 @@ public class TicketServiceImpl implements TicketService {
     }
     
     @Override
-    @Cacheable("ticket-stats")
+    /** Not Redis-cached: {@link TicketStatsResponse} maps of enums do not deserialize reliably with GenericJackson2JsonRedisSerializer. */
     public TicketStatsResponse getTicketStats() {
         long total = ticketRepository.countActiveTickets();
         
@@ -813,7 +813,6 @@ public class TicketServiceImpl implements TicketService {
     }
     
     @Override
-    @Cacheable(value = "ticket-stats-user", key = "#userEmail")
     public TicketStatsResponse getTicketStatsByUser(String userEmail) {
         List<Ticket> userTickets = ticketRepository.findActiveByRequesterEmailOrderByCreatedAtDesc(userEmail);
         
@@ -914,7 +913,13 @@ public class TicketServiceImpl implements TicketService {
     // Helper methods
     
     private String generateTicketId(CreateTicketRequest request) {
-        long nextSequence = ticketRepository.findAll().stream()
+        String requestShortCode = request.getRequestType() != null
+                ? request.getRequestType().getShortCode()
+                : RequestType.BUILD_REQUEST.getShortCode();
+        String projectToken = toProjectToken(request.getProductName());
+        String idPrefix = "EH-" + requestShortCode + "-" + projectToken + "-";
+
+        long nextSequence = ticketRepository.findByIdStartingWith(idPrefix).stream()
                 .map(Ticket::getId)
                 .filter(Objects::nonNull)
                 .map(String::trim)
@@ -933,7 +938,15 @@ public class TicketServiceImpl implements TicketService {
                 .max()
                 .orElse(0L) + 1L;
 
-        return String.format("EH-%06d", nextSequence);
+        return String.format("%s%06d", idPrefix, nextSequence);
+    }
+
+    private String toProjectToken(String productName) {
+        if (productName == null || productName.isBlank()) {
+            return "GENERAL";
+        }
+        String normalized = productName.trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9]", "");
+        return normalized.isBlank() ? "GENERAL" : normalized;
     }
 
 

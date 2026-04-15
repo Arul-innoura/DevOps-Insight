@@ -9,6 +9,8 @@ import { oidcScopes } from "../auth/authConfig";
 let cachedToken = null;
 let tokenExpiry = 0;
 let tokenPromise = null;
+/** One in-flight 401 recovery — parallel apiRequest retries must share the same refresh. */
+let refreshPromise = null;
 
 const TOKEN_BUFFER_MS = 5 * 60 * 1000; // Refresh 5 minutes before expiry
 
@@ -40,12 +42,23 @@ export const getAuthToken = async () => {
 };
 
 /**
- * Force refresh the token (used after 401)
+ * Force refresh the token (used after 401).
+ * Coalesces concurrent callers so parallel fetches (e.g. Promise.all) do not run multiple MSAL force-refreshes.
  */
 export const refreshAuthToken = async () => {
+    if (refreshPromise) {
+        return refreshPromise;
+    }
     cachedToken = null;
     tokenExpiry = 0;
-    return acquireToken(true);
+    refreshPromise = (async () => {
+        try {
+            return await acquireToken(true);
+        } finally {
+            refreshPromise = null;
+        }
+    })();
+    return refreshPromise;
 };
 
 /**
@@ -55,6 +68,7 @@ export const clearTokenCache = () => {
     cachedToken = null;
     tokenExpiry = 0;
     tokenPromise = null;
+    refreshPromise = null;
 };
 
 /**

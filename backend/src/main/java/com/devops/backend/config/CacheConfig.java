@@ -4,7 +4,10 @@ import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.CachingConfigurer;
 import org.springframework.cache.annotation.EnableCaching;
 import org.springframework.cache.interceptor.CacheErrorHandler;
 import org.springframework.context.annotation.Bean;
@@ -21,7 +24,8 @@ import java.util.Map;
 
 @Configuration
 @EnableCaching
-public class CacheConfig {
+@Slf4j
+public class CacheConfig implements CachingConfigurer {
 
     @Bean
     public RedisCacheConfiguration redisCacheConfiguration() {
@@ -48,8 +52,6 @@ public class CacheConfig {
         return RedisCacheManager.builder(cacheWriter)
                 .cacheDefaults(redisCacheConfiguration)
                 .withInitialCacheConfigurations(Map.of(
-                        "ticket-stats", redisCacheConfiguration.entryTtl(Duration.ofSeconds(30)),
-                        "ticket-stats-user", redisCacheConfiguration.entryTtl(Duration.ofSeconds(30)),
                         "tickets-unassigned", redisCacheConfiguration.entryTtl(Duration.ofSeconds(15)),
                         "tickets-assignee", redisCacheConfiguration.entryTtl(Duration.ofSeconds(15)),
                         "tickets-active-assignee", redisCacheConfiguration.entryTtl(Duration.ofSeconds(15)),
@@ -58,28 +60,31 @@ public class CacheConfig {
                 .build();
     }
 
-    @Bean
-    public CacheErrorHandler cacheErrorHandler() {
+    /**
+     * Spring only applies a {@link CacheErrorHandler} when it is exposed via {@link CachingConfigurer#errorHandler()}.
+     * A standalone {@code @Bean} is ignored — this prevents Redis (de)serialization issues from surfacing as HTTP 500.
+     */
+    @Override
+    public CacheErrorHandler errorHandler() {
         return new CacheErrorHandler() {
             @Override
-            public void handleCacheGetError(RuntimeException exception, org.springframework.cache.Cache cache, Object key) {
-                // Fail open: if Redis has stale/incompatible data or is temporarily unavailable,
-                // continue by loading fresh data from the source of truth.
+            public void handleCacheGetError(RuntimeException exception, Cache cache, Object key) {
+                log.warn("Cache get failed ({} key={}): {}", cache.getName(), key, exception.toString());
             }
 
             @Override
-            public void handleCachePutError(RuntimeException exception, org.springframework.cache.Cache cache, Object key, Object value) {
-                // Ignore cache write failures so API responses are not blocked by Redis issues.
+            public void handleCachePutError(RuntimeException exception, Cache cache, Object key, Object value) {
+                log.warn("Cache put failed ({} key={}): {}", cache.getName(), key, exception.toString());
             }
 
             @Override
-            public void handleCacheEvictError(RuntimeException exception, org.springframework.cache.Cache cache, Object key) {
-                // Ignore cache evict failures to keep primary flows available.
+            public void handleCacheEvictError(RuntimeException exception, Cache cache, Object key) {
+                log.warn("Cache evict failed ({} key={}): {}", cache.getName(), key, exception.toString());
             }
 
             @Override
-            public void handleCacheClearError(RuntimeException exception, org.springframework.cache.Cache cache) {
-                // Ignore cache clear failures to keep primary flows available.
+            public void handleCacheClearError(RuntimeException exception, Cache cache) {
+                log.warn("Cache clear failed ({}): {}", cache.getName(), exception.toString());
             }
         };
     }
