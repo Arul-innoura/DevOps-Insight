@@ -315,9 +315,17 @@ export const UserDashboard = () => {
         applyFilters(tickets, filtersRef.current, activeTabRef.current);
     }, [ticketSearch, tickets, activeSection, activeTab]);
     
-    const handleTicketCreated = () => {
+    const handleTicketCreated = (createdTicket) => {
         toast.success('Request Created', 'Your request has been submitted successfully');
-        loadTickets().catch(() => {});
+        if (createdTicket && typeof createdTicket === "object") {
+            setTickets((prev) => {
+                const next = [createdTicket, ...prev];
+                applyFilters(next, filtersRef.current, activeTabRef.current);
+                return next;
+            });
+            return;
+        }
+        loadTickets(true).catch(() => {});
     };
     
     const handleToggleActiveStatus = async (ticketId, isActive) => {

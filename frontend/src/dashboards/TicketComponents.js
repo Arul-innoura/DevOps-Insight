@@ -648,11 +648,20 @@ export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
         });
     };
 
+    const timelineItems = useMemo(() => {
+        return timeline.map((entry, index) => {
+            const attachments = Array.isArray(entry.attachments) ? entry.attachments : [];
+            const imageAttachments = attachments.filter(isImageUrl);
+            const nonImageAttachments = attachments.filter((u) => !isImageUrl(u));
+            return { entry, index, imageAttachments, nonImageAttachments };
+        });
+    }, [timeline]);
+
     return (
         <>
             {viewing && <AttachmentViewer attachment={viewing} onClose={() => setViewing(null)} />}
             <div className="ticket-timeline">
-                {timeline.map((entry, index) => (
+                {timelineItems.map(({ entry, index, imageAttachments, nonImageAttachments }) => (
                     <div key={index} className={`timeline-entry ${entry.isNote ? 'is-note' : ''}`}>
                         <div className="timeline-marker">
                             <div className="timeline-dot" style={{
@@ -682,12 +691,12 @@ export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
                                     {maskSensitive ? maskCostText(entry.notes) : entry.notes}
                                 </div>
                             )}
-                            {Array.isArray(entry.attachments) && entry.attachments.length > 0 && (
+                            {(imageAttachments.length > 0 || nonImageAttachments.length > 0) && (
                                 <div style={{ marginTop: 8 }}>
                                     {/* Image thumbnails */}
-                                    {entry.attachments.some(isImageUrl) && (
+                                    {imageAttachments.length > 0 && (
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
-                                            {entry.attachments.filter(isImageUrl).map((url, idx) => (
+                                            {imageAttachments.map((url, idx) => (
                                                 <div
                                                     key={`img-${idx}`}
                                                     onClick={() => setViewing({ url, name: getAttachmentName(url) })}
@@ -720,9 +729,9 @@ export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
                                         </div>
                                     )}
                                     {/* Non-image chips */}
-                                    {entry.attachments.filter((u) => !isImageUrl(u)).length > 0 && (
+                                    {nonImageAttachments.length > 0 && (
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                                            {entry.attachments.filter((u) => !isImageUrl(u)).map((url, idx) => (
+                                            {nonImageAttachments.map((url, idx) => (
                                                 <AttachmentChip
                                                     key={`file-${idx}`}
                                                     url={url}
@@ -1607,15 +1616,16 @@ export const TicketDetailsModal = ({
     const latestTimelineEntry = Array.isArray(ticket.timeline) && ticket.timeline.length > 0
         ? ticket.timeline[ticket.timeline.length - 1]
         : null;
-    const flowTimelineSource = dedupeConsecutiveStatusTimeline(
-        (ticket.timeline || []).filter((entry) => !entry?.isNote)
-    );
-    let mgrPendingRound = 0;
-    let mgrApprovedRound = 0;
-    let costPendingRound = 0;
-    let costApprovedRound = 0;
+    const actionFlowItems = useMemo(() => {
+        const flowTimelineSource = dedupeConsecutiveStatusTimeline(
+            (ticket.timeline || []).filter((entry) => !entry?.isNote)
+        );
+        let mgrPendingRound = 0;
+        let mgrApprovedRound = 0;
+        let costPendingRound = 0;
+        let costApprovedRound = 0;
 
-    const actionFlowItems = flowTimelineSource.map((entry, idx) => {
+        return flowTimelineSource.map((entry, idx) => {
             const st = timelineStatusKey(entry?.status);
             let label = entry?.status || "Updated";
             if (st === "MANAGER_APPROVAL_PENDING") {
@@ -1657,6 +1667,7 @@ export const TicketDetailsModal = ({
             const notesForTooltip = effectiveCanManage ? rawNotes : maskCostText(rawNotes);
             return { id: `${entry?.timestamp || "x"}-${idx}`, label, tone, user: entry?.user || '', timestamp: entry?.timestamp || '', notes: notesForTooltip };
         });
+    }, [ticket.timeline, effectiveCanManage]);
     const canForwardTicket =
         typeof onForward === "function" &&
         !ticketIsDeleted &&
