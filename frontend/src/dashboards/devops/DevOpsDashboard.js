@@ -339,6 +339,7 @@ export const DevOpsDashboard = () => {
         history: 0,
         closed: 0
     });
+    const suppressDataChangeRefreshUntilRef = useRef(0);
     
     // Keep ref in sync
     useEffect(() => { activeSectionRef.current = activeSection; }, [activeSection]);
@@ -515,6 +516,7 @@ export const DevOpsDashboard = () => {
                 }
                 return next;
             });
+            suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;
         },
         playNewTicketSound: true,
         playUpdateSound: true,
@@ -533,6 +535,7 @@ export const DevOpsDashboard = () => {
     useEffect(() => {
         const unsubscribe = subscribeDataChanges((detail) => {
             if (!detail?.scope) return;
+            if (Date.now() < suppressDataChangeRefreshUntilRef.current) return;
             if (["tickets", "devops-team", "projects", "managers", "rota"].includes(detail.scope)) {
                 loadTickets(true);
             }

@@ -4,7 +4,7 @@
  * Silent background updates - No spinners for users
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import realTimeService, { WS_MESSAGE_TYPES } from "./stompWebSocketService";
 import { applyCacheInvalidationHint } from "./ticketService";
 import { 
@@ -35,6 +35,7 @@ export const useRealTimeSync = ({
     const lockRef = useRef(false);
     const pendingRefreshRef = useRef(false);
     const lastRefreshAtRef = useRef(0);
+    const initialLoadKeyRef = useRef("");
     const [wsBrokenUsePolling, setWsBrokenUsePolling] = useState(false);
     
     // Keep ref updated
@@ -84,6 +85,25 @@ export const useRealTimeSync = ({
         }
     }, [enableWebSocket]);
 
+    const eventTypesSignature = Array.isArray(eventTypes) && eventTypes.length > 0
+        ? eventTypes.join("|")
+        : "";
+    const watchedEventTypes = useMemo(() => {
+        if (eventTypesSignature) {
+            return eventTypesSignature.split("|");
+        }
+        return [
+            WS_MESSAGE_TYPES.TICKET_CREATED,
+            WS_MESSAGE_TYPES.TICKET_UPDATED,
+            WS_MESSAGE_TYPES.TICKET_DELETED,
+            WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED,
+            WS_MESSAGE_TYPES.TICKET_ASSIGNED,
+            WS_MESSAGE_TYPES.DEVOPS_UPDATED,
+            WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED,
+            WS_MESSAGE_TYPES.SYNC_REQUIRED
+        ];
+    }, [eventTypesSignature]);
+
     useEffect(() => {
         if (!enableWebSocket) {
             return;
@@ -102,19 +122,6 @@ export const useRealTimeSync = ({
             return () => clearInterval(timer);
         }
         
-        const watchedEventTypes = Array.isArray(eventTypes) && eventTypes.length > 0
-            ? eventTypes
-            : [
-                WS_MESSAGE_TYPES.TICKET_CREATED,
-                WS_MESSAGE_TYPES.TICKET_UPDATED,
-                WS_MESSAGE_TYPES.TICKET_DELETED,
-                WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED,
-                WS_MESSAGE_TYPES.TICKET_ASSIGNED,
-                WS_MESSAGE_TYPES.DEVOPS_UPDATED,
-                WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED,
-                WS_MESSAGE_TYPES.SYNC_REQUIRED
-            ];
-
         // New ticket created — always play the distinctive arrival chime
         const handleNewTicket = (data) => {
             if (didInitialLoad.current && playNewTicketSound) {
@@ -180,8 +187,12 @@ export const useRealTimeSync = ({
         });
         realTimeService.on(WS_MESSAGE_TYPES.CACHE_INVALIDATE, handleCacheInvalidation);
         
-        // Initial load
-        onRefreshRef.current?.();
+        // Initial load only once per transport mode (prevents request loops on re-render/re-subscribe)
+        const initialLoadKey = usePolling ? "polling" : "websocket";
+        if (initialLoadKeyRef.current !== initialLoadKey) {
+            initialLoadKeyRef.current = initialLoadKey;
+            onRefreshRef.current?.();
+        }
         
         // Mark initial load complete after delay
         setTimeout(() => { didInitialLoad.current = true; }, 1000);
@@ -208,7 +219,7 @@ export const useRealTimeSync = ({
         debouncedRefresh,
         pollingInterval,
         refreshOnEvents,
-        eventTypes
+        watchedEventTypes
     ]);
     
     // Refresh on tab visibility

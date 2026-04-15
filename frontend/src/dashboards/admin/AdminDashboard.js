@@ -532,6 +532,13 @@ const StatusTimelineView = ({ devOpsMembers, timelineStatusColors }) => {
     useRealTimeSync({
         onRefresh: () => loadTimeline(timelineDate),
         enableWebSocket: true,
+        refreshDebounceMs: 2000,
+        minRefreshIntervalMs: 5000,
+        eventTypes: [
+            "devops:availability_changed",
+            "devops:updated",
+            "sync:required"
+        ],
         playUpdateSound: false // Handled globally by AdminDashboard
     });
 

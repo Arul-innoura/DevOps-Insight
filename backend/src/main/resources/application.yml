@@ -21,6 +21,8 @@ spring:
       timeout: 2s
   cache:
     type: redis
+    redis:
+      cache-null-values: false
 
   security:
     oauth2:

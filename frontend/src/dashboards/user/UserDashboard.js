@@ -105,6 +105,7 @@ export const UserDashboard = () => {
     const [emailNotifSaving, setEmailNotifSaving] = useState(false);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("user", USER_SIDEBAR_NAV_DEFAULTS);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
+    const suppressDataChangeRefreshUntilRef = useRef(0);
     
     const isLoadingRef = useRef(false);
     const filtersRef = useRef(filters);
@@ -212,6 +213,7 @@ export const UserDashboard = () => {
                 applyFilters(next, filtersRef.current, activeTabRef.current);
                 return next;
             });
+            suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;
         },
         playUpdateSound: true,
         refreshOnEvents: false,
@@ -230,6 +232,7 @@ export const UserDashboard = () => {
     useEffect(() => {
         const unsubscribe = subscribeDataChanges((detail) => {
             if (!detail?.scope) return;
+            if (Date.now() < suppressDataChangeRefreshUntilRef.current) return;
             if (["tickets", "projects", "managers", "devops-team"].includes(detail.scope)) {
                 loadTickets(true);
             }
