@@ -903,26 +903,51 @@ public class TicketServiceImpl implements TicketService {
     // Helper methods
     
     private String generateTicketId(CreateTicketRequest request) {
-        long nextSequence = ticketRepository.findAll().stream()
+        RequestType requestType = request.getRequestType() != null
+                ? request.getRequestType()
+                : RequestType.OTHER_QUERIES;
+        String typeToken = requestType.getShortCode();
+        String productToken = slugForTicketId(request.getProductName());
+        String prefix = "EH-" + typeToken + "-" + productToken + "-";
+
+        Pattern strictSuffix = Pattern.compile("^" + Pattern.quote(prefix) + "(\\d{6})$");
+        long maxSeq = ticketRepository.findByIdStartingWith(prefix).stream()
                 .map(Ticket::getId)
                 .filter(Objects::nonNull)
                 .map(String::trim)
-                .filter(id -> !id.isEmpty())
-                .mapToLong(id -> {
-                    Matcher matcher = Pattern.compile("(\\d+)$").matcher(id);
-                    if (matcher.find()) {
-                        try {
-                            return Long.parseLong(matcher.group(1));
-                        } catch (NumberFormatException ignored) {
-                            return 0L;
-                        }
-                    }
-                    return 0L;
-                })
+                .map(strictSuffix::matcher)
+                .filter(Matcher::matches)
+                .mapToLong(m -> Long.parseLong(m.group(1)))
                 .max()
-                .orElse(0L) + 1L;
+                .orElse(0L);
 
-        return String.format("EH-%06d", nextSequence);
+        long nextSequence = maxSeq + 1L;
+        if (nextSequence > 999_999L) {
+            throw new IllegalStateException("Ticket id sequence exhausted for prefix " + prefix);
+        }
+        return prefix + String.format("%06d", nextSequence);
+    }
+
+    /**
+     * Product segment for ticket ids: letters and digits only, uppercased, max length capped.
+     */
+    private static String slugForTicketId(String productName) {
+        if (productName == null || productName.isBlank()) {
+            return "GEN";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (char c : productName.toUpperCase(Locale.ROOT).toCharArray()) {
+            if (c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
+                sb.append(c);
+                if (sb.length() >= 12) {
+                    break;
+                }
+            }
+        }
+        if (sb.isEmpty()) {
+            return "GEN";
+        }
+        return sb.toString();
     }
 
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useMsal } from "@azure/msal-react";
 import {
     LogOut,
@@ -54,10 +54,6 @@ import {
     assignTicket,
     forwardTicket,
     getTicketStats,
-    getUnassignedTickets,
-    getActiveTickets,
-    getCompletedTickets,
-    getAssignedTickets,
     getActiveTicketsForDevOps,
     TICKET_STATUS,
     TICKET_FILTER_BUCKET,
@@ -362,13 +358,6 @@ export const DevOpsDashboard = () => {
         }
     }, [requestTab, filters.status, filters, tickets, activeSection, hideAssignMeForRequestsTab]);
 
-    useEffect(() => {
-        if (activeSection !== "requests" || requestTab !== "unassigned") return;
-        if (filters.status !== null && filters.status !== undefined) return;
-        const withDefault = { ...filters, status: TICKET_FILTER_BUCKET.UNASSIGNED };
-        setFilters(withDefault);
-        applySectionFilter(tickets, requestTab, withDefault);
-    }, [activeSection, requestTab, filters, tickets]);
     
     useEffect(() => {
         if (didUpsertSelfRef.current) return;
@@ -381,24 +370,30 @@ export const DevOpsDashboard = () => {
     }, [userName, userEmail]);
 
     const recalcSectionCounts = useCallback((allTickets) => {
-        const unassigned = allTickets;
+        const filterCtx = { userName, userEmail };
+        const unassignedOnly = allTickets.filter((t) =>
+            ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, filterCtx)
+        );
         const myTickets = allTickets.filter(t => isMine(t) && t.status !== TICKET_STATUS.CLOSED);
+        const activeStatuses = [
+            TICKET_STATUS.ACCEPTED, TICKET_STATUS.MANAGER_APPROVAL_PENDING,
+            TICKET_STATUS.MANAGER_APPROVED, TICKET_STATUS.COST_APPROVAL_PENDING, TICKET_STATUS.COST_APPROVED,
+            TICKET_STATUS.IN_PROGRESS, TICKET_STATUS.ACTION_REQUIRED,
+            TICKET_STATUS.ON_HOLD
+        ];
         const active = allTickets.filter(t =>
-            [TICKET_STATUS.ACCEPTED, TICKET_STATUS.MANAGER_APPROVAL_PENDING,
-                TICKET_STATUS.MANAGER_APPROVED, TICKET_STATUS.COST_APPROVAL_PENDING, TICKET_STATUS.COST_APPROVED,
-                TICKET_STATUS.IN_PROGRESS, TICKET_STATUS.ACTION_REQUIRED,
-                TICKET_STATUS.ON_HOLD].includes(t.status) && isMine(t)
+            activeStatuses.includes(t.status) && isMine(t)
         );
         const history = allTickets.filter(t => t.status === TICKET_STATUS.COMPLETED && isMine(t));
         const closed = allTickets.filter(t => t.status === TICKET_STATUS.CLOSED && isMine(t));
         setSectionCounts({
-            unassigned: unassigned.length,
+            unassigned: unassignedOnly.length,
             myTickets: myTickets.length,
             active: active.length,
             history: history.length,
             closed: closed.length
         });
-    }, [isMine]);
+    }, [isMine, userName, userEmail]);
 
     const upsertTicketLocally = useCallback((updatedTicket) => {
         if (!updatedTicket?.id) return;
@@ -557,6 +552,7 @@ export const DevOpsDashboard = () => {
     
     const applySectionFilter = (fullTicketList, section, filtersOverride = null) => {
         const f = filtersOverride || filtersRef.current;
+        const filterCtx = { userName, userEmail };
         const ts = ticketSearchRef.current;
         let result = [...fullTicketList];
         if (ts.query.trim() && !ts.loading && ts.remote != null) {
@@ -564,20 +560,28 @@ export const DevOpsDashboard = () => {
             result = result.filter((t) => ids.has(t.id));
         }
 
+        const activeWorkflowStatuses = [
+            TICKET_STATUS.ACCEPTED, TICKET_STATUS.MANAGER_APPROVAL_PENDING,
+            TICKET_STATUS.MANAGER_APPROVED, TICKET_STATUS.COST_APPROVAL_PENDING, TICKET_STATUS.COST_APPROVED,
+            TICKET_STATUS.IN_PROGRESS, TICKET_STATUS.ACTION_REQUIRED,
+            TICKET_STATUS.ON_HOLD
+        ];
+
         switch (section) {
             case 'unassigned':
-                result = result.filter(() => true);
+                // True queue only: raised (CREATED) and not assigned to anyone yet
+                result = result.filter((t) =>
+                    ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, filterCtx)
+                );
                 break;
             case 'myTickets':
                 // My Tickets shows all assigned tickets except closed (closed go to Archive > Closed)
                 result = result.filter(t => isMine(t) && t.status !== TICKET_STATUS.CLOSED);
                 break;
             case 'active':
-                result = result.filter(t => 
-                    [TICKET_STATUS.ACCEPTED, TICKET_STATUS.MANAGER_APPROVAL_PENDING, 
-                     TICKET_STATUS.MANAGER_APPROVED, TICKET_STATUS.COST_APPROVAL_PENDING, TICKET_STATUS.COST_APPROVED,
-                     TICKET_STATUS.IN_PROGRESS, TICKET_STATUS.ACTION_REQUIRED, 
-                     TICKET_STATUS.ON_HOLD].includes(t.status) && isMine(t)
+                // My Active: accepted / in-flight work assigned to you — not the whole org list
+                result = result.filter(t =>
+                    activeWorkflowStatuses.includes(t.status) && isMine(t)
                 );
                 break;
             case 'history':
@@ -600,23 +604,15 @@ export const DevOpsDashboard = () => {
                 break;
         }
         
-        // Apply additional filters
-        if (f.status) {
-            const ctx = { userName, userEmail };
-            result = result.filter((t) => ticketMatchesPrimaryStatusFilter(t, f.status, ctx));
+        // Apply additional filters (Unassigned tab is queue-only — status dropdown hidden; skip if stale value)
+        if (f.status && section !== "unassigned") {
+            result = result.filter((t) => ticketMatchesPrimaryStatusFilter(t, f.status, filterCtx));
         }
         if (f.requestType) {
             result = result.filter(t => t.requestType === f.requestType);
         }
         if (f.environment) {
             result = result.filter(t => t.environment === f.environment);
-        }
-        if (section === 'unassigned' && f.assignedTo) {
-            const assigneeNeedle = String(f.assignedTo).toLowerCase().trim();
-            result = result.filter((t) =>
-                (t.assignedToEmail || "").toLowerCase() === assigneeNeedle ||
-                (t.assignedTo || "").toLowerCase() === assigneeNeedle
-            );
         }
         if (f.search) {
             const searchLower = String(f.search).toLowerCase().trim();
@@ -656,20 +652,30 @@ export const DevOpsDashboard = () => {
         }
     };
 
-    const unassignedAssigneeOptions = teamMembers
-        .map((member) => ({
-            value: String(member.email || member.name || "").trim().toLowerCase(),
-            label: member.name && member.email ? `${member.name} (${member.email})` : (member.name || member.email || "")
-        }))
-        .filter((member) => member.value && member.label)
-        .sort((a, b) => a.label.localeCompare(b.label));
-
     const totalUnassignedPages = requestTab === 'unassigned'
         ? Math.max(1, Math.ceil(filteredTickets.length / UNASSIGNED_PAGE_SIZE))
         : 1;
     const paginatedTickets = requestTab === 'unassigned'
         ? filteredTickets.slice((unassignedPage - 1) * UNASSIGNED_PAGE_SIZE, unassignedPage * UNASSIGNED_PAGE_SIZE)
         : filteredTickets;
+
+    /** My Tickets + Status "All": split in-flight vs completed (still excludes closed). */
+    const myTicketsGrouped = useMemo(() => {
+        if (requestTab !== "myTickets" || String(filters.status || "").trim()) return null;
+        const myActive = filteredTickets.filter((t) => t.status !== TICKET_STATUS.COMPLETED);
+        const myCompleted = filteredTickets.filter((t) => t.status === TICKET_STATUS.COMPLETED);
+        return { myActive, myCompleted };
+    }, [requestTab, filters.status, filteredTickets]);
+
+    const subheadStyle = {
+        fontSize: "0.8125rem",
+        fontWeight: 600,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
+        color: "var(--muted-foreground, #64748b)",
+        margin: "1rem 0 0.35rem",
+        paddingLeft: 2
+    };
 
     useEffect(() => {
         if (requestTab !== 'unassigned') return;
@@ -692,6 +698,16 @@ export const DevOpsDashboard = () => {
             const clearAssignMe =
                 (section === 'unassigned' || section === 'myTickets') &&
                 filters.status === TICKET_FILTER_BUCKET.ASSIGNED_ME;
+            if (section === "unassigned") {
+                const cleared = {
+                    ...filters,
+                    status: TICKET_FILTER_BUCKET.ALL,
+                    assignedTo: null
+                };
+                setFilters(cleared);
+                applySectionFilter(tickets, section, cleared);
+                return;
+            }
             if (clearAssignMe) {
                 const cleared = { ...filters, status: null };
                 setFilters(cleared);
@@ -1575,9 +1591,8 @@ export const DevOpsDashboard = () => {
                             filters={filters}
                             onFilterChange={handleFilterChange}
                             hideAssignMeOption
-                            showAssigneeFilter
-                            assigneeOptions={unassignedAssigneeOptions}
-                            searchPlaceholder="Search queue (id, person/email, environment, project id…)"
+                            hideStatusFilter
+                            searchPlaceholder="Search queue (id, product, requester, environment, project id…)"
                         />
                     )}
                     
@@ -1605,8 +1620,39 @@ export const DevOpsDashboard = () => {
                                     {requestTab === 'closed' && "Closed tickets will appear in this separate section."}
                                 </p>
                             </div>
+                        ) : myTicketsGrouped ? (
+                            <>
+                                {myTicketsGrouped.myActive.length > 0 && (
+                                    <>
+                                        <h4 className="devops-queue-subhead" style={subheadStyle}>Active</h4>
+                                        {myTicketsGrouped.myActive.map((ticket) => (
+                                            <TicketCard
+                                                key={ticket.id}
+                                                ticket={ticket}
+                                                onClick={() => setSelectedTicket(ticket)}
+                                                showActions={false}
+                                                highlightAssigned={false}
+                                            />
+                                        ))}
+                                    </>
+                                )}
+                                {myTicketsGrouped.myCompleted.length > 0 && (
+                                    <>
+                                        <h4 className="devops-queue-subhead" style={subheadStyle}>Completed</h4>
+                                        {myTicketsGrouped.myCompleted.map((ticket) => (
+                                            <TicketCard
+                                                key={ticket.id}
+                                                ticket={ticket}
+                                                onClick={() => setSelectedTicket(ticket)}
+                                                showActions={false}
+                                                highlightAssigned={false}
+                                            />
+                                        ))}
+                                    </>
+                                )}
+                            </>
                         ) : (
-                            paginatedTickets.map(ticket => (
+                            paginatedTickets.map((ticket) => (
                                 <TicketCard
                                     key={ticket.id}
                                     ticket={ticket}

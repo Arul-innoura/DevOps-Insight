@@ -18,6 +18,9 @@ import java.util.List;
  */
 @Repository
 public interface TicketRepository extends MongoRepository<Ticket, String> {
+
+    /** Used to allocate the next sequence for ids like {@code EH-ENVUP-PRO-000001}. */
+    List<Ticket> findByIdStartingWith(String idPrefix);
     
     // Find by requester email
     List<Ticket> findByRequesterEmailOrderByCreatedAtDesc(String requesterEmail);
