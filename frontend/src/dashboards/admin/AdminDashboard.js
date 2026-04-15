@@ -65,7 +65,9 @@ import {
     getManagers,
     addManager,
     deleteManager,
-    ENVIRONMENTS
+    ENVIRONMENTS,
+    toDisplayTicketStatus,
+    subscribeDataChanges
 } from "../../services/ticketService";
 import { getStatusTimeline } from "../../services/devopsStatusService";
 import RotaCalendarModal from "./RotaCalendarModal";
@@ -826,6 +828,7 @@ export const AdminDashboard = () => {
     const filtersRef = useRef(filters);
     const activeTabRef = useRef(activeTab);
     const viewModeRef = useRef(viewMode);
+    const suppressDataChangeRefreshUntilRef = useRef(0);
     
     // Real-time connection status
     const { isConnected } = useConnectionStatus();
@@ -913,8 +916,109 @@ export const AdminDashboard = () => {
                 await loadDeletedTickets();
             }
         },
+        onPatchEvent: (type, data) => {
+            const isTicketEvent =
+                type === "ticket:created" ||
+                type === "ticket:updated" ||
+                type === "ticket:status_changed" ||
+                type === "ticket:assigned" ||
+                type === "ticket:deleted";
+            const isDevOpsEvent = type === "devops:updated" || type === "devops:availability_changed";
+            if (!isTicketEvent && !isDevOpsEvent) return;
+
+            if (isDevOpsEvent) {
+                const normalizedAvailability = (() => {
+                    const raw = String(data?.availability ?? data?.availabilityStatus ?? "").trim().toUpperCase();
+                    if (raw === "AVAILABLE") return DEVOPS_AVAILABILITY_STATUS.AVAILABLE;
+                    if (raw === "BUSY") return DEVOPS_AVAILABILITY_STATUS.BUSY;
+                    if (raw === "AWAY") return DEVOPS_AVAILABILITY_STATUS.AWAY;
+                    if (raw === "OFFLINE") return DEVOPS_AVAILABILITY_STATUS.OFFLINE;
+                    return undefined;
+                })();
+                const wsMember = {
+                    ...data,
+                    availability: normalizedAvailability || data?.availability
+                };
+                setDevOpsMembers((prev) => {
+                    const idx = prev.findIndex((m) =>
+                        (wsMember?.id && m.id === wsMember.id) ||
+                        (wsMember?.email && String(m.email || "").toLowerCase() === String(wsMember.email || "").toLowerCase())
+                    );
+                    if (idx < 0) return prev;
+                    const next = [...prev];
+                    next[idx] = { ...next[idx], ...wsMember };
+                    return next;
+                });
+                return;
+            }
+
+            if (!data?.id) return;
+            const wsPatch = {
+                ...data,
+                ...(data?.status ? { status: toDisplayTicketStatus(data.status) } : {})
+            };
+            setTickets((prev) => {
+                if (type === "ticket:deleted") {
+                    const next = prev.filter((t) => t.id !== data.id);
+                    if (next.length !== prev.length) {
+                        applyFilters(next, filtersRef.current, activeTabRef.current);
+                    }
+                    return next;
+                }
+                const idx = prev.findIndex((t) => t.id === data.id);
+                if (idx < 0) return prev;
+                const next = [...prev];
+                next[idx] = { ...next[idx], ...wsPatch };
+                applyFilters(next, filtersRef.current, activeTabRef.current);
+                return next;
+            });
+            setDeletedTicketsList((prev) => {
+                if (!Array.isArray(prev) || prev.length === 0) return prev;
+                if (type === "ticket:deleted") {
+                    const existing = prev.some((t) => t.id === data.id);
+                    if (existing) return prev;
+                    return [{ ...data, ...wsPatch }, ...prev];
+                }
+                const idx = prev.findIndex((t) => t.id === data.id);
+                if (idx < 0) return prev;
+                if (type === "ticket:created") {
+                    return prev.filter((t) => t.id !== data.id);
+                }
+                const next = [...prev];
+                next[idx] = { ...next[idx], ...wsPatch };
+                return next;
+            });
+            setSelectedTicket((prev) => {
+                if (!prev?.id) return prev;
+                if (type === "ticket:deleted" && prev.id === data.id) return null;
+                if (prev.id !== data.id) return prev;
+                return { ...prev, ...wsPatch };
+            });
+            setStats((prev) => {
+                if (!prev || typeof prev !== "object") return prev;
+                const delta = (field, amount) => Math.max(0, Number(prev[field] || 0) + amount);
+                const status = wsPatch.status;
+                const isClosed = status === TICKET_STATUS.CLOSED;
+                const isCompleted = status === TICKET_STATUS.COMPLETED;
+                if (type === "ticket:created") {
+                    return {
+                        ...prev,
+                        total: delta("total", 1),
+                        completed: isCompleted ? delta("completed", 1) : Number(prev.completed || 0),
+                        closed: isClosed ? delta("closed", 1) : Number(prev.closed || 0),
+                        pending: status === TICKET_STATUS.CREATED ? delta("pending", 1) : Number(prev.pending || 0),
+                        inProgress: status === TICKET_STATUS.IN_PROGRESS ? delta("inProgress", 1) : Number(prev.inProgress || 0)
+                    };
+                }
+                if (type === "ticket:deleted") {
+                    return { ...prev, total: delta("total", -1) };
+                }
+                return prev;
+            });
+            suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;
+        },
         playUpdateSound: true,
-        refreshOnEvents: true,
+        refreshOnEvents: false,
         refreshDebounceMs: 1200,
         minRefreshIntervalMs: 3500,
         eventTypes: [
@@ -922,11 +1026,27 @@ export const AdminDashboard = () => {
             "ticket:updated",
             "ticket:status_changed",
             "ticket:deleted",
-            "ticket:assigned"
+            "ticket:assigned",
+            "devops:updated",
+            "devops:availability_changed"
         ],
         enableWebSocket: true,
         pollingInterval: null // No polling
     });
+
+    useEffect(() => {
+        const unsubscribe = subscribeDataChanges((detail) => {
+            if (!detail?.scope) return;
+            if (Date.now() < suppressDataChangeRefreshUntilRef.current) return;
+            if (["tickets", "projects", "managers", "devops-team", "rota"].includes(detail.scope)) {
+                loadTickets(true);
+                if (viewModeRef.current === "deletedTickets") {
+                    loadDeletedTickets();
+                }
+            }
+        });
+        return unsubscribe;
+    }, [loadDeletedTickets, loadTickets]);
 
     // Manual refresh handler
     const handleManualRefresh = () => {

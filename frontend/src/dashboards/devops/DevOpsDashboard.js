@@ -61,6 +61,7 @@ import {
     getActiveTicketsForDevOps,
     TICKET_STATUS,
     TICKET_FILTER_BUCKET,
+    toDisplayTicketStatus,
     ticketMatchesPrimaryStatusFilter,
     getDevOpsTeamMembers,
     updateDevOpsAvailability,
@@ -498,23 +499,76 @@ export const DevOpsDashboard = () => {
     useRealTimeSync({
         onRefresh: () => loadTickets(true), // Silent refresh
         onPatchEvent: (type, data) => {
+            const isTicketEvent =
+                type === "ticket:created" ||
+                type === "ticket:updated" ||
+                type === "ticket:status_changed" ||
+                type === "ticket:assigned" ||
+                type === "ticket:deleted";
+            const isDevOpsEvent = type === "devops:updated" || type === "devops:availability_changed";
+            if (!isTicketEvent && !isDevOpsEvent) return;
+
+            if (isDevOpsEvent) {
+                const normalizedAvailability = (() => {
+                    const raw = String(data?.availability ?? data?.availabilityStatus ?? "").trim().toUpperCase();
+                    if (raw === "AVAILABLE") return DEVOPS_AVAILABILITY_STATUS.AVAILABLE;
+                    if (raw === "BUSY") return DEVOPS_AVAILABILITY_STATUS.BUSY;
+                    if (raw === "AWAY") return DEVOPS_AVAILABILITY_STATUS.AWAY;
+                    if (raw === "OFFLINE") return DEVOPS_AVAILABILITY_STATUS.OFFLINE;
+                    return undefined;
+                })();
+                const wsMember = {
+                    ...data,
+                    availability: normalizedAvailability || data?.availability
+                };
+                if (String(wsMember?.email || "").toLowerCase() === String(userEmail || "").toLowerCase() && wsMember?.availability) {
+                    setMyAvailability(wsMember.availability);
+                }
+                setTeamMembers((prev) => {
+                    const idx = prev.findIndex((m) =>
+                        (wsMember?.id && m.id === wsMember.id) ||
+                        (wsMember?.email && String(m.email || "").toLowerCase() === String(wsMember.email || "").toLowerCase())
+                    );
+                    if (idx < 0) return prev;
+                    const next = [...prev];
+                    next[idx] = { ...next[idx], ...wsMember };
+                    return next;
+                });
+                return;
+            }
+
             if (!data?.id) return;
-            if (
-                type !== "ticket:created" &&
-                type !== "ticket:updated" &&
-                type !== "ticket:status_changed"
-            ) return;
+            const wsPatch = {
+                ...data,
+                ...(data?.status ? { status: toDisplayTicketStatus(data.status) } : {})
+            };
+
             setTickets((prev) => {
+                if (type === "ticket:deleted") {
+                    const next = prev.filter((t) => t.id !== data.id);
+                    if (next.length !== prev.length) {
+                        recalcSectionCounts(next);
+                        if (activeSectionRef.current === "requests") {
+                            applySectionFilter(next, requestTabRef.current, filtersRef.current);
+                        }
+                    }
+                    return next;
+                }
                 const idx = prev.findIndex((t) => t.id === data.id);
                 if (idx < 0) return prev;
-                const merged = { ...prev[idx], ...data };
                 const next = [...prev];
-                next[idx] = merged;
+                next[idx] = { ...next[idx], ...wsPatch };
                 recalcSectionCounts(next);
                 if (activeSectionRef.current === "requests") {
                     applySectionFilter(next, requestTabRef.current, filtersRef.current);
                 }
                 return next;
+            });
+            setSelectedTicket((prev) => {
+                if (!prev?.id) return prev;
+                if (type === "ticket:deleted" && prev.id === data.id) return null;
+                if (prev.id !== data.id) return prev;
+                return { ...prev, ...wsPatch };
             });
             suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;
         },
@@ -526,7 +580,9 @@ export const DevOpsDashboard = () => {
             "ticket:updated",
             "ticket:status_changed",
             "ticket:deleted",
-            "ticket:assigned"
+            "ticket:assigned",
+            "devops:updated",
+            "devops:availability_changed"
         ],
         enableWebSocket: true,
         pollingInterval: null // No polling
