@@ -913,7 +913,9 @@ export const TicketFilters = ({
     hideStatusFilter = false,
     showAssigneeFilter = false,
     assigneeOptions = [],
-    searchPlaceholder = "Filter this list (id, product, assignee…)"
+    searchPlaceholder = "Filter this list (id, product, assignee…)",
+    /** When true, hides the free-text "Refine" search row (e.g. User dashboard). */
+    hideRefineSearch = false
 }) => {
     useEffect(() => {
         if (!hideAssignMeOption) return;
@@ -989,16 +991,18 @@ export const TicketFilters = ({
                 </div>
             )}
             
-            <div className="filter-group filter-group--search-wide">
-                <label>Refine</label>
-                <input 
-                    type="search"
-                    className="ticket-filter-search-input"
-                    placeholder={searchPlaceholder}
-                    value={filters.search || ''}
-                    onChange={e => onFilterChange({ ...filters, search: e.target.value || null })}
-                />
-            </div>
+            {!hideRefineSearch && (
+                <div className="filter-group filter-group--search-wide">
+                    <label>Refine</label>
+                    <input 
+                        type="search"
+                        className="ticket-filter-search-input"
+                        placeholder={searchPlaceholder}
+                        value={filters.search || ''}
+                        onChange={e => onFilterChange({ ...filters, search: e.target.value || null })}
+                    />
+                </div>
+            )}
         </div>
     );
 };
@@ -2077,16 +2081,7 @@ export const TicketDetailsModal = ({
                                     rows={3}
                                 />
 
-                                {/* Attachments — extra space below before Add Note */}
-                                <div
-                                    style={{
-                                        marginTop: 12,
-                                        marginBottom: 20,
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: 10,
-                                    }}
-                                >
+                                {/* File picker */}
                                 <input
                                     ref={noteFileInputRef}
                                     id={`note-files-${ticket.id}`}
@@ -2099,11 +2094,11 @@ export const TicketDetailsModal = ({
                                 <label
                                     htmlFor={`note-files-${ticket.id}`}
                                     style={{
-                                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                                        marginTop: 10, display: 'inline-flex', alignItems: 'center', gap: 6,
                                         padding: '6px 12px', borderRadius: 8,
                                         border: '1px dashed var(--border-color, #cbd5e1)', background: 'var(--surface-subtle, #f8fafc)',
                                         color: 'var(--text-sub, #475569)', fontSize: '0.8rem', cursor: 'pointer',
-                                        userSelect: 'none', alignSelf: 'flex-start',
+                                        userSelect: 'none',
                                     }}
                                 >
                                     <Paperclip size={13} /> Attach files (max {NOTE_ATTACHMENT_MAX_MB} MB each)
@@ -2111,7 +2106,7 @@ export const TicketDetailsModal = ({
 
                                 {/* Pending / uploaded files list */}
                                 {pendingFiles.length > 0 && (
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
                                         {pendingFiles.map((f, idx) => (
                                             <div
                                                 key={idx}
@@ -2154,11 +2149,10 @@ export const TicketDetailsModal = ({
                                         ))}
                                     </div>
                                 )}
-                                </div>
 
                                 <button
                                     className="jdm-btn-primary"
-                                    style={{ marginTop: 4, alignSelf: 'flex-start' }}
+                                    style={{ marginTop: 12, alignSelf: 'flex-start' }}
                                     onClick={handleAddNote}
                                     disabled={!note.trim() || isAnyUploading}
                                 >

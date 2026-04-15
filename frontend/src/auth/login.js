@@ -8,12 +8,12 @@ const LoginPageShell = ({ children }) => (
     <div className="login-page">
         <LoginBackdrop />
         <SplashCursor
-            SIM_RESOLUTION={128}
-            DYE_RESOLUTION={768}
-            SPLAT_FORCE={4800}
+            SIM_RESOLUTION={96}
+            DYE_RESOLUTION={512}
+            SPLAT_FORCE={3600}
             CURL={2.8}
             DENSITY_DISSIPATION={3.2}
-            COLOR_UPDATE_SPEED={8}
+            COLOR_UPDATE_SPEED={6}
             BACK_COLOR={{ r: 0.94, g: 0.96, b: 0.99 }}
             TRANSPARENT
             SHADING

@@ -18,6 +18,7 @@ function SplashCursor({
 }) {
  const canvasRef = useRef(null);
  const animationFrameId = useRef(null);
+ const isPageVisibleRef = useRef(typeof document === 'undefined' ? true : document.visibilityState === 'visible');
  const [reduceMotion] = useState(
  () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
  );
@@ -682,6 +683,10 @@ function SplashCursor({
 
  function updateFrame() {
  if (!isActive) return;
+ if (!isPageVisibleRef.current) {
+ animationFrameId.current = requestAnimationFrame(updateFrame);
+ return;
+ }
  const dt = calcDeltaTime();
  if (resizeCanvas()) initFramebuffers();
  updateColors(dt);
@@ -954,7 +959,7 @@ function SplashCursor({
  }
 
  function scaleByPixelRatio(input) {
- const pixelRatio = window.devicePixelRatio || 1;
+ const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
  return Math.floor(input * pixelRatio);
  }
 
@@ -1019,12 +1024,20 @@ function SplashCursor({
  }
  }
 
+ function handleVisibilityChange() {
+ isPageVisibleRef.current = document.visibilityState === 'visible';
+ if (isPageVisibleRef.current) {
+ lastUpdateTime = Date.now();
+ }
+ }
+
  // Add event listeners
  window.addEventListener('mousedown', handleMouseDown);
  window.addEventListener('mousemove', handleMouseMove);
  window.addEventListener('touchstart', handleTouchStart);
  window.addEventListener('touchmove', handleTouchMove, false);
  window.addEventListener('touchend', handleTouchEnd);
+ document.addEventListener('visibilitychange', handleVisibilityChange);
 
  updateFrame();
 
@@ -1044,6 +1057,7 @@ function SplashCursor({
  window.removeEventListener('touchstart', handleTouchStart);
  window.removeEventListener('touchmove', handleTouchMove);
  window.removeEventListener('touchend', handleTouchEnd);
+ document.removeEventListener('visibilitychange', handleVisibilityChange);
  };
  // eslint-disable-next-line react-hooks/exhaustive-deps
  }, [reduceMotion]);

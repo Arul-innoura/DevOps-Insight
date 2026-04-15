@@ -97,6 +97,17 @@ public class TicketServiceImpl implements TicketService {
         }
     }
 
+    private String buildExactEmailRegex(String email) {
+        if (email == null) {
+            return "^$";
+        }
+        String normalized = email.trim().toLowerCase(Locale.ROOT);
+        if (normalized.isEmpty()) {
+            return "^$";
+        }
+        return "^" + Pattern.quote(normalized) + "$";
+    }
+
     private void assertTicketWritable(Ticket ticket) {
         if (ticket.isDeleted()) {
             throw new IllegalStateException(TICKET_DELETED_READONLY_MSG);
@@ -903,51 +914,26 @@ public class TicketServiceImpl implements TicketService {
     // Helper methods
     
     private String generateTicketId(CreateTicketRequest request) {
-        RequestType requestType = request.getRequestType() != null
-                ? request.getRequestType()
-                : RequestType.OTHER_QUERIES;
-        String typeToken = requestType.getShortCode();
-        String productToken = slugForTicketId(request.getProductName());
-        String prefix = "EH-" + typeToken + "-" + productToken + "-";
-
-        Pattern strictSuffix = Pattern.compile("^" + Pattern.quote(prefix) + "(\\d{6})$");
-        long maxSeq = ticketRepository.findByIdStartingWith(prefix).stream()
+        long nextSequence = ticketRepository.findAll().stream()
                 .map(Ticket::getId)
                 .filter(Objects::nonNull)
                 .map(String::trim)
-                .map(strictSuffix::matcher)
-                .filter(Matcher::matches)
-                .mapToLong(m -> Long.parseLong(m.group(1)))
+                .filter(id -> !id.isEmpty())
+                .mapToLong(id -> {
+                    Matcher matcher = Pattern.compile("(\\d+)$").matcher(id);
+                    if (matcher.find()) {
+                        try {
+                            return Long.parseLong(matcher.group(1));
+                        } catch (NumberFormatException ignored) {
+                            return 0L;
+                        }
+                    }
+                    return 0L;
+                })
                 .max()
-                .orElse(0L);
+                .orElse(0L) + 1L;
 
-        long nextSequence = maxSeq + 1L;
-        if (nextSequence > 999_999L) {
-            throw new IllegalStateException("Ticket id sequence exhausted for prefix " + prefix);
-        }
-        return prefix + String.format("%06d", nextSequence);
-    }
-
-    /**
-     * Product segment for ticket ids: letters and digits only, uppercased, max length capped.
-     */
-    private static String slugForTicketId(String productName) {
-        if (productName == null || productName.isBlank()) {
-            return "GEN";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (char c : productName.toUpperCase(Locale.ROOT).toCharArray()) {
-            if (c >= 'A' && c <= 'Z' || c >= '0' && c <= '9') {
-                sb.append(c);
-                if (sb.length() >= 12) {
-                    break;
-                }
-            }
-        }
-        if (sb.isEmpty()) {
-            return "GEN";
-        }
-        return sb.toString();
+        return String.format("EH-%06d", nextSequence);
     }
 
 
@@ -1094,7 +1080,8 @@ public class TicketServiceImpl implements TicketService {
     @Cacheable(value = "tickets-assignee", key = "#assigneeEmail")
     public List<TicketResponse> getTicketsByAssignee(String assigneeEmail) {
         log.info("Fetching tickets assigned to: {}", assigneeEmail);
-        List<Ticket> tickets = ticketRepository.findActiveByAssignedToEmail(assigneeEmail);
+        String assigneeEmailRegex = buildExactEmailRegex(assigneeEmail);
+        List<Ticket> tickets = ticketRepository.findActiveByAssignedToEmailIgnoreCase(assigneeEmailRegex);
         return tickets.stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
@@ -1111,13 +1098,9 @@ public class TicketServiceImpl implements TicketService {
             TicketStatus.ACTION_REQUIRED,
             TicketStatus.ON_HOLD
         );
-        String normalizedEmail = assigneeEmail != null ? assigneeEmail.trim().toLowerCase(Locale.ROOT) : "";
-        List<Ticket> tickets = ticketRepository.findActiveByStatusIn(activeStatuses);
+        String assigneeEmailRegex = buildExactEmailRegex(assigneeEmail);
+        List<Ticket> tickets = ticketRepository.findActiveByStatusInAndAssignedToEmailRegex(activeStatuses, assigneeEmailRegex);
         return tickets.stream()
-                .filter(t -> {
-                    String assigned = t.getAssignedToEmail();
-                    return assigned != null && assigned.trim().toLowerCase(Locale.ROOT).equals(normalizedEmail);
-                })
                 .filter(Ticket::isActive)
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
@@ -1132,13 +1115,9 @@ public class TicketServiceImpl implements TicketService {
             TicketStatus.CLOSED,
             TicketStatus.REJECTED
         );
-        String normalizedEmail = assigneeEmail != null ? assigneeEmail.trim().toLowerCase(Locale.ROOT) : "";
-        List<Ticket> tickets = ticketRepository.findActiveByStatusIn(completedStatuses);
+        String assigneeEmailRegex = buildExactEmailRegex(assigneeEmail);
+        List<Ticket> tickets = ticketRepository.findActiveByStatusInAndAssignedToEmailRegex(completedStatuses, assigneeEmailRegex);
         return tickets.stream()
-                .filter(t -> {
-                    String assigned = t.getAssignedToEmail();
-                    return assigned != null && assigned.trim().toLowerCase(Locale.ROOT).equals(normalizedEmail);
-                })
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
     }

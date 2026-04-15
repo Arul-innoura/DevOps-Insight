@@ -52,6 +52,7 @@ import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
 import TicketSearchBar from "../../components/TicketSearchBar";
+import { useTheme } from "../../services/ThemeContext";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
 
@@ -60,6 +61,7 @@ const USER_SIDEBAR_NAV_DEFAULTS = { workspace: true, system: true, account: true
 export const UserDashboard = () => {
     const { instance, accounts } = useMsal();
     const toast = useToast();
+    const { theme, setTheme, themes } = useTheme();
     
     const account = accounts[0];
     const userName = account?.name || "Standard User";
@@ -211,8 +213,15 @@ export const UserDashboard = () => {
                 return next;
             });
         },
-        playNewTicketSound: true,
         playUpdateSound: true,
+        refreshOnEvents: false,
+        eventTypes: [
+            "ticket:created",
+            "ticket:updated",
+            "ticket:status_changed",
+            "ticket:deleted",
+            "ticket:assigned"
+        ],
         enableWebSocket: true,
         enableSSE: false,
         pollingInterval: null // No polling - WebSocket only
@@ -662,6 +671,36 @@ export const UserDashboard = () => {
                                 )}
                             </div>
 
+                            <div className="sound-settings" style={{ marginTop: '1.5rem' }}>
+                                <div className="sound-settings-header">
+                                    <span className="sound-settings-title">
+                                        <Settings size={18} style={{ marginRight: 8 }} />
+                                        Theme
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
+                                    {themes.map((t) => (
+                                        <button
+                                            key={t}
+                                            onClick={() => setTheme(t)}
+                                            style={{
+                                                padding: '0.5rem 1.25rem',
+                                                borderRadius: 8,
+                                                border: theme === t ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
+                                                background: theme === t ? 'var(--accent-light)' : 'var(--card-bg)',
+                                                color: 'var(--text-main)',
+                                                fontWeight: theme === t ? 600 : 400,
+                                                cursor: 'pointer',
+                                                textTransform: 'capitalize',
+                                                fontSize: '0.875rem',
+                                                transition: 'all 0.2s ease'
+                                            }}
+                                        >
+                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : t === 'retro' ? '🕹️ Retro' : '🎬 DevOps'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
                         </div>
                     </div>
                 ) : activeSection === 'monitoring' ? (
@@ -778,6 +817,7 @@ export const UserDashboard = () => {
                         <TicketFilters 
                             filters={filters}
                             onFilterChange={handleFilterChange}
+                            hideRefineSearch
                         />
                     )}
                     

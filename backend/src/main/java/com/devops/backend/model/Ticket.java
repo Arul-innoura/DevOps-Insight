@@ -102,6 +102,8 @@ public class Ticket {
     private boolean active = true;
     
     private String assignedTo;
+
+    @Indexed
     private String assignedToEmail;
     
     // Timestamps

@@ -124,8 +124,14 @@ public interface TicketRepository extends MongoRepository<Ticket, String> {
     @Query("{ 'assignedToEmail': ?0, 'deleted': { $ne: true } }")
     List<Ticket> findActiveByAssignedToEmail(String assignedToEmail);
 
+    @Query("{ 'assignedToEmail': { $regex: ?0, $options: 'i' }, 'deleted': { $ne: true } }")
+    List<Ticket> findActiveByAssignedToEmailIgnoreCase(String assignedToEmailRegex);
+
     @Query("{ 'status': ?0, 'deleted': { $ne: true }, 'assignedTo': null }")
     List<Ticket> findActiveUnassignedByStatus(TicketStatus status);
+
+    @Query("{ 'status': { $in: ?0 }, 'assignedToEmail': { $regex: ?1, $options: 'i' }, 'deleted': { $ne: true } }")
+    List<Ticket> findActiveByStatusInAndAssignedToEmailRegex(List<TicketStatus> statuses, String assignedToEmailRegex);
 
     @Query(value = "{ 'deleted': { $ne: true } }", count = true)
     long countActiveTickets();
