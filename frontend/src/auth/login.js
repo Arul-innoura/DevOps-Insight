@@ -2,22 +2,10 @@ import React, { useEffect } from "react";
 import { useMsal, useIsAuthenticated } from "@azure/msal-react";
 import { useNavigate } from "react-router-dom";
 import { loginRequest } from "./authConfig";
-import SplashCursor from "./SplashCursor";
 
 const LoginPageShell = ({ children }) => (
     <div className="login-page">
         <LoginBackdrop />
-        <SplashCursor
-            SIM_RESOLUTION={96}
-            DYE_RESOLUTION={512}
-            SPLAT_FORCE={3600}
-            CURL={2.8}
-            DENSITY_DISSIPATION={3.2}
-            COLOR_UPDATE_SPEED={6}
-            BACK_COLOR={{ r: 0.94, g: 0.96, b: 0.99 }}
-            TRANSPARENT
-            SHADING
-        />
         {children}
     </div>
 );

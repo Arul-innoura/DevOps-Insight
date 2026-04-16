@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import SplashCursor from '../auth/SplashCursor';
 
 const MESSAGES = [
     "Warming up the engines...",
@@ -18,17 +17,6 @@ export const LoadingScreen = ({ role = 'user' }) => {
 
     return (
         <div className="sl-screen sl-screen--light">
-            <SplashCursor
-                SIM_RESOLUTION={128}
-                DYE_RESOLUTION={768}
-                SPLAT_FORCE={4800}
-                CURL={2.8}
-                DENSITY_DISSIPATION={3.2}
-                COLOR_UPDATE_SPEED={8}
-                BACK_COLOR={{ r: 0.94, g: 0.96, b: 0.99 }}
-                TRANSPARENT
-                SHADING
-            />
             <div className="sl-card">
                 {/* Rocket scene */}
                 <div className="sl-rocket-scene">

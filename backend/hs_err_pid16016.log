@@ -1,0 +1,263 @@
+#
+# There is insufficient memory for the Java Runtime Environment to continue.
+# Native memory allocation (mmap) failed to map 130023424 bytes. Error detail: G1 virtual space
+# Possible reasons:
+#   The system is out of physical RAM or swap space
+#   This process is running with CompressedOops enabled, and the Java Heap may be blocking the growth of the native heap
+# Possible solutions:
+#   Reduce memory load on the system
+#   Increase physical memory or swap space
+#   Check if swap backing store is full
+#   Decrease Java heap size (-Xmx/-Xms)
+#   Decrease number of Java threads
+#   Decrease Java thread stack sizes (-Xss)
+#   Set larger code cache with -XX:ReservedCodeCacheSize=
+#   JVM is running with Unscaled Compressed Oops mode in which the Java heap is
+#     placed in the first 4GB address space. The Java Heap base address is the
+#     maximum limit for the native heap growth. Please use -XX:HeapBaseMinAddress
+#     to set the Java Heap base and to place the Java Heap above 4GB virtual address.
+# This output file may be truncated or incomplete.
+#
+#  Out of Memory Error (os_windows.cpp:3554), pid=16016, tid=2636
+#
+# JRE version:  (25.0.2+10) (build )
+# Java VM: Java HotSpot(TM) 64-Bit Server VM (25.0.2+10-LTS-69, mixed mode, emulated-client, sharing, tiered, compressed oops, compressed class ptrs, g1 gc, windows-amd64)
+# No core dump will be written. Minidumps are not enabled by default on client versions of Windows
+#
+
+---------------  S U M M A R Y ------------
+
+Command Line: -XX:TieredStopAtLevel=1 com.devops.backend.BackendApplication
+
+Host: 12th Gen Intel(R) Core(TM) i5-1235U, 12 cores, 7G,  Windows 11 , 64 bit Build 26100 (10.0.26100.7920)
+Time: Thu Apr 16 13:38:02 2026 India Standard Time elapsed time: 0.036267 seconds (0d 0h 0m 0s)
+
+---------------  T H R E A D  ---------------
+
+Current thread (0x000001c09e188e30):  JavaThread "Unknown thread" [_thread_in_vm, id=2636, stack(0x0000000835000000,0x0000000835100000) (1024K)]
+
+Stack: [0x0000000835000000,0x0000000835100000]
+Native frames: (J=compiled Java code, j=interpreted, Vv=VM code, C=native code)
+V  [jvm.dll+0x7a70f9]  (no source info available)
+V  [jvm.dll+0x772d6d]  (no source info available)
+V  [jvm.dll+0x965d53]  (no source info available)
+V  [jvm.dll+0x968351]  (no source info available)
+V  [jvm.dll+0x968a63]  (no source info available)
+V  [jvm.dll+0x2fc846]  (no source info available)
+V  [jvm.dll+0x7a3325]  (no source info available)
+V  [jvm.dll+0x796737]  (no source info available)
+V  [jvm.dll+0x3f4988]  (no source info available)
+V  [jvm.dll+0x3fc8d6]  (no source info available)
+V  [jvm.dll+0x3e8f7e]  (no source info available)
+V  [jvm.dll+0x3e9238]  (no source info available)
+V  [jvm.dll+0x3c0145]  (no source info available)
+V  [jvm.dll+0x3c0dce]  (no source info available)
+V  [jvm.dll+0x92cdf7]  (no source info available)
+V  [jvm.dll+0x458f02]  (no source info available)
+V  [jvm.dll+0x9107a2]  (no source info available)
+V  [jvm.dll+0x4f9331]  (no source info available)
+V  [jvm.dll+0x4fabc1]  (no source info available)
+C  [jli.dll+0x543e]  (no source info available)
+C  [ucrtbase.dll+0x37b0]  (no source info available)
+C  [KERNEL32.DLL+0x2e8d7]  (no source info available)
+C  [ntdll.dll+0x8c48c]  (no source info available)
+
+Lock stack of current Java thread (top to bottom):
+
+
+---------------  P R O C E S S  ---------------
+
+Threads class SMR info:
+_java_thread_list=0x00007ffef63f5388, length=0, elements={
+}
+
+Java Threads: ( => current thread )
+Total: 0
+
+Other Threads:
+  0x000001c0a04a76e0 WorkerThread "GC Thread#0"                     [id=24460, stack(0x0000000835100000,0x0000000835200000) (1024K)]
+  0x000001c0a04c1720 ConcurrentGCThread "G1 Main Marker"            [id=6124, stack(0x0000000835200000,0x0000000835300000) (1024K)]
+  0x000001c0a04c2fb0 WorkerThread "G1 Conc#0"                       [id=11952, stack(0x0000000835300000,0x0000000835400000) (1024K)]
+
+[error occurred during error reporting (printing all threads), id 0xc0000005, EXCEPTION_ACCESS_VIOLATION (0xc0000005) at pc=0x00007ffef5ad4f1a]
+VM state: not at safepoint (not fully initialized)
+
+VM Mutex/Monitor currently owned by a thread:  ([mutex/lock_event])
+[0x00007ffef6479768] Heap_lock - owner thread: 0x000001c09e188e30
+
+Heap address: 0x0000000084e00000, size: 1970 MB, Compressed Oops mode: 32-bit
+
+CDS archive(s) mapped at: [0x0000000000000000-0x0000000000000000-0x0000000000000000), size 0, SharedBaseAddress: 0x0000000800000000, ArchiveRelocationMode: 1.
+UseCompressedClassPointers 1, UseCompactObjectHeaders 0
+Narrow klass pointer bits 32, Max shift 3
+Narrow klass base: 0xffffffffffffffff, Narrow klass shift: -1
+Encoding Range: [0xffffffffffffffff - 0x000000007fffffff), (2147483648 bytes)
+Klass Range:    [0x0000000000000000 - 0x0000000000000000), (0 bytes)
+Klass ID Range:  [4294967295 - 0) (1)
+No protection zone.
+
+GC Precious Log:
+ CardTable entry size: 512
+ Card Set container configuration: InlinePtr #cards 5 size 8 Array Of Cards #cards 10 size 36 Howl #buckets 4 coarsen threshold 1843 Howl Bitmap #cards 512 size 80 coarsen threshold 460 Card regions per heap region 1 cards per card region 2048
+
+Heap:
+ garbage-first heap   total reserved 2017280K, committed 0K, used 0K [0x0000000084e00000, 0x0000000100000000)
+  region size 1024K, 0 young (0K), 0 survivors (0K)
+
+Heap Regions: E=young(eden), S=young(survivor), O=old, HS=humongous(starts), HC=humongous(continues), CS=collection set, F=free, TAMS=top-at-mark-start, PB=parsable bottom
+
+Card table byte_map: [0x000001c0ac3d0000,0x000001c0ac7b0000] _byte_map_base: 0x000001c0abfa9000
+
+Marking Bits: (CMBitMap*) 0x000001c0a04a9c80
+ Bits: [0x000001c0ac7b0000, 0x000001c0ae678000)
+
+GC Heap Usage History (0 events):
+No events
+
+Metaspace Usage History (0 events):
+No events
+
+Dll operation events (1 events):
+Event: 0.018 Loaded shared library C:\Program Files\Java\jdk-25.0.2\bin\java.dll
+
+Deoptimization events (0 events):
+No events
+
+Classes loaded (0 events):
+No events
+
+Classes unloaded (0 events):
+No events
+
+Classes redefined (0 events):
+No events
+
+Internal exceptions (0 events):
+No events
+
+VM Operations (0 events):
+No events
+
+Memory protections (0 events):
+No events
+
+Nmethod flushes (0 events):
+No events
+
+Events (0 events):
+No events
+
+
+Dynamic libraries:
+0x00007ff66c180000 - 0x00007ff66c190000 	C:\Program Files\Java\jdk-25.0.2\bin\java.exe
+0x00007fffc1960000 - 0x00007fffc1bc7000 	C:\WINDOWS\SYSTEM32\ntdll.dll
+0x00007fffc0220000 - 0x00007fffc02e9000 	C:\WINDOWS\System32\KERNEL32.DLL
+0x00007fffbf180000 - 0x00007fffbf571000 	C:\WINDOWS\System32\KERNELBASE.dll
+0x00007fffbf580000 - 0x00007fffbf6cb000 	C:\WINDOWS\System32\ucrtbase.dll
+0x00007fff98190000 - 0x00007fff981a7000 	C:\Program Files\Java\jdk-25.0.2\bin\jli.dll
+0x00007fff981b0000 - 0x00007fff981ce000 	C:\Program Files\Java\jdk-25.0.2\bin\VCRUNTIME140.dll
+0x00007fffc0560000 - 0x00007fffc0725000 	C:\WINDOWS\System32\USER32.dll
+0x00007fffbf6d0000 - 0x00007fffbf6f7000 	C:\WINDOWS\System32\win32u.dll
+0x00007fffa1cc0000 - 0x00007fffa1f53000 	C:\WINDOWS\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.26100.8037_none_3e092faae333b53b\COMCTL32.dll
+0x00007fffbfcf0000 - 0x00007fffbfd1b000 	C:\WINDOWS\System32\GDI32.dll
+0x00007fffc16e0000 - 0x00007fffc1789000 	C:\WINDOWS\System32\msvcrt.dll
+0x00007fffbeb60000 - 0x00007fffbec8b000 	C:\WINDOWS\System32\gdi32full.dll
+0x00007fffbef80000 - 0x00007fffbf023000 	C:\WINDOWS\System32\msvcp_win.dll
+0x00007fffbf700000 - 0x00007fffbf731000 	C:\WINDOWS\System32\IMM32.DLL
+0x00007fffa1730000 - 0x00007fffa173c000 	C:\Program Files\Java\jdk-25.0.2\bin\vcruntime140_1.dll
+0x00007fff84e50000 - 0x00007fff84edd000 	C:\Program Files\Java\jdk-25.0.2\bin\msvcp140.dll
+0x00007ffef5700000 - 0x00007ffef655f000 	C:\Program Files\Java\jdk-25.0.2\bin\server\jvm.dll
+0x00007fffbfe10000 - 0x00007fffbfecb000 	C:\WINDOWS\System32\ADVAPI32.dll
+0x00007fffc1450000 - 0x00007fffc14f7000 	C:\WINDOWS\System32\sechost.dll
+0x00007fffbfad0000 - 0x00007fffbfbe8000 	C:\WINDOWS\System32\RPCRT4.dll
+0x00007fffbfd30000 - 0x00007fffbfda4000 	C:\WINDOWS\System32\WS2_32.dll
+0x00007fffbe0a0000 - 0x00007fffbe0fe000 	C:\WINDOWS\SYSTEM32\POWRPROF.dll
+0x00007fffbb280000 - 0x00007fffbb2b5000 	C:\WINDOWS\SYSTEM32\WINMM.dll
+0x00007fffaaf50000 - 0x00007fffaaf5b000 	C:\WINDOWS\SYSTEM32\VERSION.dll
+0x00007fffbe080000 - 0x00007fffbe094000 	C:\WINDOWS\SYSTEM32\UMPDC.dll
+0x00007fffbcfd0000 - 0x00007fffbcfeb000 	C:\WINDOWS\SYSTEM32\kernel.appcore.dll
+0x00007fff9a400000 - 0x00007fff9a40a000 	C:\Program Files\Java\jdk-25.0.2\bin\jimage.dll
+0x00007fffbc050000 - 0x00007fffbc292000 	C:\WINDOWS\SYSTEM32\DBGHELP.DLL
+0x00007fffbf740000 - 0x00007fffbfac2000 	C:\WINDOWS\System32\combase.dll
+0x00007fffbff50000 - 0x00007fffc0027000 	C:\WINDOWS\System32\OLEAUT32.dll
+0x00007fffa0000000 - 0x00007fffa003b000 	C:\WINDOWS\SYSTEM32\dbgcore.DLL
+0x00007fffbe240000 - 0x00007fffbe2e5000 	C:\WINDOWS\System32\bcryptPrimitives.dll
+0x00007fff8e920000 - 0x00007fff8e93f000 	C:\Program Files\Java\jdk-25.0.2\bin\java.dll
+0x00007fffc02f0000 - 0x00007fffc0485000 	C:\WINDOWS\System32\ole32.dll
+0x00007fffc0bd0000 - 0x00007fffc132f000 	C:\WINDOWS\System32\SHELL32.dll
+0x00007fffbec90000 - 0x00007fffbedfa000 	C:\WINDOWS\System32\wintypes.dll
+
+JVMTI agents: none
+
+dbghelp: loaded successfully - version: 4.0.5 - missing functions: none
+symbol engine: initialized successfully - sym options: 0x614 - pdb path: .;C:\Program Files\Java\jdk-25.0.2\bin;C:\WINDOWS\SYSTEM32;C:\WINDOWS\WinSxS\amd64_microsoft.windows.common-controls_6595b64144ccf1df_6.0.26100.8037_none_3e092faae333b53b;C:\Program Files\Java\jdk-25.0.2\bin\server
+
+VM Arguments:
+jvm_args: -XX:TieredStopAtLevel=1 
+java_command: com.devops.backend.BackendApplication
+java_class_path (initial): E:\Java FSD Project\Devops\backend\target\classes;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-mongodb\4.0.5\spring-boot-mongodb-4.0.5.jar;C:\Users\Dell\.m2\repository\org\mongodb\mongodb-driver-sync\5.6.4\mongodb-driver-sync-5.6.4.jar;C:\Users\Dell\.m2\repository\org\mongodb\bson\5.6.4\bson-5.6.4.jar;C:\Users\Dell\.m2\repository\org\mongodb\mongodb-driver-core\5.6.4\mongodb-driver-core-5.6.4.jar;C:\Users\Dell\.m2\repository\org\mongodb\bson-record-codec\5.6.4\bson-record-codec-5.6.4.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-data-mongodb\4.0.5\spring-boot-data-mongodb-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-data-commons\4.0.5\spring-boot-data-commons-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-persistence\4.0.5\spring-boot-persistence-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\data\spring-data-commons\4.0.4\spring-data-commons-4.0.4.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-transaction\4.0.5\spring-boot-transaction-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-tx\7.0.6\spring-tx-7.0.6.jar;C:\Users\Dell\.m2\repository\org\springframework\data\spring-data-mongodb\5.0.4\spring-data-mongodb-5.0.4.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-context\7.0.6\spring-context-7.0.6.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-expression\7.0.6\spring-expression-7.0.6.jar;C:\Users\Dell\.m2\repository\ch\qos\logback\logback-classic\1.5.32\logback-classic-1.5.32.jar;C:\Users\Dell\.m2\repository\ch\qos\logback\logback-core\1.5.32\logback-core-1.5.32.jar;C:\Users\Dell\.m2\repository\org\apache\logging\log4j\log4j-to-slf4j\2.25.3\log4j-to-slf4j-2.25.3.jar;C:\Users\Dell\.m2\repository\org\apache\logging\log4j\log4j-api\2.25.3\log4j-api-2.25.3.jar;C:\Users\Dell\.m2\repository\org\slf4j\jul-to-slf4j\2.0.17\jul-to-slf4j-2.0.17.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-autoconfigure\4.0.5\spring-boot-autoconfigure-4.0.5.jar;C:\Users\Dell\.m2\repository\jakarta\annotation\jakarta.annotation-api\3.0.0\jakarta.annotation-api-3.0.0.jar;C:\Users\Dell\.m2\repository\org\yaml\snakeyaml\2.5\snakeyaml-2.5.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-jackson\4.0.5\spring-boot-jackson-4.0.5.jar;C:\Users\Dell\.m2\repository\tools\jackson\core\jackson-databind\3.1.0\jackson-databind-3.1.0.jar;C:\Users\Dell\.m2\repository\tools\jackson\core\jackson-core\3.1.0\jackson-core-3.1.0.jar;C:\Users\Dell\.m2\repository\org\apache\tomcat\embed\tomcat-embed-core\11.0.20\tomcat-embed-core-11.0.20.jar;C:\Users\Dell\.m2\repository\org\apache\tomcat\embed\tomcat-embed-websocket\11.0.20\tomcat-embed-websocket-11.0.20.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-tomcat\4.0.5\spring-boot-tomcat-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-http-converter\4.0.5\spring-boot-http-converter-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot\4.0.5\spring-boot-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-web\7.0.6\spring-web-7.0.6.jar;C:\Users\Dell\.m2\repository\io\micrometer\micrometer-observation\1.16.4\micrometer-observation-1.16.4.jar;C:\Users\Dell\.m2\repository\io\micrometer\micrometer-commons\1.16.4\micrometer-commons-1.16.4.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-webmvc\4.0.5\spring-boot-webmvc-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-servlet\4.0.5\spring-boot-servlet-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-webmvc\7.0.6\spring-webmvc-7.0.6.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-security\4.0.5\spring-boot-security-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\security\spring-security-config\7.0.4\spring-security-config-7.0.4.jar;C:\Users\Dell\.m2\repository\org\springframework\security\spring-security-core\7.0.4\spring-security-core-7.0.4.jar;C:\Users\Dell\.m2\repository\org\springframework\security\spring-security-crypto\7.0.4\spring-security-crypto-7.0.4.jar;C:\Users\Dell\.m2\repository\org\springframework\security\spring-security-web\7.0.4\spring-security-web-7.0.4.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-aop\7.0.6\spring-aop-7.0.6.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-beans\7.0.6\spring-beans-7.0.6.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-core\7.0.6\spring-core-7.0.6.jar;C:\Users\Dell\.m2\repository\commons-logging\commons-logging\1.3.6\commons-logging-1.3.6.jar;C:\Users\Dell\.m2\repository\org\jspecify\jspecify\1.0.0\jspecify-1.0.0.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-security-oauth2-resource-server\4.0.5\spring-boot-security-oauth2-resource-server-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\security\spring-security-oauth2-jose\7.0.4\spring-security-oauth2-jose-7.0.4.jar;C:\Users\Dell\.m2\repository\org\springframework\security\spring-security-oauth2-core\7.0.4\spring-security-oauth2-core-7.0.4.jar;C:\Users\Dell\.m2\repository\com\nimbusds\nimbus-jose-jwt\10.4\nimbus-jose-jwt-10.4.jar;C:\Users\Dell\.m2\repository\org\springframework\security\spring-security-oauth2-resource-server\7.0.4\spring-security-oauth2-resource-server-7.0.4.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-validation\4.0.5\spring-boot-validation-4.0.5.jar;C:\Users\Dell\.m2\repository\org\apache\tomcat\embed\tomcat-embed-el\11.0.20\tomcat-embed-el-11.0.20.jar;C:\Users\Dell\.m2\repository\org\hibernate\validator\hibernate-validator\9.0.1.Final\hibernate-validator-9.0.1.Final.jar;C:\Users\Dell\.m2\repository\jakarta\validation\jakarta.validation-api\3.1.1\jakarta.validation-api-3.1.1.jar;C:\Users\Dell\.m2\repository\org\jboss\logging\jboss-logging\3.6.3.Final\jboss-logging-3.6.3.Final.jar;C:\Users\Dell\.m2\repository\com\fasterxml\classmate\1.7.3\classmate-1.7.3.jar;C:\Users\Dell\.m2\repository\jakarta\xml\bind\jakarta.xml.bind-api\4.0.4\jakarta.xml.bind-api-4.0.4.jar;C:\Users\Dell\.m2\repository\jakarta\activation\jakarta.activation-api\2.1.4\jakarta.activation-api-2.1.4.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-web-server\4.0.5\spring-boot-web-server-4.0.5.jar;C:\Users\Dell\.m2\repository\com\azure\azure-storage-queue\12.22.1\azure-storage-queue-12.22.1.jar;C:\Users\Dell\.m2\repository\com\azure\azure-xml\1.1.0\azure-xml-1.1.0.jar;C:\Users\Dell\.m2\repository\com\azure\azure-core\1.51.0\azure-core-1.51.0.jar;C:\Users\Dell\.m2\repository\com\azure\azure-json\1.2.0\azure-json-1.2.0.jar;C:\Users\Dell\.m2\repository\org\slf4j\slf4j-api\2.0.17\slf4j-api-2.0.17.jar;C:\Users\Dell\.m2\repository\io\projectreactor\reactor-core\3.8.4\reactor-core-3.8.4.jar;C:\Users\Dell\.m2\repository\org\reactivestreams\reactive-streams\1.0.4\reactive-streams-1.0.4.jar;C:\Users\Dell\.m2\repository\com\azure\azure-core-http-netty\1.15.3\azure-core-http-netty-1.15.3.jar;C:\Users\Dell\.m2\repository\io\netty\netty-handler\4.2.12.Final\netty-handler-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-resolver\4.2.12.Final\netty-resolver-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-transport\4.2.12.Final\netty-transport-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-base\4.2.12.Final\netty-codec-base-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-handler-proxy\4.2.12.Final\netty-handler-proxy-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-socks\4.2.12.Final\netty-codec-socks-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-buffer\4.2.12.Final\netty-buffer-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec\4.2.12.Final\netty-codec-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-compression\4.2.12.Final\netty-codec-compression-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-protobuf\4.2.12.Final\netty-codec-protobuf-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-marshalling\4.2.12.Final\netty-codec-marshalling-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-http\4.2.12.Final\netty-codec-http-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-http2\4.2.12.Final\netty-codec-http2-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-transport-native-unix-common\4.2.12.Final\netty-transport-native-unix-common-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-transport-native-epoll\4.2.12.Final\netty-transport-native-epoll-4.2.12.Final-linux-x86_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-transport-classes-epoll\4.2.12.Final\netty-transport-classes-epoll-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-transport-native-kqueue\4.2.12.Final\netty-transport-native-kqueue-4.2.12.Final-osx-x86_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-transport-classes-kqueue\4.2.12.Final\netty-transport-classes-kqueue-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-tcnative-boringssl-static\2.0.75.Final\netty-tcnative-boringssl-static-2.0.75.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-tcnative-classes\2.0.75.Final\netty-tcnative-classes-2.0.75.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-tcnative-boringssl-static\2.0.75.Final\netty-tcnative-boringssl-static-2.0.75.Final-linux-x86_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-tcnative-boringssl-static\2.0.75.Final\netty-tcnative-boringssl-static-2.0.75.Final-linux-aarch_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-tcnative-boringssl-static\2.0.75.Final\netty-tcnative-boringssl-static-2.0.75.Final-osx-x86_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-tcnative-boringssl-static\2.0.75.Final\netty-tcnative-boringssl-static-2.0.75.Final-osx-aarch_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-tcnative-boringssl-static\2.0.75.Final\netty-tcnative-boringssl-static-2.0.75.Final-windows-x86_64.jar;C:\Users\Dell\.m2\repository\io\projectreactor\netty\reactor-netty-http\1.3.4\reactor-netty-http-1.3.4.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-http3\4.2.12.Final\netty-codec-http3-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-classes-quic\4.2.12.Final\netty-codec-classes-quic-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-native-quic\4.2.12.Final\netty-codec-native-quic-4.2.12.Final-linux-x86_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-native-quic\4.2.12.Final\netty-codec-native-quic-4.2.12.Final-linux-aarch_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-native-quic\4.2.12.Final\netty-codec-native-quic-4.2.12.Final-osx-x86_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-native-quic\4.2.12.Final\netty-codec-native-quic-4.2.12.Final-osx-aarch_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-native-quic\4.2.12.Final\netty-codec-native-quic-4.2.12.Final-windows-x86_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-resolver-dns\4.2.12.Final\netty-resolver-dns-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-codec-dns\4.2.12.Final\netty-codec-dns-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\netty\netty-resolver-dns-native-macos\4.2.12.Final\netty-resolver-dns-native-macos-4.2.12.Final-osx-x86_64.jar;C:\Users\Dell\.m2\repository\io\netty\netty-resolver-dns-classes-macos\4.2.12.Final\netty-resolver-dns-classes-macos-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\io\projectreactor\netty\reactor-netty-core\1.3.4\reactor-netty-core-1.3.4.jar;C:\Users\Dell\.m2\repository\io\netty\netty-common\4.2.12.Final\netty-common-4.2.12.Final.jar;C:\Users\Dell\.m2\repository\com\azure\azure-storage-common\12.26.1\azure-storage-common-12.26.1.jar;C:\Users\Dell\.m2\repository\com\azure\azure-storage-blob\12.27.1\azure-storage-blob-12.27.1.jar;C:\Users\Dell\.m2\repository\com\azure\azure-storage-internal-avro\12.12.1\azure-storage-internal-avro-12.12.1.jar;C:\Users\Dell\.m2\repository\com\fasterxml\jackson\dataformat\jackson-dataformat-xml\2.21.2\jackson-dataformat-xml-2.21.2.jar;C:\Users\Dell\.m2\repository\org\codehaus\woodstox\stax2-api\4.2.2\stax2-api-4.2.2.jar;C:\Users\Dell\.m2\repository\com\fasterxml\woodstox\woodstox-core\7.1.1\woodstox-core-7.1.1.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-mail\4.0.5\spring-boot-mail-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-context-support\7.0.6\spring-context-support-7.0.6.jar;C:\Users\Dell\.m2\repository\jakarta\mail\jakarta.mail-api\2.1.5\jakarta.mail-api-2.1.5.jar;C:\Users\Dell\.m2\repository\org\eclipse\angus\angus-mail\2.0.5\angus-mail-2.0.5.jar;C:\Users\Dell\.m2\repository\org\eclipse\angus\angus-activation\2.0.3\angus-activation-2.0.3.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-websocket\4.0.5\spring-boot-websocket-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-messaging\7.0.6\spring-messaging-7.0.6.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-websocket\7.0.6\spring-websocket-7.0.6.jar;C:\Users\Dell\.m2\repository\com\fasterxml\jackson\core\jackson-databind\2.21.2\jackson-databind-2.21.2.jar;C:\Users\Dell\.m2\repository\com\fasterxml\jackson\core\jackson-annotations\2.21\jackson-annotations-2.21.jar;C:\Users\Dell\.m2\repository\com\fasterxml\jackson\core\jackson-core\2.21.2\jackson-core-2.21.2.jar;C:\Users\Dell\.m2\repository\com\fasterxml\jackson\datatype\jackson-datatype-jsr310\2.21.2\jackson-datatype-jsr310-2.21.2.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-cache\4.0.5\spring-boot-cache-4.0.5.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-data-redis\4.0.5\spring-boot-data-redis-4.0.5.jar;C:\Users\Dell\.m2\repository\io\lettuce\lettuce-core\6.8.2.RELEASE\lettuce-core-6.8.2.RELEASE.jar;C:\Users\Dell\.m2\repository\redis\clients\authentication\redis-authx-core\0.1.1-beta2\redis-authx-core-0.1.1-beta2.jar;C:\Users\Dell\.m2\repository\org\springframework\data\spring-data-redis\4.0.4\spring-data-redis-4.0.4.jar;C:\Users\Dell\.m2\repository\org\springframework\data\spring-data-keyvalue\4.0.4\spring-data-keyvalue-4.0.4.jar;C:\Users\Dell\.m2\repository\org\springframework\spring-oxm\7.0.6\spring-oxm-7.0.6.jar;C:\Users\Dell\.m2\repository\org\springframework\boot\spring-boot-netty\4.0.5\spring-boot-netty-4.0.5.jar
+Launcher Type: SUN_STANDARD
+
+[Global flags]
+     intx CICompilerCount                          = 4                                         {product} {ergonomic}
+     uint ConcGCThreads                            = 3                                         {product} {ergonomic}
+     uint G1ConcRefinementThreads                  = 10                                        {product} {ergonomic}
+   size_t G1HeapRegionSize                         = 1048576                                   {product} {ergonomic}
+   size_t InitialHeapSize                          = 130023424                                 {product} {ergonomic}
+   size_t MarkStackSize                            = 4194304                                   {product} {ergonomic}
+   size_t MarkStackSizeMax                         = 536870912                                 {product} {ergonomic}
+   size_t MaxHeapSize                              = 2065694720                                {product} {ergonomic}
+   size_t MinHeapDeltaBytes                        = 1048576                                   {product} {ergonomic}
+   size_t MinHeapSize                              = 8388608                                   {product} {ergonomic}
+    uintx NonNMethodCodeHeapSize                   = 4096                                   {pd product} {ergonomic}
+    uintx NonProfiledCodeHeapSize                  = 0                                      {pd product} {ergonomic}
+     bool ProfileInterpreter                       = false                                  {pd product} {command line}
+    uintx ProfiledCodeHeapSize                     = 0                                      {pd product} {ergonomic}
+   size_t SoftMaxHeapSize                          = 2065694720                             {manageable} {ergonomic}
+     intx TieredStopAtLevel                        = 1                                         {product} {command line}
+     bool UseCompressedOops                        = true                           {product lp64_product} {ergonomic}
+     bool UseG1GC                                  = true                                      {product} {ergonomic}
+     bool UseLargePagesIndividualAllocation        = false                                  {pd product} {ergonomic}
+
+Logging:
+Log output configuration:
+ #0: stdout all=warning uptime,level,tags foldmultilines=false
+ #1: stderr all=off uptime,level,tags foldmultilines=false
+
+Release file:
+<release file has not been read>
+Environment Variables:
+PATH=D:\flutter_windows_3.38.4-stable\flutter\bin\cache\dart-sdk\bin\;c:\Users\Dell\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\debugCommand;c:\Users\Dell\AppData\Roaming\Code\User\globalStorage\github.copilot-chat\copilotCli;C:\Users\Dell\AppData\Local\Programs\Microsoft VS Code;C:\Program Files\Common Files\Oracle\Java\javapath;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\dotnet\;C:\Program Files\Git\cmd;D:\Program Files\Redis\;C:\Program Files\nodejs\;C:\Program Files\Docker\Docker\resources\bin;C:\Program Files\Kubernetes\Minikube;C:\Users\Dell\AppData\Local\Programs\Python\Python312\Scripts\;C:\Users\Dell\AppData\Local\Programs\Python\Python312\;C:\Users\Dell\AppData\Local\Programs\Python\Launcher\;C:\Users\Dell\AppData\Local\Microsoft\WindowsApps;C:\Users\Dell\AppData\Local\Programs\Microsoft VS Code\bin;D:\flutter_windows_3.38.4-stable\flutter\bin;C:\Program Files\JetBrains\IntelliJ IDEA 2025.3\bin;E:\Android\Sdk\platform-tools;E:\Android\Sdk\emulator;d:\Users\Dell\AppData\Local\Programs\Antigravity\bin;D:\Program Files\PostgreSQL\18\bin;C:\Users\Dell\AppData\Roaming\npm;C:\Users\Dell\AppData\Local\Microsoft\WinGet\Packages\bluenviron.mediamtx_Microsoft.Winget.Source_8wekyb3d8bbwe;C:\ffmpeg\bin;C:\Users\Dell\AppData\Local\Microsoft\WinGet\Packages\AquaSecurity.Trivy_Microsoft.Winget.Source_8wekyb3d8bbwe;d:\Users\Dell\AppData\Local\Programs\cursor\resources\app\bin;c:\Users\Dell\.vscode\extensions\vscjava.vscode-java-debug-0.59.0\bundled\scripts\noConfigScriptsc:\Users\Dell\.vscode\extensions\ms-python.debugpy-2025.18.0-win32-x64\bundled\scripts\noConfigScripts
+USERNAME=Dell
+LANG=en_US.UTF-8
+OS=Windows_NT
+PROCESSOR_IDENTIFIER=Intel64 Family 6 Model 154 Stepping 4, GenuineIntel
+TMP=C:\Users\Dell\AppData\Local\Temp
+TEMP=C:\Users\Dell\AppData\Local\Temp
+
+
+
+
+Compilation memory statistics disabled.
+
+Periodic native trim disabled
+
+---------------  S Y S T E M  ---------------
+
+OS:
+ Windows 11 , 64 bit Build 26100 (10.0.26100.7920)
+OS uptime: 0 days 4:58 hours
+Hyper-V role detected
+
+CPU: total 12 (initial active 12) (6 cores per cpu, 2 threads per core) family 6 model 154 stepping 4 microcode 0x43b, cx8, cmov, fxsr, ht, mmx, 3dnowpref, sse, sse2, sse3, ssse3, sse4.1, sse4.2, popcnt, lzcnt, tsc, tscinvbit, avx, avx2, aes, erms, clmul, bmi1, bmi2, adx, sha, fma, vzeroupper, clflush, clflushopt, clwb, hv, serialize, rdtscp, rdpid, fsrm, gfni, f16c, cet_ibt, cet_ss
+Processor Information for the first 12 processors :
+  Max Mhz: 1300, Current Mhz: 1300, Mhz Limit: 1300
+
+Memory: 4k page, system-wide physical 7876M (1013M free)
+TotalPageFile size 21375M (AvailPageFile size 32M)
+current process WorkingSet (physical memory assigned to process): 13M, peak: 13M
+current process commit charge ("private bytes"): 60M, peak: 184M
+
+vm_info: Java HotSpot(TM) 64-Bit Server VM (25.0.2+10-LTS-69) for windows-amd64 JRE (25.0.2+10-LTS-69), built on 2025-12-18T11:36:35Z with MS VC++ 17.13 (VS2022)
+
+END.
