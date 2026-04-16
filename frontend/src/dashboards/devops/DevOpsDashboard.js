@@ -384,8 +384,9 @@ export const DevOpsDashboard = () => {
     }, [userName, userEmail]);
 
     const recalcSectionCounts = useCallback((allTickets) => {
+        const ctx = { userName, userEmail };
         const unassigned = allTickets.filter((t) =>
-            ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, {})
+            ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, ctx)
         );
         const myTickets = allTickets.filter(t => isMine(t) && t.status !== TICKET_STATUS.CLOSED);
         const active = allTickets.filter(t =>
@@ -403,7 +404,7 @@ export const DevOpsDashboard = () => {
             history: history.length,
             closed: closed.length
         });
-    }, [isMine]);
+    }, [isMine, userName, userEmail]);
 
     const upsertTicketLocally = useCallback((updatedTicket) => {
         if (!updatedTicket?.id) return;
@@ -414,11 +415,10 @@ export const DevOpsDashboard = () => {
                 : [updatedTicket, ...prev];
             recalcSectionCounts(next);
             if (activeSectionRef.current === 'requests') {
-                applySectionFilter(next, requestTabRef.current);
+                applySectionFilter(next, requestTabRef.current, filtersRef.current);
             }
             return next;
         });
-        setFilteredTickets((prev) => prev.map((t) => (t.id === updatedTicket.id ? updatedTicket : t)));
         setSelectedTicket((prev) => (prev && prev.id === updatedTicket.id ? updatedTicket : prev));
     }, [recalcSectionCounts]);
 
@@ -636,10 +636,7 @@ export const DevOpsDashboard = () => {
 
         switch (section) {
             case 'unassigned':
-                // Queue only: raised + no assignee (same as UNASSIGNED bucket). Status dropdown does not apply here.
-                result = result.filter((t) =>
-                    ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, {})
-                );
+                result = result.filter(() => true);
                 break;
             case 'myTickets':
                 // My Tickets shows all assigned tickets except closed (closed go to Archive > Closed)
@@ -673,8 +670,8 @@ export const DevOpsDashboard = () => {
                 break;
         }
         
-        // Primary status filter applies to assigned views only — not the unassigned queue (separate tab).
-        if (f.status && section !== "unassigned") {
+        // Apply additional filters
+        if (f.status) {
             const ctx = { userName, userEmail };
             result = result.filter((t) => ticketMatchesPrimaryStatusFilter(t, f.status, ctx));
         }
@@ -769,17 +766,35 @@ export const DevOpsDashboard = () => {
         }
         if (TICKET_TABS.includes(section)) {
             setActiveSection('requests');
+            const previousTab = requestTab;
             setRequestTab(section);
+
+            let nextFilters = { ...filters };
             const clearAssignMe =
                 (section === 'unassigned' || section === 'myTickets') &&
-                filters.status === TICKET_FILTER_BUCKET.ASSIGNED_ME;
+                nextFilters.status === TICKET_FILTER_BUCKET.ASSIGNED_ME;
             if (clearAssignMe) {
-                const cleared = { ...filters, status: null };
-                setFilters(cleared);
-                applySectionFilter(tickets, section, cleared);
-            } else {
-                applySectionFilter(tickets, section);
+                nextFilters = { ...nextFilters, status: null };
             }
+
+            // Unassigned queue is separate from assigned tabs: never inherit status buckets
+            // (e.g. IN_PROGRESS / COMPLETED) from Active/History — those filters only apply on their own tabs.
+            if (section === 'unassigned') {
+                nextFilters = { ...nextFilters, status: TICKET_FILTER_BUCKET.UNASSIGNED };
+            } else if (previousTab === 'unassigned') {
+                nextFilters = {
+                    ...nextFilters,
+                    status:
+                        !nextFilters.status ||
+                        nextFilters.status === TICKET_FILTER_BUCKET.ALL ||
+                        nextFilters.status === TICKET_FILTER_BUCKET.UNASSIGNED
+                            ? TICKET_FILTER_BUCKET.ALL
+                            : nextFilters.status,
+                };
+            }
+
+            setFilters(nextFilters);
+            applySectionFilter(tickets, section, nextFilters);
             return;
         }
         setActiveSection(section);
@@ -1656,7 +1671,6 @@ export const DevOpsDashboard = () => {
                             filters={filters}
                             onFilterChange={handleFilterChange}
                             hideAssignMeOption
-                            hideStatusFilter
                             showAssigneeFilter
                             assigneeOptions={unassignedAssigneeOptions}
                             searchPlaceholder="Search queue (id, person/email, environment, project id…)"
