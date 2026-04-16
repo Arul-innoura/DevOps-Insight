@@ -1,7 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { Calendar, Layers } from 'lucide-react';
-import { getAnalyticsSettings } from '../services/analyticsSettingsService';
-
 const ROADMAP_PALETTE = [
     '#2563eb', '#7c3aed', '#059669', '#d97706', '#dc2626',
     '#0891b2', '#4f46e5', '#db2777', '#0d9488', '#ea580c',
@@ -136,35 +134,6 @@ export function ProjectRoadmapChart({ segments = [], title = 'Project activity t
                     </div>
                 ))}
             </div>
-        </div>
-    );
-}
-
-/** Loads global analytics settings and shows the published roadmap (monitoring / shared views). */
-export function ProjectRoadmapMonitoringCard() {
-    const [segments, setSegments] = useState([]);
-
-    useEffect(() => {
-        let cancelled = false;
-        getAnalyticsSettings()
-            .then((raw) => {
-                if (cancelled) return;
-                const list = raw?.projectTimelineSegments;
-                setSegments(Array.isArray(list) ? list : []);
-            })
-            .catch(() => {
-                if (!cancelled) setSegments([]);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, []);
-
-    if (!segments.length) return null;
-
-    return (
-        <div className="pr-monitoring-card sa-card sa-card-full">
-            <ProjectRoadmapChart segments={segments} title="Live projects by environment" />
         </div>
     );
 }

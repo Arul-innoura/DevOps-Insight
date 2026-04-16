@@ -16157,10 +16157,7 @@ button.btn-primary {
 [data-theme="retro"] .sa-table thead tr { background: #eee8d5; }
 [data-theme="retro"] .sa-hbar-track { background: #eee8d5; }
 
-/* ─── Project roadmap (admin + monitoring) ─── */
-.pr-monitoring-card {
-    margin-bottom: 1rem;
-}
+/* ─── Project roadmap (admin analytics) ─── */
 .pr-roadmap {
     padding: 0.25rem 0 0.5rem;
 }

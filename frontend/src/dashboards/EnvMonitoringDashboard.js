@@ -6,7 +6,6 @@ import {
     RefreshCw, Info, CheckCircle, PlayCircle
 } from 'lucide-react';
 import { TICKET_STATUS } from '../services/ticketService';
-import { ProjectRoadmapMonitoringCard } from '../components/ProjectRoadmap';
 
 /* ──────────────────────────────────────────────
    CONSTANTS
@@ -737,10 +736,8 @@ const EnvMonitoringDashboard = ({
                 </div>
             )}
 
-            {/* ── Admin-published project roadmap + main stacked bar chart (Activity / user view) ── */}
+            {/* ── Main stacked bar chart (Activity / user view) ── */}
             {(activeTab === 'activity' || !showAdmin) && (
-                <>
-                <ProjectRoadmapMonitoringCard />
                 <div className="em-chart-card">
                     <div className="em-chart-card-header">
                         <div className="em-chart-title">
@@ -769,7 +766,6 @@ const EnvMonitoringDashboard = ({
                         />
                     )}
                 </div>
-                </>
             )}
 
             {/* ── Summary cards ── */}
