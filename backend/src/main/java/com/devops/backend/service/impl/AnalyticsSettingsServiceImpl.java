@@ -2,6 +2,7 @@ package com.devops.backend.service.impl;
 
 import com.devops.backend.model.analytics.AnalyticsSettings;
 import com.devops.backend.model.analytics.EnvTrafficDelta;
+import com.devops.backend.model.analytics.ProjectTimelineSegment;
 import com.devops.backend.model.analytics.TrafficDayDelta;
 import com.devops.backend.model.analytics.TrafficMonthDelta;
 import com.devops.backend.repository.AnalyticsSettingsRepository;
@@ -26,6 +27,7 @@ public class AnalyticsSettingsServiceImpl implements AnalyticsSettingsService {
                         .dayTrafficDeltas(new ArrayList<>())
                         .monthTrafficDeltas(new ArrayList<>())
                         .envTrafficDeltas(new ArrayList<>())
+                        .projectTimelineSegments(new ArrayList<>())
                         .build());
     }
 
@@ -40,6 +42,9 @@ public class AnalyticsSettingsServiceImpl implements AnalyticsSettingsService {
         if (body.getEnvTrafficDeltas() == null) {
             body.setEnvTrafficDeltas(new ArrayList<>());
         }
+        if (body.getProjectTimelineSegments() == null) {
+            body.setProjectTimelineSegments(new ArrayList<>());
+        }
         for (TrafficDayDelta d : body.getDayTrafficDeltas()) {
             if (d.getEnvironment() == null) {
                 d.setEnvironment("");
@@ -53,6 +58,26 @@ public class AnalyticsSettingsServiceImpl implements AnalyticsSettingsService {
         for (EnvTrafficDelta e : body.getEnvTrafficDeltas()) {
             if (e.getEnvironment() == null) {
                 e.setEnvironment("");
+            }
+        }
+        for (ProjectTimelineSegment seg : body.getProjectTimelineSegments()) {
+            if (seg.getProjectName() == null) {
+                seg.setProjectName("");
+            }
+            if (seg.getEnvironment() == null) {
+                seg.setEnvironment("");
+            }
+            if (seg.getStartDate() == null) {
+                seg.setStartDate("");
+            }
+            if (seg.getEndDate() == null) {
+                seg.setEndDate("");
+            }
+            if (seg.getLabel() == null) {
+                seg.setLabel("");
+            }
+            if (seg.getColor() == null) {
+                seg.setColor("");
             }
         }
         body.setId(AnalyticsSettings.GLOBAL_ID);

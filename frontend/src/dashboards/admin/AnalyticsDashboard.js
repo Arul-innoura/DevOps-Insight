@@ -22,10 +22,16 @@ import {
     Zap,
     Pencil,
     Save,
-    Loader2
+    Loader2,
+    CalendarRange,
+    MoveUp,
+    MoveDown,
+    Trash2,
+    Plus,
 } from 'lucide-react';
 import { TICKET_STATUS, ENVIRONMENTS, REQUEST_TYPES } from '../../services/ticketService';
 import { getAnalyticsSettings, saveAnalyticsSettings } from '../../services/analyticsSettingsService';
+import { ProjectRoadmapChart } from '../../components/ProjectRoadmap';
 
 /* ═══════════════════════════════════════════════════
    SHARED HELPERS
@@ -35,6 +41,7 @@ const ANALYTICS_VIEWS = [
     { key: 'overview',       label: 'Overview',           icon: BarChart3 },
     { key: 'infrastructure', label: 'Infrastructure',     icon: Cpu },
     { key: 'traffic',        label: 'Traffic (Ingress / Egress)', icon: Activity },
+    { key: 'roadmap',        label: 'Project roadmap',    icon: CalendarRange },
     { key: 'cost',           label: 'Cost Estimation',    icon: DollarSign },
     { key: 'team',           label: 'Team Analytics',     icon: Users },
 ];
@@ -79,9 +86,21 @@ function normalizeAnalyticsSettings(raw) {
         dayTrafficDeltas: Array.isArray(s.dayTrafficDeltas) ? [...s.dayTrafficDeltas] : [],
         monthTrafficDeltas: Array.isArray(s.monthTrafficDeltas) ? [...s.monthTrafficDeltas] : [],
         envTrafficDeltas: Array.isArray(s.envTrafficDeltas) ? [...s.envTrafficDeltas] : [],
+        projectTimelineSegments: Array.isArray(s.projectTimelineSegments)
+            ? s.projectTimelineSegments.map((row, i) => ({ ...row, sortOrder: Number(row?.sortOrder) || i }))
+            : [],
         updatedAt: s.updatedAt,
         updatedBy: s.updatedBy,
     };
+}
+
+function newTimelineSegmentId() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    return `seg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function reindexTimelineSegments(list) {
+    return list.map((row, i) => ({ ...row, sortOrder: i }));
 }
 
 function mergeTrafficDaySeries(baseIng, baseEg, viewYear, viewMonth, viewEnv, deltas) {
@@ -288,6 +307,383 @@ const MonthPicker = ({ availableMonths, selectedMonths, onChange }) => {
 };
 
 /* ═══════════════════════════════════════════════════
+   VIEW: PROJECT ROADMAP (admin configures; all roles see chart)
+   ═══════════════════════════════════════════════════ */
+
+const ROADMAP_SELECT_STYLE = {
+    padding: '0.35rem 1.75rem 0.35rem 0.55rem',
+    border: '1px solid #d1d5db',
+    borderRadius: '8px',
+    fontSize: '0.8125rem',
+    color: '#374151',
+    background: 'var(--card-bg, #fff)',
+    cursor: 'pointer',
+    outline: 'none',
+    appearance: 'none',
+    minWidth: 0,
+    backgroundImage:
+        "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E\")",
+    backgroundRepeat: 'no-repeat',
+    backgroundPosition: 'right 6px center',
+    backgroundSize: '14px',
+};
+
+const ProjectRoadmapView = ({
+    projects = [],
+    ticketProductNames = [],
+    analyticsSettings,
+    setAnalyticsSettings,
+    isAdminRole,
+    onPersistAnalytics,
+    savingAnalytics,
+}) => {
+    const norm = normalizeAnalyticsSettings(analyticsSettings);
+
+    const projectByName = useMemo(() => {
+        const m = new Map();
+        (projects || []).forEach((p) => {
+            const n = (p && (p.name || p.projectName || '')).trim();
+            if (n) m.set(n, p);
+        });
+        return m;
+    }, [projects]);
+
+    const projectChoices = useMemo(() => {
+        const s = new Set();
+        projectByName.forEach((_, k) => s.add(k));
+        (ticketProductNames || []).forEach((n) => {
+            if (n) s.add(n);
+        });
+        return [...s].sort();
+    }, [projectByName, ticketProductNames]);
+
+    const [quickProject, setQuickProject] = useState('');
+
+    useEffect(() => {
+        if (!quickProject && projectChoices.length > 0) {
+            setQuickProject(projectChoices[0]);
+        }
+        if (quickProject && projectChoices.length > 0 && !projectChoices.includes(quickProject)) {
+            setQuickProject(projectChoices[0]);
+        }
+    }, [projectChoices, quickProject]);
+
+    const envChoicesForQuick = useMemo(() => {
+        const p = projectByName.get(quickProject);
+        const fromCfg = p && Array.isArray(p.environments) ? p.environments.filter(Boolean) : [];
+        return fromCfg.length > 0 ? fromCfg : ENVIRONMENTS;
+    }, [projectByName, quickProject]);
+
+    const patchSegments = useCallback(
+        (fn) => {
+            setAnalyticsSettings((prev) => {
+                const base = normalizeAnalyticsSettings(prev);
+                const cur = [...(base.projectTimelineSegments || [])];
+                cur.sort(
+                    (a, b) =>
+                        (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+                        String(a.id || '').localeCompare(String(b.id || ''))
+                );
+                const next = fn(cur);
+                return { ...base, projectTimelineSegments: reindexTimelineSegments(next) };
+            });
+        },
+        [setAnalyticsSettings]
+    );
+
+    const updateRow = useCallback(
+        (idx, patch) => {
+            patchSegments((rows) => {
+                const next = [...rows];
+                if (!next[idx]) return rows;
+                next[idx] = { ...next[idx], ...patch };
+                return next;
+            });
+        },
+        [patchSegments]
+    );
+
+    const moveRow = (idx, delta) => {
+        patchSegments((rows) => {
+            const next = [...rows];
+            const j = idx + delta;
+            if (j < 0 || j >= next.length) return rows;
+            [next[idx], next[j]] = [next[j], next[idx]];
+            return next;
+        });
+    };
+
+    const removeRow = (idx) => {
+        patchSegments((rows) => {
+            const next = [...rows];
+            next.splice(idx, 1);
+            return next;
+        });
+    };
+
+    const addRow = () => {
+        const pn = (quickProject || projectChoices[0] || '').trim() || 'Project';
+        const envFirst = envChoicesForQuick[0] || '';
+        patchSegments((rows) => [
+            ...rows,
+            {
+                id: newTimelineSegmentId(),
+                projectName: pn,
+                environment: envFirst,
+                startDate: new Date().toISOString().slice(0, 10),
+                endDate: '',
+                label: '',
+                color: '',
+                sortOrder: rows.length,
+            },
+        ]);
+    };
+
+    const rowsOrdered = useMemo(() => {
+        const raw = [...(norm.projectTimelineSegments || [])];
+        raw.sort(
+            (a, b) =>
+                (a.sortOrder ?? 0) - (b.sortOrder ?? 0) ||
+                String(a.id || '').localeCompare(String(b.id || ''))
+        );
+        return raw;
+    }, [norm.projectTimelineSegments]);
+
+    const envOptionsForRow = (row) => {
+        const p = projectByName.get(String(row.projectName || '').trim());
+        const fromCfg = p && Array.isArray(p.environments) ? p.environments.filter(Boolean) : [];
+        return fromCfg.length > 0 ? fromCfg : ENVIRONMENTS;
+    };
+
+    return (
+        <div className="sa-view-content">
+            <div className="sa-card sa-card-full sa-roadmap-published">
+                <h3 className="sa-card-title">
+                    <CalendarRange size={18} /> Published timeline
+                </h3>
+                <p className="sa-roadmap-intro">
+                    This timeline is shown on the User and DevOps monitoring page. Each bar is one product and environment window;
+                    colors follow the project when no custom color is set.
+                </p>
+                <ProjectRoadmapChart segments={norm.projectTimelineSegments} title="Projects running by environment" />
+            </div>
+
+            {isAdminRole && (
+                <div className="sa-card sa-card-full">
+                    <h3 className="sa-card-title">Edit timeline rows</h3>
+                    <p className="sa-roadmap-intro">
+                        Choose a configured product and environment, set dates, then save. Use the arrows to move a row up or down
+                        (order matches the chart).
+                    </p>
+
+                    <div className="sa-roadmap-quick-add">
+                        <span className="sa-roadmap-quick-label">Add using</span>
+                        {projectChoices.length > 0 ? (
+                            <select
+                                className="sa-roadmap-quick-select"
+                                style={ROADMAP_SELECT_STYLE}
+                                value={quickProject}
+                                onChange={(e) => setQuickProject(e.target.value)}
+                            >
+                                {projectChoices.map((n) => (
+                                    <option key={n} value={n}>
+                                        {n}
+                                    </option>
+                                ))}
+                            </select>
+                        ) : (
+                            <input
+                                className="sa-admin-input sa-admin-input--sm sa-roadmap-quick-text"
+                                placeholder="Product name for new rows"
+                                value={quickProject}
+                                onChange={(e) => setQuickProject(e.target.value)}
+                            />
+                        )}
+                        <button type="button" className="sa-admin-secondary-btn" onClick={addRow}>
+                            <Plus size={15} /> Add segment
+                        </button>
+                    </div>
+
+                    <div className="sa-table-wrap sa-roadmap-table-wrap">
+                        <table className="sa-table">
+                            <thead>
+                                <tr>
+                                    <th style={{ width: 72 }}>Order</th>
+                                    <th>Project</th>
+                                    <th>Environment</th>
+                                    <th>Start</th>
+                                    <th>End</th>
+                                    <th>Label</th>
+                                    <th style={{ width: 100 }}>Color</th>
+                                    <th style={{ width: 56 }} />
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {rowsOrdered.map((row, idx) => {
+                                    const envOpts = envOptionsForRow(row);
+                                    const colorVal = /^#[0-9a-fA-F]{6}$/.test(row.color || '') ? row.color : '#2563eb';
+                                    return (
+                                        <tr key={row.id || idx}>
+                                            <td>
+                                                <div className="sa-roadmap-order-btns">
+                                                    <button
+                                                        type="button"
+                                                        className="sa-roadmap-icon-btn"
+                                                        title="Move up"
+                                                        disabled={idx === 0}
+                                                        onClick={() => moveRow(idx, -1)}
+                                                    >
+                                                        <MoveUp size={16} />
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="sa-roadmap-icon-btn"
+                                                        title="Move down"
+                                                        disabled={idx === rowsOrdered.length - 1}
+                                                        onClick={() => moveRow(idx, 1)}
+                                                    >
+                                                        <MoveDown size={16} />
+                                                    </button>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                {(() => {
+                                                    const opts =
+                                                        row.projectName && !projectChoices.includes(row.projectName)
+                                                            ? [...projectChoices, row.projectName]
+                                                            : [...projectChoices];
+                                                    if (opts.length === 0) {
+                                                        return (
+                                                            <input
+                                                                className="sa-admin-input sa-admin-input--sm"
+                                                                style={{ width: '100%', maxWidth: 220 }}
+                                                                placeholder="Product name"
+                                                                value={row.projectName || ''}
+                                                                onChange={(e) =>
+                                                                    updateRow(idx, { projectName: e.target.value })
+                                                                }
+                                                            />
+                                                        );
+                                                    }
+                                                    return (
+                                                        <select
+                                                            className="sa-admin-input sa-admin-input--sm"
+                                                            style={{ ...ROADMAP_SELECT_STYLE, width: '100%', maxWidth: 220 }}
+                                                            value={row.projectName || ''}
+                                                            onChange={(e) => {
+                                                                const name = e.target.value;
+                                                                const p = projectByName.get(name);
+                                                                const envs =
+                                                                    p &&
+                                                                    Array.isArray(p.environments) &&
+                                                                    p.environments.length
+                                                                        ? p.environments.filter(Boolean)
+                                                                        : ENVIRONMENTS;
+                                                                updateRow(idx, {
+                                                                    projectName: name,
+                                                                    environment: envs[0] || '',
+                                                                });
+                                                            }}
+                                                        >
+                                                            {opts.map((n) => (
+                                                                <option key={n} value={n}>
+                                                                    {n}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    );
+                                                })()}
+                                            </td>
+                                            <td>
+                                                <select
+                                                    className="sa-admin-input sa-admin-input--sm"
+                                                    style={{ ...ROADMAP_SELECT_STYLE, width: '100%', maxWidth: 180 }}
+                                                    value={row.environment || ''}
+                                                    onChange={(e) => updateRow(idx, { environment: e.target.value })}
+                                                >
+                                                    {envOpts.map((e) => (
+                                                        <option key={e} value={e}>
+                                                            {e}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </td>
+                                            <td>
+                                                <input
+                                                    type="date"
+                                                    className="sa-admin-input sa-admin-input--sm"
+                                                    value={row.startDate || ''}
+                                                    onChange={(e) => updateRow(idx, { startDate: e.target.value })}
+                                                />
+                                            </td>
+                                            <td>
+                                                <input
+                                                    type="date"
+                                                    className="sa-admin-input sa-admin-input--sm"
+                                                    value={row.endDate || ''}
+                                                    onChange={(e) => updateRow(idx, { endDate: e.target.value })}
+                                                />
+                                            </td>
+                                            <td>
+                                                <input
+                                                    className="sa-admin-input sa-admin-input--sm"
+                                                    placeholder="Optional"
+                                                    value={row.label || ''}
+                                                    onChange={(e) => updateRow(idx, { label: e.target.value })}
+                                                />
+                                            </td>
+                                            <td>
+                                                <div className="sa-roadmap-color-cell">
+                                                    <input
+                                                        type="color"
+                                                        className="sa-roadmap-color-input"
+                                                        value={colorVal}
+                                                        onChange={(e) => updateRow(idx, { color: e.target.value })}
+                                                    />
+                                                    <button
+                                                        type="button"
+                                                        className="sa-roadmap-mini-link"
+                                                        onClick={() => updateRow(idx, { color: '' })}
+                                                    >
+                                                        Auto
+                                                    </button>
+                                                </div>
+                                            </td>
+                                            <td>
+                                                <button
+                                                    type="button"
+                                                    className="sa-roadmap-icon-btn sa-roadmap-icon-btn--danger"
+                                                    title="Remove"
+                                                    onClick={() => removeRow(idx)}
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div className="sa-admin-actions">
+                        <button
+                            type="button"
+                            className="sa-admin-save-btn"
+                            disabled={savingAnalytics || !analyticsSettings}
+                            onClick={() => onPersistAnalytics(normalizeAnalyticsSettings(analyticsSettings))}
+                        >
+                            {savingAnalytics ? <Loader2 size={16} className="sa-spin" /> : <Save size={16} />}
+                            Save project roadmap
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
+/* ═══════════════════════════════════════════════════
    MAIN COMPONENT
    ═══════════════════════════════════════════════════ */
 
@@ -455,6 +851,17 @@ const AnalyticsDashboard = ({ tickets = [], devOpsMembers = [], projects = [], s
             {activeView === 'traffic' && (
                 <TrafficView
                     tickets={filtered}
+                    analyticsSettings={analyticsSettings}
+                    setAnalyticsSettings={setAnalyticsSettings}
+                    isAdminRole={isAdminRole}
+                    onPersistAnalytics={persistAnalyticsSettings}
+                    savingAnalytics={savingAnalytics}
+                />
+            )}
+            {activeView === 'roadmap' && (
+                <ProjectRoadmapView
+                    projects={projects}
+                    ticketProductNames={productNames}
                     analyticsSettings={analyticsSettings}
                     setAnalyticsSettings={setAnalyticsSettings}
                     isAdminRole={isAdminRole}

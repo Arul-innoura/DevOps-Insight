@@ -37,6 +37,10 @@ public class AnalyticsSettings {
     @Builder.Default
     private List<EnvTrafficDelta> envTrafficDeltas = new ArrayList<>();
 
+    /** Admin-defined project/environment timeline rows for roadmap charts (User / DevOps / Admin). */
+    @Builder.Default
+    private List<ProjectTimelineSegment> projectTimelineSegments = new ArrayList<>();
+
     private Instant updatedAt;
     private String updatedBy;
 }

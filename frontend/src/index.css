@@ -16157,6 +16157,190 @@ button.btn-primary {
 [data-theme="retro"] .sa-table thead tr { background: #eee8d5; }
 [data-theme="retro"] .sa-hbar-track { background: #eee8d5; }
 
+/* ─── Project roadmap (admin + monitoring) ─── */
+.pr-monitoring-card {
+    margin-bottom: 1rem;
+}
+.pr-roadmap {
+    padding: 0.25rem 0 0.5rem;
+}
+.pr-roadmap--empty {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1rem 1.1rem;
+    background: #f8fafc;
+    border: 1px dashed #cbd5e1;
+    border-radius: 10px;
+    color: #64748b;
+    font-size: 0.875rem;
+}
+.pr-roadmap--empty p {
+    margin: 0;
+    line-height: 1.45;
+}
+.pr-roadmap-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin-bottom: 0.75rem;
+}
+.pr-roadmap-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #0f172a;
+    flex: 1 1 auto;
+}
+.pr-roadmap-axis {
+    font-size: 0.75rem;
+    color: #64748b;
+    font-weight: 500;
+}
+.pr-roadmap-track-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+}
+.pr-roadmap-axis-bar {
+    height: 2px;
+    background: linear-gradient(90deg, #e2e8f0, #94a3b8 50%, #e2e8f0);
+    border-radius: 2px;
+    margin-bottom: 0.15rem;
+}
+.pr-roadmap-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+.pr-roadmap-bar-slot {
+    position: relative;
+    height: 14px;
+    background: #f1f5f9;
+    border-radius: 7px;
+    overflow: hidden;
+}
+.pr-roadmap-bar {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    min-width: 4px;
+    border-radius: 6px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+    transition: transform 0.15s ease;
+}
+.pr-roadmap-bar:hover {
+    transform: scaleY(1.15);
+}
+.pr-roadmap-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.75rem;
+    font-size: 0.8125rem;
+}
+.pr-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.pr-roadmap-legend-text {
+    font-weight: 600;
+    color: #1e293b;
+}
+.pr-roadmap-dates {
+    color: #64748b;
+    font-size: 0.75rem;
+}
+.sa-roadmap-published .sa-roadmap-intro,
+.sa-roadmap-intro {
+    color: #64748b;
+    font-size: 0.875rem;
+    margin: 0 0 0.75rem;
+    line-height: 1.45;
+}
+.sa-roadmap-quick-add {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.75rem;
+    margin-bottom: 1rem;
+}
+.sa-roadmap-quick-label {
+    font-size: 0.8125rem;
+    color: #64748b;
+    font-weight: 500;
+}
+.sa-roadmap-quick-text {
+    min-width: 200px;
+    max-width: 320px;
+}
+.sa-roadmap-table-wrap {
+    margin-bottom: 1rem;
+}
+.sa-roadmap-order-btns {
+    display: flex;
+    gap: 0.25rem;
+}
+.sa-roadmap-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    background: #fff;
+    color: #475569;
+    cursor: pointer;
+}
+.sa-roadmap-icon-btn:hover:not(:disabled) {
+    background: #f8fafc;
+    border-color: #cbd5e1;
+}
+.sa-roadmap-icon-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+.sa-roadmap-icon-btn--danger {
+    color: #b91c1c;
+    border-color: #fecaca;
+}
+.sa-roadmap-icon-btn--danger:hover:not(:disabled) {
+    background: #fef2f2;
+}
+.sa-roadmap-color-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.2rem;
+}
+.sa-roadmap-color-input {
+    width: 44px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.sa-roadmap-mini-link {
+    border: none;
+    background: none;
+    padding: 0;
+    font-size: 0.7rem;
+    color: #2563eb;
+    cursor: pointer;
+    text-decoration: underline;
+}
+[data-theme="dark"] .pr-roadmap-title { color: #f0f6fc; }
+[data-theme="dark"] .pr-roadmap-legend-text { color: #c9d1d9; }
+[data-theme="dark"] .pr-roadmap-dates { color: #8b949e; }
+[data-theme="dark"] .pr-roadmap-bar-slot { background: #21262d; }
+[data-theme="dark"] .pr-roadmap--empty { background: #0d1117; border-color: #30363d; color: #8b949e; }
+[data-theme="dark"] .sa-roadmap-intro { color: #8b949e; }
+[data-theme="dark"] .sa-roadmap-icon-btn { background: #161b22; border-color: #30363d; color: #c9d1d9; }
+
 /* ═══════════════════════════════════════════════════════════
    SHIPIT LOADING SCREEN
    ═══════════════════════════════════════════════════════════ */
