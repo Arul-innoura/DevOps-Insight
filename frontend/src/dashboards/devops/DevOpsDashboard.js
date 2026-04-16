@@ -384,7 +384,9 @@ export const DevOpsDashboard = () => {
     }, [userName, userEmail]);
 
     const recalcSectionCounts = useCallback((allTickets) => {
-        const unassigned = allTickets;
+        const unassigned = allTickets.filter((t) =>
+            ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, {})
+        );
         const myTickets = allTickets.filter(t => isMine(t) && t.status !== TICKET_STATUS.CLOSED);
         const active = allTickets.filter(t =>
             [TICKET_STATUS.ACCEPTED, TICKET_STATUS.MANAGER_APPROVAL_PENDING,
@@ -634,7 +636,10 @@ export const DevOpsDashboard = () => {
 
         switch (section) {
             case 'unassigned':
-                result = result.filter(() => true);
+                // Queue only: raised + no assignee (same as UNASSIGNED bucket). Status dropdown does not apply here.
+                result = result.filter((t) =>
+                    ticketMatchesPrimaryStatusFilter(t, TICKET_FILTER_BUCKET.UNASSIGNED, {})
+                );
                 break;
             case 'myTickets':
                 // My Tickets shows all assigned tickets except closed (closed go to Archive > Closed)
@@ -668,8 +673,8 @@ export const DevOpsDashboard = () => {
                 break;
         }
         
-        // Apply additional filters
-        if (f.status) {
+        // Primary status filter applies to assigned views only — not the unassigned queue (separate tab).
+        if (f.status && section !== "unassigned") {
             const ctx = { userName, userEmail };
             result = result.filter((t) => ticketMatchesPrimaryStatusFilter(t, f.status, ctx));
         }
@@ -1651,6 +1656,7 @@ export const DevOpsDashboard = () => {
                             filters={filters}
                             onFilterChange={handleFilterChange}
                             hideAssignMeOption
+                            hideStatusFilter
                             showAssigneeFilter
                             assigneeOptions={unassignedAssigneeOptions}
                             searchPlaceholder="Search queue (id, person/email, environment, project id…)"
