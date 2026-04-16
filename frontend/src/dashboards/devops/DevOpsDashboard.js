@@ -41,12 +41,11 @@ import {
     ArrowRightCircle,
     LayoutDashboard
 } from "lucide-react";
-import { 
-    StatusBadge, 
-    TicketCard, 
-    TicketFilters, 
+import TicketComponentsPkg, {
+    StatusBadge,
+    TicketFilters,
     TicketDetailsModal,
-    HorizontalProgress
+    HorizontalProgress,
 } from "../TicketComponents";
 import {
     updateTicketStatus,
@@ -94,6 +93,8 @@ import TicketSearchBar from "../../components/TicketSearchBar";
 import { useTheme } from "../../services/ThemeContext";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
+
+const TicketCard = TicketComponentsPkg.TicketCard;
 
 const DEVOPS_SIDEBAR_NAV_DEFAULTS = { team: true, account: true };
 
@@ -737,6 +738,14 @@ export const DevOpsDashboard = () => {
     const paginatedTickets = requestTab === 'unassigned'
         ? filteredTickets.slice((unassignedPage - 1) * UNASSIGNED_PAGE_SIZE, unassignedPage * UNASSIGNED_PAGE_SIZE)
         : filteredTickets;
+
+    const paginatedTicketsRef = useRef(paginatedTickets);
+    paginatedTicketsRef.current = paginatedTickets;
+    const openTicketById = useCallback((id) => {
+        const sid = String(id);
+        const t = paginatedTicketsRef.current.find((x) => String(x.id) === sid);
+        if (t) setSelectedTicket(t);
+    }, []);
 
     useEffect(() => {
         if (requestTab !== 'unassigned') return;
@@ -1677,7 +1686,7 @@ export const DevOpsDashboard = () => {
                                 <TicketCard
                                     key={ticket.id}
                                     ticket={ticket}
-                                    onClick={() => setSelectedTicket(ticket)}
+                                    onOpenById={openTicketById}
                                     showActions={false}
                                     highlightAssigned={requestTab === 'unassigned'}
                                 />

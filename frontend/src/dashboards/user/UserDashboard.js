@@ -119,6 +119,14 @@ export const UserDashboard = () => {
     }, [ticketSearch]);
     useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
 
+    const filteredTicketsRef = useRef(filteredTickets);
+    filteredTicketsRef.current = filteredTickets;
+    const openTicketById = useCallback((id) => {
+        const sid = String(id);
+        const t = filteredTicketsRef.current.find((x) => String(x.id) === sid);
+        if (t) setSelectedTicket(t);
+    }, []);
+
     useEffect(() => {
         if (activeSection !== "settings") return;
         let cancelled = false;
@@ -908,7 +916,7 @@ export const UserDashboard = () => {
                                 <TicketCard 
                                     key={ticket.id}
                                     ticket={ticket}
-                                    onClick={() => setSelectedTicket(ticket)}
+                                    onOpenById={openTicketById}
                                     showActions={true}
                                 />
                             ))

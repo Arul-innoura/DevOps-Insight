@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback, useLayoutEffect, memo } from 'react';
 import { createPortal } from 'react-dom';
 import Quill from "quill";
 import "quill/dist/quill.snow.css";
@@ -631,10 +631,20 @@ const AttachmentChip = ({ url, name, onView }) => {
     );
 };
 
-export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
+export const TicketTimeline = memo(function TicketTimeline({ timeline = [], maskSensitive = false }) {
     const { theme } = useTheme();
     const statusPalette = getStatusColors(theme);
     const [viewing, setViewing] = useState(null); // { url, name }
+
+    const timelineItems = useMemo(() => {
+        if (!timeline || timeline.length === 0) return [];
+        return timeline.map((entry, index) => {
+            const attachments = Array.isArray(entry.attachments) ? entry.attachments : [];
+            const imageAttachments = attachments.filter(isImageUrl);
+            const nonImageAttachments = attachments.filter((u) => !isImageUrl(u));
+            return { entry, index, imageAttachments, nonImageAttachments };
+        });
+    }, [timeline]);
 
     if (!timeline || timeline.length === 0) {
         return <div className="timeline-empty">No timeline entries</div>;
@@ -647,15 +657,6 @@ export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
             hour: '2-digit', minute: '2-digit'
         });
     };
-
-    const timelineItems = useMemo(() => {
-        return timeline.map((entry, index) => {
-            const attachments = Array.isArray(entry.attachments) ? entry.attachments : [];
-            const imageAttachments = attachments.filter(isImageUrl);
-            const nonImageAttachments = attachments.filter((u) => !isImageUrl(u));
-            return { entry, index, imageAttachments, nonImageAttachments };
-        });
-    }, [timeline]);
 
     return (
         <>
@@ -748,7 +749,7 @@ export const TicketTimeline = ({ timeline = [], maskSensitive = false }) => {
             </div>
         </>
     );
-};
+});
 
 // ============ TYPE ACCENT COLORS ============
 const TYPE_ACCENT = {
@@ -779,17 +780,23 @@ const getRequestTypeIcon = (requestType, size = 16) => {
 };
 
 // ============ TICKET CARD COMPONENT ============
-export const TicketCard = ({
+function TicketCardInner({
     ticket,
     onClick,
+    /** Stable handler from parent (e.g. ref + useCallback) — preferred over `onClick` for list open to avoid row re-renders. */
+    onOpenById,
     showActions = false,
     onStatusChange,
     user,
     highlightAssigned = false
-}) => {
+}) {
     const { theme } = useTheme();
     const toast = useToast();
     const [expanded, setExpanded] = useState(false);
+    const handleCardActivate = useCallback(() => {
+        if (typeof onOpenById === "function") onOpenById(ticket.id);
+        else onClick?.();
+    }, [onClick, onOpenById, ticket.id]);
     const accent = getTypeAccent(ticket.requestType);
     const ageDays = ticket?.createdAt ? Math.floor((Date.now() - new Date(ticket.createdAt).getTime()) / 86400000) : 0;
     const ageClass = ageDays >= 6 ? "old" : ageDays >= 3 ? "mid" : "new";
@@ -831,7 +838,7 @@ export const TicketCard = ({
     return (
         <div
             className={`jira-ticket-card ${isActionRequired ? 'status-glow' : ''}`}
-            onClick={onClick}
+            onClick={handleCardActivate}
             style={{
                 borderLeftColor: accent.border,
                 borderLeftWidth: 4,
@@ -912,7 +919,12 @@ export const TicketCard = ({
             )}
         </div>
     );
-};
+}
+
+export const TicketCard = memo(TicketCardInner);
+
+/** @deprecated Use `TicketCard` with `onOpenById` — kept as an alias for existing imports. */
+export const TicketCardClickable = TicketCard;
 
 // ============ TICKET FILTERS COMPONENT ============
 export const TicketFilters = ({
@@ -1220,63 +1232,17 @@ function TicketActionMenu({
     );
 }
 
-export const TicketDetailsModal = ({
-    ticket,
-    onClose,
-    onStatusChange,
-    onAddNote,
-    user,
-    canManage = false,
-    /** Only DevOps: cost approver picker, cost estimate window, and cost-related status transitions */
-    canSubmitCostEstimate = false,
-    onToggleActiveStatus,
-    onRequestCostApproval,
-    /** DevOps: open forward-to-teammate flow (parent shows picker modal). */
-    onForward,
-    /** DevOps: quick claim action for unassigned queue */
-    onAssignToSelf,
-    /** Admin: restore soft-deleted ticket from recycle bin */
-    onRestoreTicket
-}) => {
-    const toast = useToast();
-    const [note, setNote] = useState('');
-    const [reopenNote, setReopenNote] = useState('');
-    const [selectedStatus, setSelectedStatus] = useState('');
-    // Each item: { file, name, size, status: 'pending'|'uploading'|'done'|'error', url?, error? }
-    const [pendingFiles, setPendingFiles] = useState([]);
-    const [showApprovalEditor, setShowApprovalEditor] = useState(false);
-    const [approvalEditorText, setApprovalEditorText] = useState('');
-    const [approvalEditorHtml, setApprovalEditorHtml] = useState('');
-    const noteFileInputRef = useRef(null);
-    /** DevOps: workflow cost approver chosen in Actions dropdown (sent with cost submission). */
-    const [pendingCostApproverEmail, setPendingCostApproverEmail] = useState(null);
-    const { theme } = useTheme();
-
-    useEffect(() => {
-        if (ticket?.id) {
-            setPendingCostApproverEmail(null);
-            setReopenNote("");
-        }
-    }, [ticket?.id]);
-
-    if (!ticket) return null;
-    const handleCopyTicketId = async () => {
-        const ticketId = String(ticket?.id || "").trim();
-        if (!ticketId) return;
-        try {
-            await navigator.clipboard.writeText(ticketId);
-            toast.success("Copied", `Ticket ID ${ticketId} copied`);
-        } catch {
-            toast.error("Copy failed", "Could not copy ticket ID");
-        }
-    };
-
+/**
+ * Ticket-driven fields for TicketDetailsModal only (not note/selection state), so typing in the
+ * modal does not rebuild action menus, approval lists, and dropdown groups on every keystroke.
+ */
+function buildTicketDetailsModalDerived(ticket, canManage, canSubmitCostEstimate, user, onAssignToSelf, onForward) {
     const ticketIsDeleted = !!ticket.deleted;
     const effectiveCanManage = canManage && !ticketIsDeleted;
     const effectiveCostEstimate = canSubmitCostEstimate && !ticketIsDeleted;
 
     const accent = getTypeAccent(ticket.requestType);
-    // Get simplified action label with icon indicator
+
     const getStatusActionLabel = (status) => {
         if (status === TICKET_STATUS.ACCEPTED) return "Assign";
         const config = STATUS_DISPLAY_CONFIG[status];
@@ -1284,7 +1250,7 @@ export const TicketDetailsModal = ({
         if (!config) return status;
         return config.label;
     };
-    
+
     const configuredApprovalPeople = (ticket.workflowConfiguration?.approvalLevels || [])
         .slice()
         .sort((a, b) => (a.level || 0) - (b.level || 0))
@@ -1349,10 +1315,8 @@ export const TicketDetailsModal = ({
             : [];
 
     const managerRespondedApproved = String(ticket.managerApprovalStatus || "").toUpperCase() === "APPROVED";
-    // Users can always trigger an approval action regardless of ticket state
     const approvalActionsForUser = approvalActions;
 
-    // Users can always close their own ticket (unless already closed)
     const userCloseAction = ticket.status !== TICKET_STATUS.CLOSED
         ? [{ value: `STATUS::${TICKET_STATUS.CLOSED}`, label: "Close ticket", type: "status", status: TICKET_STATUS.CLOSED }]
         : [];
@@ -1364,7 +1328,6 @@ export const TicketDetailsModal = ({
             ? [{ value: REOPEN_ACTION_VALUE, label: "Reopen ticket", type: "reopen" }]
             : [];
 
-    // DevOps/Admin: only primary lifecycle targets (not on hold, cost/manager approved, etc.).
     const getDevOpsActionLabel = (status) => {
         switch (status) {
             case TICKET_STATUS.CREATED:
@@ -1382,9 +1345,6 @@ export const TicketDetailsModal = ({
         }
     };
 
-    // MANAGER_APPROVAL_PENDING is excluded — use "Send for approval" in the separate group.
-    // DevOps/Admin: hide manual status list only on the true unassigned queue (raised + no assignee).
-    // Tickets already in progress etc. still get the menu even if assignee fields are missing from the payload.
     const inDevOpsUnassignedQueue =
         effectiveCanManage &&
         ticket.status === TICKET_STATUS.CREATED;
@@ -1400,10 +1360,228 @@ export const TicketDetailsModal = ({
               }))
         : [];
 
-    // Users: approval requests + close only. DevOps: status + manager approval + cost approver targets.
     const selectableActions = effectiveCanManage
         ? [...defaultActions, ...approvalActions, ...costApprovalActions]
         : [...userReopenSelectAction, ...userCloseAction, ...approvalActionsForUser];
+
+    const actionDropdownGroups = [];
+    if (effectiveCanManage && defaultActions.length > 0) {
+        actionDropdownGroups.push({
+            title: "Status",
+            items: defaultActions.map((a) => ({ value: a.value, label: a.label })),
+        });
+    }
+    if (!canManage && userReopenSelectAction.length > 0) {
+        actionDropdownGroups.push({
+            title: "Closed ticket",
+            items: userReopenSelectAction.map((a) => ({ value: a.value, label: a.label })),
+        });
+    }
+    if (!canManage && userCloseAction.length > 0) {
+        actionDropdownGroups.push({
+            title: "Actions",
+            items: userCloseAction.map((a) => ({ value: a.value, label: a.label })),
+        });
+    }
+    if (effectiveCanManage && (approvalActions.length > 0 || costApprovalActions.length > 0)) {
+        actionDropdownGroups.push({
+            title: "Request & cost approval",
+            items: [
+                ...approvalActions.map((a) => ({ value: a.value, label: a.label })),
+                ...costApprovalActions.map((a) => ({ value: a.value, label: a.label })),
+            ],
+        });
+    }
+    if (!canManage && approvalActions.length > 0) {
+        actionDropdownGroups.push({
+            title: "Send for approval",
+            items: approvalActions.map((a) => ({ value: a.value, label: a.label })),
+        });
+    }
+    if (
+        effectiveCanManage &&
+        defaultActions.length === 0 &&
+        approvalActions.length === 0 &&
+        costApprovalActions.length === 0
+    ) {
+        actionDropdownGroups.push({
+            title: "",
+            items: [
+                {
+                    value: DEVOPS_NO_ACTIONS_INFO,
+                    label: inDevOpsUnassignedQueue
+                        ? "Assign this ticket from the list first — then status and workflow actions appear here"
+                        : "No workflow actions — add approvers / cost approvers in project workflow settings",
+                    disabled: false,
+                },
+            ],
+        });
+    }
+
+    const canForwardTicket =
+        typeof onForward === "function" &&
+        !ticketIsDeleted &&
+        !!ticket.assignedTo &&
+        ![TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(ticket.status);
+
+    return {
+        ticketIsDeleted,
+        effectiveCanManage,
+        effectiveCostEstimate,
+        accent,
+        configuredApprovalPeople,
+        approvalActions,
+        requiresCostApproval,
+        managerRespondedApproved,
+        isRequesterReopen,
+        inDevOpsUnassignedQueue,
+        selectableActions,
+        actionDropdownGroups,
+        canForwardTicket,
+    };
+}
+
+export const TicketDetailsModal = ({
+    ticket,
+    onClose,
+    onStatusChange,
+    onAddNote,
+    user,
+    canManage = false,
+    /** Only DevOps: cost approver picker, cost estimate window, and cost-related status transitions */
+    canSubmitCostEstimate = false,
+    onToggleActiveStatus,
+    onRequestCostApproval,
+    /** DevOps: open forward-to-teammate flow (parent shows picker modal). */
+    onForward,
+    /** DevOps: quick claim action for unassigned queue */
+    onAssignToSelf,
+    /** Admin: restore soft-deleted ticket from recycle bin */
+    onRestoreTicket
+}) => {
+    const toast = useToast();
+    const [note, setNote] = useState('');
+    const [reopenNote, setReopenNote] = useState('');
+    const [selectedStatus, setSelectedStatus] = useState('');
+    // Each item: { file, name, size, status: 'pending'|'uploading'|'done'|'error', url?, error? }
+    const [pendingFiles, setPendingFiles] = useState([]);
+    const [showApprovalEditor, setShowApprovalEditor] = useState(false);
+    const [approvalEditorText, setApprovalEditorText] = useState('');
+    const [approvalEditorHtml, setApprovalEditorHtml] = useState('');
+    const noteFileInputRef = useRef(null);
+    /** DevOps: workflow cost approver chosen in Actions dropdown (sent with cost submission). */
+    const [pendingCostApproverEmail, setPendingCostApproverEmail] = useState(null);
+    const { theme } = useTheme();
+
+    useEffect(() => {
+        if (ticket?.id) {
+            setPendingCostApproverEmail(null);
+            setReopenNote("");
+        }
+    }, [ticket?.id]);
+
+    const actionFlowItems = useMemo(() => {
+        if (!ticket) return [];
+        const effectiveCanManageForFlow = canManage && !ticket.deleted;
+        const flowTimelineSource = dedupeConsecutiveStatusTimeline(
+            (ticket.timeline || []).filter((entry) => !entry?.isNote)
+        );
+        let mgrPendingRound = 0;
+        let mgrApprovedRound = 0;
+        let costPendingRound = 0;
+        let costApprovedRound = 0;
+
+        return flowTimelineSource.map((entry, idx) => {
+            const st = timelineStatusKey(entry?.status);
+            let label = entry?.status || "Updated";
+            if (st === "MANAGER_APPROVAL_PENDING") {
+                mgrPendingRound += 1;
+                label = mgrPendingRound > 1 ? `Pending #${mgrPendingRound}` : "Pending";
+            } else if (st === "MANAGER_APPROVED") {
+                mgrApprovedRound += 1;
+                label = mgrApprovedRound > 1 ? `Approved #${mgrApprovedRound}` : "Approved";
+            } else if (st === "COST_APPROVAL_PENDING") {
+                costPendingRound += 1;
+                label = costPendingRound > 1 ? `Cost #${costPendingRound}` : "Cost Review";
+            } else if (st === "COST_APPROVED") {
+                costApprovedRound += 1;
+                label = costApprovedRound > 1 ? `Cost OK #${costApprovedRound}` : "Cost OK";
+            } else if (st === "CREATED") {
+                label = "New";
+            } else if (st === "ACCEPTED") {
+                label = "Assigned";
+            } else if (st === "IN_PROGRESS") {
+                label = "Active";
+            } else if (st === "COMPLETED") {
+                label = "Done";
+            } else if (st === "CLOSED") {
+                label = "Closed";
+            } else if (st === "ACTION_REQUIRED") {
+                label = "Action";
+            } else if (st === "ON_HOLD") {
+                label = "Hold";
+            }
+            const tone = (() => {
+                if (st === "CLOSED" || st === "REJECTED") return "red";
+                if (st === "MANAGER_APPROVAL_PENDING" || st === "COST_APPROVAL_PENDING") return "red";
+                if (st === "MANAGER_APPROVED" || st === "COST_APPROVED") return "green";
+                if (st === "COMPLETED" || st === "IN_PROGRESS" || st === "ACCEPTED") return "green";
+                if (st === "ACTION_REQUIRED" || st === "ON_HOLD") return "amber";
+                return "blue";
+            })();
+            const rawNotes = entry?.notes ? normalizeFlowNotes(entry.notes).slice(0, 80) : '';
+            const notesForTooltip = effectiveCanManageForFlow ? rawNotes : maskCostText(rawNotes);
+            return { id: `${entry?.timestamp || "x"}-${idx}`, label, tone, user: entry?.user || '', timestamp: entry?.timestamp || '', notes: notesForTooltip };
+        });
+    }, [ticket, canManage]);
+
+    const modalDerived = useMemo(
+        () =>
+            ticket
+                ? buildTicketDetailsModalDerived(
+                      ticket,
+                      canManage,
+                      canSubmitCostEstimate,
+                      user,
+                      onAssignToSelf,
+                      onForward
+                  )
+                : null,
+        [ticket, canManage, canSubmitCostEstimate, user, onAssignToSelf, onForward]
+    );
+
+    const runtimeBarTone = useMemo(() => {
+        if (!ticket) return runtimeBarToneForStatus("", theme);
+        return runtimeBarToneForStatus(timelineStatusKey(ticket.status), theme);
+    }, [ticket, theme]);
+
+    if (!ticket) return null;
+    const handleCopyTicketId = async () => {
+        const ticketId = String(ticket?.id || "").trim();
+        if (!ticketId) return;
+        try {
+            await navigator.clipboard.writeText(ticketId);
+            toast.success("Copied", `Ticket ID ${ticketId} copied`);
+        } catch {
+            toast.error("Copy failed", "Could not copy ticket ID");
+        }
+    };
+
+    const {
+        ticketIsDeleted,
+        effectiveCanManage,
+        effectiveCostEstimate,
+        accent,
+        configuredApprovalPeople,
+        approvalActions,
+        requiresCostApproval,
+        managerRespondedApproved,
+        isRequesterReopen,
+        inDevOpsUnassignedQueue,
+        selectableActions,
+        actionDropdownGroups,
+        canForwardTicket,
+    } = modalDerived;
 
     const selectedApprovalAction = selectedStatus.startsWith("APPROVAL::")
         ? approvalActions.find((a) => a.value === selectedStatus)
@@ -1613,122 +1791,6 @@ export const TicketDetailsModal = ({
             hour: '2-digit', minute: '2-digit'
         });
     };
-    const latestTimelineEntry = Array.isArray(ticket.timeline) && ticket.timeline.length > 0
-        ? ticket.timeline[ticket.timeline.length - 1]
-        : null;
-    const actionFlowItems = useMemo(() => {
-        const flowTimelineSource = dedupeConsecutiveStatusTimeline(
-            (ticket.timeline || []).filter((entry) => !entry?.isNote)
-        );
-        let mgrPendingRound = 0;
-        let mgrApprovedRound = 0;
-        let costPendingRound = 0;
-        let costApprovedRound = 0;
-
-        return flowTimelineSource.map((entry, idx) => {
-            const st = timelineStatusKey(entry?.status);
-            let label = entry?.status || "Updated";
-            if (st === "MANAGER_APPROVAL_PENDING") {
-                mgrPendingRound += 1;
-                label = mgrPendingRound > 1 ? `Pending #${mgrPendingRound}` : "Pending";
-            } else if (st === "MANAGER_APPROVED") {
-                mgrApprovedRound += 1;
-                label = mgrApprovedRound > 1 ? `Approved #${mgrApprovedRound}` : "Approved";
-            } else if (st === "COST_APPROVAL_PENDING") {
-                costPendingRound += 1;
-                label = costPendingRound > 1 ? `Cost #${costPendingRound}` : "Cost Review";
-            } else if (st === "COST_APPROVED") {
-                costApprovedRound += 1;
-                label = costApprovedRound > 1 ? `Cost OK #${costApprovedRound}` : "Cost OK";
-            } else if (st === "CREATED") {
-                label = "New";
-            } else if (st === "ACCEPTED") {
-                label = "Assigned";
-            } else if (st === "IN_PROGRESS") {
-                label = "Active";
-            } else if (st === "COMPLETED") {
-                label = "Done";
-            } else if (st === "CLOSED") {
-                label = "Closed";
-            } else if (st === "ACTION_REQUIRED") {
-                label = "Action";
-            } else if (st === "ON_HOLD") {
-                label = "Hold";
-            }
-            const tone = (() => {
-                if (st === "CLOSED" || st === "REJECTED") return "red";
-                if (st === "MANAGER_APPROVAL_PENDING" || st === "COST_APPROVAL_PENDING") return "red";
-                if (st === "MANAGER_APPROVED" || st === "COST_APPROVED") return "green";
-                if (st === "COMPLETED" || st === "IN_PROGRESS" || st === "ACCEPTED") return "green";
-                if (st === "ACTION_REQUIRED" || st === "ON_HOLD") return "amber";
-                return "blue";
-            })();
-            const rawNotes = entry?.notes ? normalizeFlowNotes(entry.notes).slice(0, 80) : '';
-            const notesForTooltip = effectiveCanManage ? rawNotes : maskCostText(rawNotes);
-            return { id: `${entry?.timestamp || "x"}-${idx}`, label, tone, user: entry?.user || '', timestamp: entry?.timestamp || '', notes: notesForTooltip };
-        });
-    }, [ticket.timeline, effectiveCanManage]);
-    const canForwardTicket =
-        typeof onForward === "function" &&
-        !ticketIsDeleted &&
-        !!ticket.assignedTo &&
-        ![TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(ticket.status);
-
-    const runtimeBarTone = runtimeBarToneForStatus(timelineStatusKey(ticket.status), theme);
-
-    const actionDropdownGroups = [];
-    if (effectiveCanManage && defaultActions.length > 0) {
-        actionDropdownGroups.push({
-            title: "Status",
-            items: defaultActions.map((a) => ({ value: a.value, label: a.label })),
-        });
-    }
-    if (!canManage && userReopenSelectAction.length > 0) {
-        actionDropdownGroups.push({
-            title: "Closed ticket",
-            items: userReopenSelectAction.map((a) => ({ value: a.value, label: a.label })),
-        });
-    }
-    if (!canManage && userCloseAction.length > 0) {
-        actionDropdownGroups.push({
-            title: "Actions",
-            items: userCloseAction.map((a) => ({ value: a.value, label: a.label })),
-        });
-    }
-    if (effectiveCanManage && (approvalActions.length > 0 || costApprovalActions.length > 0)) {
-        actionDropdownGroups.push({
-            title: "Request & cost approval",
-            items: [
-                ...approvalActions.map((a) => ({ value: a.value, label: a.label })),
-                ...costApprovalActions.map((a) => ({ value: a.value, label: a.label })),
-            ],
-        });
-    }
-    if (!canManage && approvalActions.length > 0) {
-        actionDropdownGroups.push({
-            title: "Send for approval",
-            items: approvalActions.map((a) => ({ value: a.value, label: a.label })),
-        });
-    }
-    if (
-        effectiveCanManage &&
-        defaultActions.length === 0 &&
-        approvalActions.length === 0 &&
-        costApprovalActions.length === 0
-    ) {
-        actionDropdownGroups.push({
-            title: "",
-            items: [
-                {
-                    value: DEVOPS_NO_ACTIONS_INFO,
-                    label: inDevOpsUnassignedQueue
-                        ? "Assign this ticket from the list first — then status and workflow actions appear here"
-                        : "No workflow actions — add approvers / cost approvers in project workflow settings",
-                    disabled: false,
-                },
-            ],
-        });
-    }
 
     return (
         <div className="modal-overlay" onClick={onClose}>

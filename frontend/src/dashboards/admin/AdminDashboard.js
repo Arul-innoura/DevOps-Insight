@@ -841,6 +841,16 @@ export const AdminDashboard = () => {
         ticketSearchRef.current = ticketSearch;
     }, [ticketSearch]);
 
+    const filteredTicketsRef = useRef(filteredTickets);
+    const deletedTicketsRef = useRef(deletedTicketsList);
+    filteredTicketsRef.current = filteredTickets;
+    deletedTicketsRef.current = deletedTicketsList;
+    const openTicketById = useCallback((id) => {
+        const sid = String(id);
+        let t = filteredTicketsRef.current.find((x) => String(x.id) === sid);
+        if (!t) t = deletedTicketsRef.current.find((x) => String(x.id) === sid);
+        if (t) setSelectedTicket(t);
+    }, []);
 
     // Sound settings handlers
     const handleSoundToggle = () => {
@@ -1779,7 +1789,7 @@ export const AdminDashboard = () => {
                                     <div key={ticket.id} className="ticket-card-wrapper admin-view">
                                         <TicketCard
                                             ticket={ticket}
-                                            onClick={() => setSelectedTicket(ticket)}
+                                            onOpenById={openTicketById}
                                             showActions={true}
                                         />
                                         <div className="admin-actions" onClick={(e) => e.stopPropagation()}>
@@ -1883,7 +1893,7 @@ export const AdminDashboard = () => {
                                     <div key={ticket.id} className="ticket-card-wrapper admin-view">
                                         <TicketCard 
                                             ticket={ticket}
-                                            onClick={() => setSelectedTicket(ticket)}
+                                            onOpenById={openTicketById}
                                             showActions={true}
                                         />
                                         <div className="admin-actions" onClick={e => e.stopPropagation()}>

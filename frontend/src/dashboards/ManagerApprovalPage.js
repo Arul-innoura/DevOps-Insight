@@ -272,6 +272,13 @@ const ManagerApprovalPage = () => {
                             <FileText size={18} /> Request details
                         </h2>
 
+                        {tokenInfo.requestContextNote?.trim() ? (
+                            <div style={styles.purposeBox}>
+                                <p style={styles.purposeLabel}>Message for this approval</p>
+                                <p style={styles.purposeText}>{tokenInfo.requestContextNote.trim()}</p>
+                            </div>
+                        ) : null}
+
                         {tokenInfo.purpose?.trim() ? (
                             <div style={styles.purposeBox}>
                                 <p style={styles.purposeLabel}>Purpose:</p>
