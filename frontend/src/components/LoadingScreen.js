@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ShipItEyeIcon } from './ShipItEyeIcon';
 
 const MESSAGES = [
     "Warming up the engines...",
@@ -36,11 +37,14 @@ export const LoadingScreen = ({ role = 'user' }) => {
                 </div>
 
                 {/* Brand */}
-                <div className="sl-brand">
+                <div className="sl-brand sl-brand--with-eye">
+                    <ShipItEyeIcon className="sl-brand-eye" blink />
+                    <div className="sl-brand-titles">
                     <span className="sl-brand-text">ShipIt</span>
                     <span className="sl-brand-badge">
                         {role === 'admin' ? '⚡ Admin' : role === 'devops' ? '🛠 DevOps' : '👤 Portal'}
                     </span>
+                    </div>
                 </div>
 
                 {/* Cycling message */}

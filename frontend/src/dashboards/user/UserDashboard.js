@@ -19,8 +19,8 @@ import {
     CheckCircle,
     AlertCircle,
     XCircle,
-    Zap
 } from "lucide-react";
+import { ShipItEyeIcon } from "../../components/ShipItEyeIcon";
 import { 
     TicketCard, 
     TicketFilters, 
@@ -486,8 +486,8 @@ export const UserDashboard = () => {
             <aside className="shipit-sidebar">
                 {/* Brand */}
                 <div className="sb-brand">
-                    <div className="sb-brand-icon" style={{ background: '#7c3aed' }}>
-                        <Zap size={18} />
+                    <div className="sb-brand-icon sb-brand-icon--eye">
+                        <ShipItEyeIcon className="sb-brand-eye" blink />
                         <span className={`sb-conn-dot ${isConnected ? 'connected' : 'disconnected'}`}
                               title={isConnected ? 'Live connection' : 'Reconnecting...'} />
                     </div>

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 
 // Components
 import Login from './auth/login';
@@ -10,6 +10,7 @@ import UserDashboard from './dashboards/user/UserDashboard';
 import ManagerApprovalPage from './dashboards/ManagerApprovalPage';
 import ProtectedRoute from './routes/ProtectedRoute';
 import { RoleRedirect, Unauthorized } from './routes/roleRoutes';
+import NotFoundPage from './pages/NotFoundPage';
 import { ToastProvider } from './services/ToastNotification';
 import { ThemeProvider } from './services/ThemeContext';
 
@@ -104,7 +105,7 @@ function App() {
 
               {/* Error and Unauthorized pages */}
               <Route path="/unauthorized" element={<Unauthorized />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
+              <Route path="*" element={<NotFoundPage />} />
             </Routes>
           </div>
         </Router>

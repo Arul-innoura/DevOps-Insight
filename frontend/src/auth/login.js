@@ -2,9 +2,12 @@ import React, { useEffect } from "react";
 import { useMsal, useIsAuthenticated } from "@azure/msal-react";
 import { useNavigate } from "react-router-dom";
 import { loginRequest } from "./authConfig";
+import { ShipItEyeIcon } from "../components/ShipItEyeIcon";
 
-const LoginPageShell = ({ children }) => (
-    <div className="login-page">
+const LOGIN_HERO_VIDEO = `${process.env.PUBLIC_URL || ""}/login-devops-hero.mp4`;
+
+const LoginPageShell = ({ children, pageClassName = "" }) => (
+    <div className={`login-page${pageClassName ? ` ${pageClassName}` : ""}`.trim()}>
         <LoginBackdrop />
         {children}
     </div>
@@ -33,6 +36,15 @@ const Login = () => {
     const { instance, inProgress } = useMsal();
     const isAuthenticated = useIsAuthenticated();
     const navigate = useNavigate();
+
+    useEffect(() => {
+        const previousTitle = document.title;
+        document.title = "Shipt It";
+        return () => {
+            document.title = previousTitle;
+        };
+    }, []);
+
     // Redirect authenticated users
     useEffect(() => {
         if (isAuthenticated && inProgress === "none") {
@@ -97,41 +109,77 @@ const Login = () => {
     }
 
     return (
-        <LoginPageShell>
-            <div className="login-auth-layout animate-in">
-                <header className="login-top-brand login-stagger login-stagger-1">
-                    <div className="brand-logo" aria-hidden="true">
-                        <span className="logo-glow" />
-                        <svg className="brand-logo-icon" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M8 22V10l6 6 6-6v12" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
-                            <path d="M8 26h16" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" opacity="0.35" />
-                        </svg>
-                    </div>
-                    <div className="brand-text">
-                        <h1>ShipIt</h1>
-                        <span className="brand-tagline">Ship fast. Ship smart.</span>
-                    </div>
-                </header>
-
-                <main className="login-main">
-                    <div className="login-main-inner login-stagger login-stagger-2">
-                        <button
-                            type="button"
-                            className="azure-login-btn"
-                            onClick={handleAzureLogin}
+        <LoginPageShell pageClassName="login-page--video-split">
+            <div className="login-auth-layout login-auth-layout--video-split animate-in">
+                <div className="login-video-split">
+                    <div className="login-video-split__media" aria-hidden="true">
+                        <video
+                            className="login-hero-video"
+                            autoPlay
+                            loop
+                            muted
+                            playsInline
+                            preload="auto"
+                            disablePictureInPicture
+                            tabIndex={-1}
                         >
-                            <span className="azure-login-btn-shine" aria-hidden="true" />
-                            <span className="btn-content">
+                            <source src={LOGIN_HERO_VIDEO} type="video/mp4" />
+                        </video>
+                    </div>
+                    <div className="login-video-split__panel">
+                        <div className="login-video-split__panel-inner login-stagger login-stagger-1">
+                            <p className="login-jenkins-sr-hint">
+                                Email and password fields are for display only. Use Sign in with Microsoft to continue.
+                            </p>
+                            <div className="login-jenkins-logo" aria-hidden="true">
+                                <ShipItEyeIcon className="login-jenkins-eye" blink />
+                            </div>
+                            <h1 className="login-video-split-title">Welcome to Shipt It</h1>
+                            <p className="login-video-split-tagline">
+                                DevOps workspace — use your Microsoft work account to sign in.
+                            </p>
+
+                            <div className="login-jenkins-showcase" aria-hidden="true">
+                                <input
+                                    type="email"
+                                    className="login-jenkins-input"
+                                    placeholder="Email"
+                                    readOnly
+                                    tabIndex={-1}
+                                    autoComplete="off"
+                                />
+                                <input
+                                    type="password"
+                                    className="login-jenkins-input"
+                                    placeholder="Password"
+                                    readOnly
+                                    tabIndex={-1}
+                                    autoComplete="off"
+                                />
+                                <button
+                                    type="button"
+                                    className="login-jenkins-btn login-jenkins-btn--primary"
+                                    tabIndex={-1}
+                                    onClick={(e) => e.preventDefault()}
+                                >
+                                    Login
+                                </button>
+                                <div className="login-jenkins-or">OR</div>
+                            </div>
+
+                            <button
+                                type="button"
+                                className="login-jenkins-btn login-jenkins-btn--sso"
+                                onClick={handleAzureLogin}
+                            >
                                 <MicrosoftLogo />
                                 <span>Sign in with Microsoft</span>
-                            </span>
-                        </button>
-                    </div>
-                </main>
+                            </button>
 
-                <footer className="login-bottom-hint login-stagger login-stagger-3">
-                    <p>Microsoft Entra ID</p>
-                </footer>
+                            <p className="login-jenkins-foot">Microsoft Entra ID</p>
+                        </div>
+                    </div>
+                </div>
             </div>
         </LoginPageShell>
     );

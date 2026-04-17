@@ -928,6 +928,242 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   animation: cardSlideIn 0.75s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
 
+/* Jenkins-style login (centered card, dummy fields + Microsoft SSO) */
+.login-page--jenkins {
+  background: #ffffff;
+}
+
+.login-page--jenkins .login-page-backdrop {
+  display: none;
+}
+
+.login-auth-layout--jenkins {
+  justify-content: center;
+  align-items: center;
+  padding: 2rem 1.25rem;
+}
+
+.login-jenkins-card {
+  position: relative;
+  width: 100%;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: center;
+}
+
+.login-jenkins-sr-hint {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.login-jenkins-logo {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+}
+
+.login-jenkins-eye .shipit-eye-icon__svg {
+  width: 72px;
+  height: auto;
+  max-height: 88px;
+}
+
+.login-jenkins-title {
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 1.35rem;
+  letter-spacing: -0.02em;
+  font-family: var(--font-sans, "Segoe UI", system-ui, sans-serif);
+}
+
+.login-jenkins-showcase {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  text-align: left;
+}
+
+.login-jenkins-input {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #c5ccd4;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  box-sizing: border-box;
+  background: #fff;
+  color: #111827;
+  font-family: inherit;
+}
+
+.login-jenkins-input:focus {
+  outline: 2px solid #006096;
+  outline-offset: 0;
+  border-color: #006096;
+}
+
+.login-jenkins-btn {
+  width: 100%;
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+
+.login-jenkins-btn--primary {
+  margin-top: 0.2rem;
+  background: #006096;
+  color: #fff;
+}
+
+.login-jenkins-btn--primary:hover {
+  filter: brightness(1.06);
+}
+
+.login-jenkins-btn--primary:active {
+  transform: translateY(1px);
+}
+
+.login-jenkins-or {
+  margin: 0.75rem 0 0.15rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #4b5563;
+  text-align: center;
+  letter-spacing: 0.04em;
+}
+
+.login-jenkins-btn--sso {
+  background: #003e61;
+  color: #fff;
+}
+
+.login-jenkins-btn--sso:hover {
+  filter: brightness(1.08);
+}
+
+.login-jenkins-btn--sso:active {
+  transform: translateY(1px);
+}
+
+.login-jenkins-btn--sso:focus-visible {
+  outline: 2px solid #0ea5e9;
+  outline-offset: 2px;
+}
+
+.login-jenkins-foot {
+  margin: 1rem 0 0;
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  color: #9ca3af;
+}
+
+/* Login — split layout: DevOps hero video + welcome / dummy form / Microsoft SSO */
+/* Match video’s white background: override default login gradient on the same element */
+.login-page.login-page--video-split {
+  background: #ffffff;
+}
+
+.login-page--video-split .login-page-backdrop {
+  display: none;
+}
+
+.login-auth-layout--video-split {
+  flex: 1;
+  min-height: 100vh;
+  padding: 0;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+.login-video-split {
+  display: flex;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: min(100vh, 100%);
+  align-items: stretch;
+  background: #ffffff;
+}
+
+.login-video-split__media {
+  flex: 1 1 50%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem 1rem;
+  background: #ffffff;
+  border-right: 1px solid #e2e8f0;
+}
+
+.login-hero-video {
+  width: 100%;
+  max-width: 720px;
+  max-height: min(90vh, 860px);
+  height: auto;
+  object-fit: contain;
+  display: block;
+  background-color: #ffffff;
+  pointer-events: none;
+  outline: none;
+}
+
+.login-video-split__panel {
+  flex: 0 1 440px;
+  max-width: 440px;
+  width: 100%;
+  padding: 1.75rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  box-sizing: border-box;
+  background: #ffffff;
+}
+
+.login-video-split__panel-inner {
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+}
+
+.login-video-split-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #111827;
+  margin: 0 0 0.4rem;
+  letter-spacing: -0.02em;
+  text-align: center;
+  font-family: var(--font-sans, "Segoe UI", system-ui, sans-serif);
+}
+
+.login-video-split-tagline {
+  margin: 0 0 1.2rem;
+  font-size: 0.8125rem;
+  color: #6b7280;
+  text-align: center;
+  line-height: 1.45;
+}
+
 .login-top-brand {
   display: flex;
   align-items: center;
@@ -946,6 +1182,22 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
 .login-top-brand .brand-logo-icon {
   width: 24px;
   height: 24px;
+}
+
+.brand-logo.brand-logo--eye {
+  background: linear-gradient(145deg, #ffffff 0%, #f1f5f9 100%);
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  box-shadow: 0 8px 18px -8px rgba(15, 23, 42, 0.12);
+}
+
+.login-top-brand .brand-logo.brand-logo--eye {
+  box-shadow: 0 8px 18px -8px rgba(15, 23, 42, 0.12);
+}
+
+.brand-logo-eye .shipit-eye-icon__svg {
+  width: 30px;
+  height: auto;
+  max-height: 36px;
 }
 
 .login-top-brand .logo-glow {
@@ -1112,7 +1364,41 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   display: block;
 }
 
+.shipit-eye-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.shipit-eye-icon__svg {
+  display: block;
+  overflow: visible;
+}
+
+.shipit-eye-icon--blink .shipit-eye-icon__blink-layer {
+  transform-origin: 54% 51%;
+}
+
+@keyframes shipit-eye-blink {
+  0%, 46%, 50%, 100% {
+    transform: scaleY(1);
+  }
+  48% {
+    transform: scaleY(0.1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .shipit-eye-icon--blink .shipit-eye-icon__blink-layer {
+    animation: shipit-eye-blink 5.2s ease-in-out infinite;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .shipit-eye-icon--blink .shipit-eye-icon__blink-layer {
+    animation: none !important;
+  }
   .login-mesh-gradient,
   .login-grid-overlay,
   .login-orb,
@@ -6054,6 +6340,19 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   flex-shrink: 0;
 }
 
+.sb-brand-icon--eye {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  color: inherit;
+  overflow: hidden;
+}
+
+.sb-brand-eye .shipit-eye-icon__svg {
+  width: 22px;
+  height: auto;
+  max-height: 26px;
+}
+
 .sb-conn-dot {
   position: absolute;
   top: -3px;
@@ -6627,6 +6926,7 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
 [data-theme="dark"] .sb-status-btn-label  { color: #6e7681; }
 [data-theme="dark"] .sb-status-btn-value  { color: #e6edf3; }
 [data-theme="dark"] .sb-conn-dot          { border-color: #0d1117; }
+[data-theme="dark"] .sb-brand-icon--eye   { background: #161b22; border-color: #30363d; }
 [data-theme="dark"] .sb-nav               { scrollbar-color: #21262d transparent; }
 [data-theme="dark"] .sb-nav::-webkit-scrollbar-thumb { background: #21262d; }
 
@@ -6634,6 +6934,7 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
 [data-theme="retro"] .shipit-sidebar       { background: #fdf6e3; border-right-color: #d4c9a0; }
 [data-theme="retro"] .sb-brand             { border-bottom-color: #eee8d5; }
 [data-theme="retro"] .sb-brand-icon        { background: #b58900; }
+[data-theme="retro"] .sb-brand-icon--eye   { background: #fffef9; border-color: #eee8d5; }
 [data-theme="retro"] .sb-conn-dot          { border-color: #fdf6e3; }
 [data-theme="retro"] .sb-group + .sb-group { border-top-color: #eee8d5; }
 [data-theme="retro"] .sb-footer            { border-top-color: #eee8d5; }
@@ -16483,6 +16784,25 @@ button.btn-primary {
   align-items: center;
   gap: 6px;
   margin-bottom: 14px;
+}
+
+.sl-brand--with-eye {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.sl-brand--with-eye .sl-brand-titles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.sl-brand-eye .shipit-eye-icon__svg {
+  width: 44px;
+  height: auto;
+  max-height: 52px;
 }
 .sl-brand-text {
   font-size: 2.25rem;

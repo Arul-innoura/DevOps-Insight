@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import { ShipItEyeIcon } from "../../components/ShipItEyeIcon";
 import { useMsal } from "@azure/msal-react";
 import { 
     LogOut, 
@@ -6,7 +7,6 @@ import {
     Building,
     RotateCcw,
     User as ProfileIcon,
-    ShieldCheck, 
     LayoutDashboard,
     RefreshCw,
     Filter,
@@ -1377,8 +1377,8 @@ export const AdminDashboard = () => {
             <aside className="shipit-sidebar">
                 {/* Brand */}
                 <div className="sb-brand">
-                    <div className="sb-brand-icon">
-                        <ShieldCheck size={18} />
+                    <div className="sb-brand-icon sb-brand-icon--eye">
+                        <ShipItEyeIcon className="sb-brand-eye" blink />
                         <span className={`sb-conn-dot ${isConnected ? 'connected' : 'disconnected'}`}
                               title={isConnected ? 'Live connection' : 'Disconnected'} />
                     </div>
