@@ -17,9 +17,23 @@ const DEFAULT_SOUND_CATEGORIES = {
     assignment: true,
     availability: true,
     teamRoster: true,
-    dataSync: true
+    dataSync: true,
+    approvalTrigger: true,
+    rejection: true
 };
 let soundCategories = { ...DEFAULT_SOUND_CATEGORIES };
+
+/** Bundled MP3 assets under `public/sounds/` (copied from project sound pack). */
+const SOUND_FILES = {
+    statusChange: "status-change.mp3",
+    newTicket: "new-ticket.mp3",
+    ticketSubmit: "ticket-submit.mp3",
+    notesAdd: "notes-add.mp3",
+    notification041: "notification-041.mp3",
+    notification043: "notification-043.mp3",
+    rejection: "rejection.mp3",
+    approvalTrigger: "approval-trigger.mp3"
+};
 
 // Sound preferences storage key
 const SOUND_PREFS_KEY = 'devops_sound_preferences';
@@ -32,7 +46,9 @@ export const SOUND_CATEGORY_META = [
     { key: "assignment", label: "Assignment", description: "Ticket assigned or re-assigned" },
     { key: "availability", label: "Team availability", description: "DevOps availability status changes" },
     { key: "teamRoster", label: "Team roster", description: "DevOps team member list updates" },
-    { key: "dataSync", label: "Data sync", description: "Background refresh / cache sync signal" }
+    { key: "dataSync", label: "Data sync", description: "Background refresh / cache sync signal" },
+    { key: "approvalTrigger", label: "Approval requested", description: "Manager / cost approval flow started" },
+    { key: "rejection", label: "Rejection & alerts", description: "Declines, errors, and strong warnings" }
 ];
 
 /**
@@ -83,6 +99,16 @@ const setupAudioUnlock = () => {
         const ctx = getAudioContext();
         if (ctx && ctx.state === "suspended") {
             ctx.resume().catch(() => {});
+        }
+        try {
+            const a = new Audio(publicAssetUrl(`/sounds/${SOUND_FILES.notification043}`));
+            a.volume = 0.0001;
+            void a.play().then(() => {
+                a.pause();
+                a.currentTime = 0;
+            }).catch(() => {});
+        } catch {
+            /* ignore */
         }
         window.removeEventListener("click", unlock);
         window.removeEventListener("keydown", unlock);
@@ -160,16 +186,53 @@ export const getSoundSettings = () => ({
 export const getSoundEnabled = () => soundEnabled;
 export const getVolume = () => volumeLevel;
 
+function publicAssetUrl(path) {
+    const base =
+        typeof process !== "undefined" && process.env && process.env.PUBLIC_URL != null
+            ? String(process.env.PUBLIC_URL).replace(/\/$/, "")
+            : "";
+    const p = path.startsWith("/") ? path : `/${path}`;
+    return `${base}${p}`;
+}
+
+/**
+ * Play an MP3 from `/public/sounds/`. No artificial throttle — each call plays (browser may still coalesce autoplay).
+ */
+export function playSoundFile(fileName, { category = null, volumeScale = 1 } = {}) {
+    if (typeof window === "undefined" || !soundEnabled) return;
+    if (category && !isSoundCategoryEnabled(category)) return;
+    const audio = new Audio(publicAssetUrl(`/sounds/${fileName}`));
+    audio.volume = Math.max(0, Math.min(1, volumeLevel * volumeScale));
+    audio.preload = "auto";
+    void audio.play().catch(() => {});
+}
+
+function preloadSoundAssets() {
+    if (typeof window === "undefined") return;
+    try {
+        Object.values(SOUND_FILES).forEach((file) => {
+            const a = new Audio(publicAssetUrl(`/sounds/${file}`));
+            a.preload = "auto";
+            void a.load();
+        });
+    } catch {
+        /* ignore */
+    }
+}
+
 // Initialize preferences on load
 if (typeof window !== "undefined") {
     loadSoundPreferences();
     setupAudioUnlock();
+    preloadSoundAssets();
 }
 
 /**
  * Rate limiting for sounds
  */
-const canPlaySound = (soundType, minInterval = 500) => {
+/** Synth/WebAudio path only: keep interval at 0 so rapid real-time events are not dropped (MP3 path is unthrottled). */
+const canPlaySound = (soundType, minInterval = 0) => {
+    if (minInterval <= 0) return true;
     const now = Date.now();
     const lastPlayed = lastPlayedAt[soundType] || 0;
     if (now - lastPlayed < minInterval) return false;
@@ -177,17 +240,7 @@ const canPlaySound = (soundType, minInterval = 500) => {
     return true;
 };
 
-/** Shorter gaps for bursty real-time events; longer for heavy chimes. */
-const throttleIntervalForSoundType = (soundType) => {
-    const t = String(soundType || "");
-    if (t === "short" || t === "dataSyncWs") return 85;
-    if (t === "ticketWsUpdate" || t === "status" || t === "message" || t === "pop") return 140;
-    if (t === "success" || t === "error" || t === "warning" || t === "urgent") return 200;
-    if (t === "long" || t === "assignment" || t === "teamRosterWs" || t === "availabilityWs") return 220;
-    if (t === "newTicketArrival" || t === "celebration") return 380;
-    if (t === "chord") return 280;
-    return 260;
-};
+const throttleIntervalForSoundType = () => 0;
 
 /**
  * Schedule audio only after AudioContext is running (avoids silent starts while suspended).
@@ -375,20 +428,7 @@ const playHarmonicChord = ({
  * Clean, professional, subtle "blip"
  */
 export const playShortNotification = () => {
-    playEnterpriseSound({
-        notes: [
-            { freq: 650, vol: 0.8 },
-            { freq: 850, vol: 1 }
-        ],
-        noteDuration: 0.08,
-        baseVolume: 0.078,
-        waveType: "sine",
-        attack: 0.005,
-        decay: 0.02,
-        sustain: 0.3,
-        release: 0.08,
-        soundType: "short"
-    });
+    playSoundFile(SOUND_FILES.notification043, { category: "ticketUpdate" });
 };
 
 /**
@@ -436,70 +476,17 @@ export const playLongNotification = () => {
  * warm tail note, totalling ~450 ms.
  */
 export const playNewTicketArrival = () => {
-    if (typeof window === "undefined" || !soundEnabled) return;
-    if (!canPlaySound("newTicketArrival", throttleIntervalForSoundType("newTicketArrival"))) return;
+    playSoundFile(SOUND_FILES.newTicket, { category: "newTicket" });
+};
 
-    runWhenAudioContextRunning((ctx) => {
-        const vol = 0.26 * volumeLevel;
-        const now = ctx.currentTime;
+/** Manager / cost approval path started (distinct from generic status moves). */
+export const playApprovalTriggeredSound = () => {
+    playSoundFile(SOUND_FILES.approvalTrigger, { category: "approvalTrigger" });
+};
 
-        const compressor = ctx.createDynamicsCompressor();
-        compressor.threshold.setValueAtTime(-16, now);
-        compressor.knee.setValueAtTime(24, now);
-        compressor.ratio.setValueAtTime(8, now);
-        compressor.attack.setValueAtTime(0.002, now);
-        compressor.release.setValueAtTime(0.18, now);
-        compressor.connect(ctx.destination);
-
-        const master = ctx.createGain();
-        master.gain.setValueAtTime(vol, now);
-        master.connect(compressor);
-
-        // Formal "service bell" — ascending major motif + resolving fifth (≈ 0.95 s)
-        const bells = [
-            { freq: 523.25, delay: 0.0, dur: 0.14, peak: 0.95, wave: "triangle" }, // C5
-            { freq: 659.25, delay: 0.12, dur: 0.14, peak: 1.0, wave: "triangle" }, // E5
-            { freq: 783.99, delay: 0.24, dur: 0.15, peak: 1.0, wave: "triangle" }, // G5
-            { freq: 1046.5, delay: 0.38, dur: 0.16, peak: 0.92, wave: "sine" }, // C6
-            { freq: 783.99, delay: 0.58, dur: 0.28, peak: 0.88, wave: "sine" }, // G5 resolve
-            { freq: 523.25, delay: 0.72, dur: 0.22, peak: 0.55, wave: "sine" } // C5 anchor
-        ];
-
-        bells.forEach(({ freq, delay, dur, peak, wave }) => {
-            const start = now + delay;
-            const end = start + dur;
-
-            const osc = ctx.createOscillator();
-            const g = ctx.createGain();
-            osc.type = wave;
-            osc.frequency.setValueAtTime(freq, start);
-            g.gain.setValueAtTime(0.0001, start);
-            g.gain.exponentialRampToValueAtTime(peak, start + 0.018);
-            g.gain.exponentialRampToValueAtTime(peak * 0.55, end - 0.05);
-            g.gain.exponentialRampToValueAtTime(0.0001, end);
-            osc.connect(g);
-            g.connect(master);
-            osc.start(start);
-            osc.stop(end + 0.03);
-
-            const osc2 = ctx.createOscillator();
-            const g2 = ctx.createGain();
-            osc2.type = "sine";
-            osc2.frequency.setValueAtTime(freq * 2, start);
-            g2.gain.setValueAtTime(0.0001, start);
-            g2.gain.exponentialRampToValueAtTime(peak * 0.12, start + 0.02);
-            g2.gain.exponentialRampToValueAtTime(0.0001, end);
-            osc2.connect(g2);
-            g2.connect(master);
-            osc2.start(start);
-            osc2.stop(end + 0.03);
-        });
-
-        setTimeout(() => {
-            master.disconnect();
-            compressor.disconnect();
-        }, 1100);
-    });
+/** Declines, validation errors, and other strong “no” feedback. */
+export const playRejectionFeedbackSound = () => {
+    playSoundFile(SOUND_FILES.rejection, { category: "rejection", volumeScale: 0.92 });
 };
 
 /**
@@ -507,12 +494,7 @@ export const playNewTicketArrival = () => {
  * Satisfying upward resolution chord
  */
 export const playSuccessNotification = () => {
-    playHarmonicChord({
-        fundamentals: [523, 659, 784], // C major chord (C5, E5, G5)
-        duration: 0.4,
-        baseVolume: 0.09,
-        soundType: "success"
-    });
+    playSoundFile(SOUND_FILES.ticketSubmit, { category: "statusChange", volumeScale: 1 });
 };
 
 /**
@@ -520,20 +502,7 @@ export const playSuccessNotification = () => {
  * Distinctive double-tap
  */
 export const playWarningNotification = () => {
-    playEnterpriseSound({
-        notes: [
-            { freq: 880, vol: 1 },
-            { freq: 880, vol: 0.8 }
-        ],
-        noteDuration: 0.1,
-        baseVolume: 0.07,
-        waveType: "triangle",
-        attack: 0.01,
-        decay: 0.03,
-        sustain: 0.6,
-        release: 0.04,
-        soundType: "warning"
-    });
+    playSoundFile(SOUND_FILES.rejection, { category: "rejection", volumeScale: 0.72 });
 };
 
 /**
@@ -541,20 +510,7 @@ export const playWarningNotification = () => {
  * Low, attention-grabbing tone
  */
 export const playErrorNotification = () => {
-    playEnterpriseSound({
-        notes: [
-            { freq: 294, vol: 1 },   // D4
-            { freq: 262, vol: 0.9 }  // C4
-        ],
-        noteDuration: 0.2,
-        baseVolume: 0.08,
-        waveType: "triangle",
-        attack: 0.01,
-        decay: 0.05,
-        sustain: 0.7,
-        release: 0.1,
-        soundType: "error"
-    });
+    playSoundFile(SOUND_FILES.rejection, { category: "rejection", volumeScale: 1 });
 };
 
 /**
@@ -562,21 +518,7 @@ export const playErrorNotification = () => {
  * Three ascending urgent tones
  */
 export const playUrgentNotification = () => {
-    playEnterpriseSound({
-        notes: [
-            { freq: 880, vol: 0.85 },
-            { freq: 1047, vol: 0.95 },
-            { freq: 1319, vol: 1 }
-        ],
-        noteDuration: 0.12,
-        baseVolume: 0.09,
-        waveType: "triangle",
-        attack: 0.008,
-        decay: 0.03,
-        sustain: 0.8,
-        release: 0.05,
-        soundType: "urgent"
-    });
+    playSoundFile(SOUND_FILES.rejection, { category: "rejection", volumeScale: 0.88 });
 };
 
 /**
@@ -584,134 +526,42 @@ export const playUrgentNotification = () => {
  * Soft, pleasant notification
  */
 export const playMessageNotification = () => {
-    playEnterpriseSound({
-        notes: [
-            { freq: 698, vol: 0.9 },  // F5
-            { freq: 880, vol: 1 }     // A5
-        ],
-        noteDuration: 0.1,
-        baseVolume: 0.055,
-        waveType: "sine",
-        attack: 0.01,
-        decay: 0.03,
-        sustain: 0.5,
-        release: 0.05,
-        soundType: "message"
-    });
+    playSoundFile(SOUND_FILES.notesAdd, { category: "ticketUpdate" });
 };
 
 /**
  * Status change notification - Ticket status updated
  */
 export const playStatusChangeNotification = () => {
-    playEnterpriseSound({
-        notes: [
-            { freq: 587, vol: 0.85 }, // D5
-            { freq: 784, vol: 1 },    // G5
-            { freq: 988, vol: 0.9 }   // B5
-        ],
-        noteDuration: 0.11,
-        baseVolume: 0.092,
-        waveType: "sine",
-        attack: 0.012,
-        decay: 0.04,
-        sustain: 0.6,
-        release: 0.06,
-        soundType: "status"
-    });
+    playSoundFile(SOUND_FILES.statusChange, { category: "statusChange" });
 };
 export const playStatusChangeSound = playStatusChangeNotification;
 
 /** WebSocket: general ticket field / note updates (distinct from status chime). */
 export const playTicketUpdateNotification = () => {
-    playEnterpriseSound({
-        notes: [
-            { freq: 622.25, vol: 0.88 }, // Eb5
-            { freq: 932.33, vol: 1 } // Bb5
-        ],
-        noteDuration: 0.1,
-        baseVolume: 0.074,
-        waveType: "sine",
-        attack: 0.008,
-        decay: 0.035,
-        sustain: 0.55,
-        release: 0.06,
-        soundType: "ticketWsUpdate"
-    });
+    playSoundFile(SOUND_FILES.notification041, { category: "ticketUpdate" });
 };
 
 /**
  * Assignment notification - Ticket assigned to you
  */
 export const playAssignmentNotification = () => {
-    playEnterpriseSound({
-        notes: [
-            { freq: 659, vol: 0.9 },  // E5
-            { freq: 784, vol: 1 },    // G5
-            { freq: 988, vol: 0.95 }, // B5
-            { freq: 1175, vol: 0.85 } // D6
-        ],
-        noteDuration: 0.13,
-        baseVolume: 0.07,
-        waveType: "triangle",
-        attack: 0.01,
-        decay: 0.04,
-        sustain: 0.65,
-        release: 0.07,
-        soundType: "assignment"
-    });
+    playSoundFile(SOUND_FILES.ticketSubmit, { category: "assignment" });
 };
 
 /** WebSocket: DevOps roster / profile row changed. */
 export const playTeamRosterUpdateNotification = () => {
-    playEnterpriseSound({
-        notes: [
-            { freq: 392, vol: 0.75 },
-            { freq: 494, vol: 0.88 },
-            { freq: 587, vol: 0.92 }
-        ],
-        noteDuration: 0.1,
-        baseVolume: 0.076,
-        waveType: "sine",
-        attack: 0.01,
-        decay: 0.04,
-        sustain: 0.58,
-        release: 0.07,
-        soundType: "teamRosterWs"
-    });
+    playSoundFile(SOUND_FILES.notification041, { category: "teamRoster" });
 };
 
 /** WebSocket: availability (Available / Busy / Away) toggled. */
 export const playAvailabilityChangeNotification = () => {
-    playEnterpriseSound({
-        notes: [
-            { freq: 1174.66, vol: 0.95 },
-            { freq: 783.99, vol: 0.82 }
-        ],
-        noteDuration: 0.12,
-        baseVolume: 0.08,
-        waveType: "sine",
-        attack: 0.012,
-        decay: 0.045,
-        sustain: 0.55,
-        release: 0.08,
-        soundType: "availabilityWs"
-    });
+    playSoundFile(SOUND_FILES.notification043, { category: "availability" });
 };
 
 /** WebSocket: soft ping when server asks clients to refresh. */
 export const playDataSyncChime = () => {
-    playEnterpriseSound({
-        notes: [{ freq: 528, vol: 1 }],
-        noteDuration: 0.055,
-        baseVolume: 0.055,
-        waveType: "sine",
-        attack: 0.004,
-        decay: 0.02,
-        sustain: 0.35,
-        release: 0.04,
-        soundType: "dataSyncWs"
-    });
+    playSoundFile(SOUND_FILES.notification043, { category: "dataSync", volumeScale: 0.85 });
 };
 
 /**
@@ -853,6 +703,12 @@ export const previewSoundCategory = (key) => {
             break;
         case "dataSync":
             playDataSyncChime();
+            break;
+        case "approvalTrigger":
+            playApprovalTriggeredSound();
+            break;
+        case "rejection":
+            playRejectionFeedbackSound();
             break;
         default:
             playShortNotification();

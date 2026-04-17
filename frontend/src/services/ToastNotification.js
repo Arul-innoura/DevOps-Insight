@@ -43,7 +43,8 @@ export const ToastProvider = ({ children }) => {
                 type === TOAST_TYPES.WARNING ? NOTIFICATION_TYPES.WARNING :
                 NOTIFICATION_TYPES.SHORT
             );
-            void primeAudioContext().then(() => playNotification(sound));
+            void primeAudioContext();
+            playNotification(sound);
         }
 
         const toast = {

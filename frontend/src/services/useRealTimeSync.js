@@ -7,10 +7,17 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import realTimeService, { WS_MESSAGE_TYPES } from "./stompWebSocketService";
 import { applyCacheInvalidationHint } from "./ticketService";
-import { 
-    playShortNotification, 
+import {
     playSuccessNotification,
     playNewTicketNotification,
+    playStatusChangeNotification,
+    playTicketUpdateNotification,
+    playAssignmentNotification,
+    playApprovalTriggeredSound,
+    playRejectionFeedbackSound,
+    playTeamRosterUpdateNotification,
+    playAvailabilityChangeNotification,
+    playDataSyncChime,
     primeAudioContext
 } from "./notificationService";
 
@@ -126,7 +133,8 @@ export const useRealTimeSync = ({
         // New ticket created — always play the distinctive arrival chime
         const handleNewTicket = (data) => {
             if (didInitialLoad.current && playNewTicketSound) {
-                void primeAudioContext().then(() => playNewTicketNotification());
+                void primeAudioContext();
+                playNewTicketNotification();
             }
             onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_CREATED, data);
             if (refreshOnEvents) {
@@ -134,10 +142,10 @@ export const useRealTimeSync = ({
             }
         };
 
-        // Existing ticket updated (assignment, note, etc.)
-        const handleTicketEvent = (data) => {
+        const handleTicketUpdated = (data) => {
             if (didInitialLoad.current && playUpdateSound) {
-                void primeAudioContext().then(() => playShortNotification());
+                void primeAudioContext();
+                playTicketUpdateNotification();
             }
             onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_UPDATED, data);
             if (refreshOnEvents) {
@@ -145,9 +153,21 @@ export const useRealTimeSync = ({
             }
         };
 
+        const handleTicketAssigned = (data) => {
+            if (didInitialLoad.current && playUpdateSound) {
+                void primeAudioContext();
+                playAssignmentNotification();
+            }
+            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_ASSIGNED, data);
+            if (refreshOnEvents) {
+                debouncedRefresh();
+            }
+        };
+
         const handleTicketDeleted = (data) => {
             if (didInitialLoad.current && playUpdateSound) {
-                void primeAudioContext().then(() => playShortNotification());
+                void primeAudioContext();
+                playRejectionFeedbackSound();
             }
             const id = data?.id ?? data?.ticketId;
             const normalized = id != null && id !== "" ? { ...data, id, ticketId: data?.ticketId ?? id } : data;
@@ -164,17 +184,55 @@ export const useRealTimeSync = ({
         // Handler for status change events
         const handleStatusChange = (data) => {
             console.log('[RealTimeSync] Status changed:', data);
-            
-            if (didInitialLoad.current) {
+
+            if (didInitialLoad.current && playUpdateSound) {
+                void primeAudioContext();
                 const status = data?.status;
-                if (status === 'COMPLETED' || status === 'CLOSED') {
-                    void primeAudioContext().then(() => playSuccessNotification());
-                } else if (playUpdateSound) {
-                    void primeAudioContext().then(() => playShortNotification());
+                if (status === "MANAGER_APPROVAL_PENDING" || status === "COST_APPROVAL_PENDING") {
+                    playApprovalTriggeredSound();
+                } else if (status === "REJECTED") {
+                    playRejectionFeedbackSound();
+                } else if (status === "COMPLETED" || status === "CLOSED") {
+                    playSuccessNotification();
+                } else {
+                    playStatusChangeNotification();
                 }
             }
-            
+
             onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, data);
+            if (refreshOnEvents) {
+                debouncedRefresh();
+            }
+        };
+
+        const handleDevOpsMemberEvent = (data) => {
+            if (didInitialLoad.current && playUpdateSound) {
+                void primeAudioContext();
+                playTeamRosterUpdateNotification();
+            }
+            onPatchEvent?.(WS_MESSAGE_TYPES.DEVOPS_UPDATED, data);
+            if (refreshOnEvents) {
+                debouncedRefresh();
+            }
+        };
+
+        const handleAvailabilityEvent = (data) => {
+            if (didInitialLoad.current && playUpdateSound) {
+                void primeAudioContext();
+                playAvailabilityChangeNotification();
+            }
+            onPatchEvent?.(WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, data);
+            if (refreshOnEvents) {
+                debouncedRefresh();
+            }
+        };
+
+        const handleSyncRequired = (data) => {
+            if (didInitialLoad.current && playUpdateSound) {
+                void primeAudioContext();
+                playDataSyncChime();
+            }
+            onPatchEvent?.(WS_MESSAGE_TYPES.SYNC_REQUIRED, data);
             if (refreshOnEvents) {
                 debouncedRefresh();
             }
@@ -182,13 +240,13 @@ export const useRealTimeSync = ({
 
         const handlersByType = new Map([
             [WS_MESSAGE_TYPES.TICKET_CREATED, handleNewTicket],
-            [WS_MESSAGE_TYPES.TICKET_UPDATED, handleTicketEvent],
+            [WS_MESSAGE_TYPES.TICKET_UPDATED, handleTicketUpdated],
             [WS_MESSAGE_TYPES.TICKET_DELETED, handleTicketDeleted],
             [WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, handleStatusChange],
-            [WS_MESSAGE_TYPES.TICKET_ASSIGNED, handleTicketEvent],
-            [WS_MESSAGE_TYPES.DEVOPS_UPDATED, handleTicketEvent],
-            [WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, handleTicketEvent],
-            [WS_MESSAGE_TYPES.SYNC_REQUIRED, handleTicketEvent]
+            [WS_MESSAGE_TYPES.TICKET_ASSIGNED, handleTicketAssigned],
+            [WS_MESSAGE_TYPES.DEVOPS_UPDATED, handleDevOpsMemberEvent],
+            [WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, handleAvailabilityEvent],
+            [WS_MESSAGE_TYPES.SYNC_REQUIRED, handleSyncRequired]
         ]);
 
         // Subscribe only to relevant events for this view
@@ -207,8 +265,10 @@ export const useRealTimeSync = ({
             onRefreshRef.current?.();
         }
         
-        // Mark initial load complete after delay
-        setTimeout(() => { didInitialLoad.current = true; }, 1000);
+        // Allow sounds quickly after mount (was 1000ms — caused “missing” chimes on fast WS events).
+        setTimeout(() => {
+            didInitialLoad.current = true;
+        }, 120);
         
         // Cleanup
         return () => {
