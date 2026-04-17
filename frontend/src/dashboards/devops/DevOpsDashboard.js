@@ -63,6 +63,7 @@ import {
     toDisplayTicketStatus,
     normalizeEnvironmentLabel,
     normalizeWebSocketTicketPayload,
+    mapIncomingTicketRow,
     wsPatchHasMeaningfulAssignee,
     optimisticSelfAssignOnStatusChange,
     ticketMatchesPrimaryStatusFilter,
@@ -617,6 +618,19 @@ export const DevOpsDashboard = () => {
                         }
                     }
                     return next;
+                }
+                if (type === "ticket:created") {
+                    const existingCreateIdx = prev.findIndex((t) => t.id === effectiveId);
+                    if (existingCreateIdx < 0) {
+                        const row = mapIncomingTicketRow({ ...payload, ...wsPatch, id: effectiveId });
+                        if (!row?.id) return prev;
+                        const next = [row, ...prev];
+                        recalcSectionCounts(next);
+                        if (activeSectionRef.current === "requests") {
+                            applySectionFilter(next, requestTabRef.current, filtersRef.current);
+                        }
+                        return next;
+                    }
                 }
                 const idx = prev.findIndex((t) => t.id === effectiveId);
                 if (idx < 0) return prev;

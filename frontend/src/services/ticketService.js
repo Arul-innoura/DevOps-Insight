@@ -931,6 +931,12 @@ const mapTicket = (ticket) => {
     };
 };
 
+/** Same row shape as list APIs — use for WebSocket `ticket:created` inserts. */
+export function mapIncomingTicketRow(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    return mapTicket(raw);
+}
+
 const mapTickets = (tickets = []) => unwrapListPayload(tickets).map(mapTicket);
 
 const mapCreateTicketPayload = (ticketData) => ({

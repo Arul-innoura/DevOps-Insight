@@ -70,6 +70,7 @@ import {
     toDisplayTicketStatus,
     normalizeEnvironmentLabel,
     normalizeWebSocketTicketPayload,
+    mapIncomingTicketRow,
     wsPatchHasMeaningfulAssignee,
     optimisticSelfAssignOnStatusChange,
     subscribeDataChanges
@@ -1017,6 +1018,16 @@ export const AdminDashboard = () => {
                     }
                     return next;
                 }
+                if (type === "ticket:created") {
+                    const existingCreateIdx = prev.findIndex((t) => t.id === effectiveId);
+                    if (existingCreateIdx < 0) {
+                        const row = mapIncomingTicketRow({ ...payload, ...wsPatch, id: effectiveId });
+                        if (!row?.id) return prev;
+                        const next = [row, ...prev];
+                        applyFilters(next, filtersRef.current, activeTabRef.current);
+                        return next;
+                    }
+                }
                 const idx = prev.findIndex((t) => t.id === effectiveId);
                 if (idx < 0) return prev;
                 const existingUpdatedMs = prev[idx]?.updatedAt ? new Date(prev[idx].updatedAt).getTime() : NaN;
@@ -1085,6 +1096,7 @@ export const AdminDashboard = () => {
             });
             suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;
         },
+        playNewTicketSound: true,
         playUpdateSound: true,
         refreshOnEvents: false,
         refreshDebounceMs: 1200,
