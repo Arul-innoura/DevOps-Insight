@@ -5,7 +5,7 @@
 
 import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
 import { X, CheckCircle, AlertTriangle, XCircle, Info, Bell } from 'lucide-react';
-import { playNotification, NOTIFICATION_TYPES } from './notificationService';
+import { playNotification, NOTIFICATION_TYPES, primeAudioContext } from './notificationService';
 
 // Toast types
 export const TOAST_TYPES = {
@@ -35,7 +35,7 @@ export const ToastProvider = ({ children }) => {
     }) => {
         const id = Date.now() + Math.random();
 
-        // Play notification sound
+        // Play notification sound (prime context first — avoids silent first toast after load)
         if (playSound) {
             const sound = soundType || (
                 type === TOAST_TYPES.SUCCESS ? NOTIFICATION_TYPES.SUCCESS :
@@ -43,7 +43,7 @@ export const ToastProvider = ({ children }) => {
                 type === TOAST_TYPES.WARNING ? NOTIFICATION_TYPES.WARNING :
                 NOTIFICATION_TYPES.SHORT
             );
-            playNotification(sound);
+            void primeAudioContext().then(() => playNotification(sound));
         }
 
         const toast = {

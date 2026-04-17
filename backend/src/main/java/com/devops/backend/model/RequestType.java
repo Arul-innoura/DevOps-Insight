@@ -9,7 +9,10 @@ public enum RequestType {
     ENVIRONMENT_DOWN("Environment Down"),
     RELEASE_DEPLOYMENT("Release Deployment"),
     ISSUE_FIX("Issue Fix"),
-    BUILD_REQUEST("General Request"),
+    /** General DevOps requests (not CI/build-specific). */
+    GENERAL_REQUEST("General Request"),
+    /** Branch / commit driven build requests. */
+    BUILD_REQUEST("Build Request"),
     OTHER_QUERIES("Other Queries"),
     CODE_CUT("Code Cut");
 
@@ -33,7 +36,8 @@ public enum RequestType {
             case ENVIRONMENT_DOWN -> "ENVDN";
             case RELEASE_DEPLOYMENT -> "RELDEP";
             case ISSUE_FIX -> "ISSFIX";
-            case BUILD_REQUEST -> "GENREQ";
+            case GENERAL_REQUEST -> "GENREQ";
+            case BUILD_REQUEST -> "BLDREQ";
             case OTHER_QUERIES -> "OTHER";
             case CODE_CUT -> "CODECT";
         };

@@ -529,9 +529,9 @@ public class EmailServiceImpl implements EmailService {
         return String.format("[%s] %s | %s - %s (%s)",
                 ticket.getId(),
                 action,
-                ticket.getRequestType().name().replace("_", " "),
+                displayRequestType(ticket.getRequestType()),
                 ticket.getProductName(),
-                ticket.getEnvironment());
+                displayEnvironment(ticket));
     }
 
     @Override
@@ -780,8 +780,8 @@ public class EmailServiceImpl implements EmailService {
     }
 
     private String buildSimpleTicketKvpTable(Ticket ticket) {
-        String reqType = ticket.getRequestType() != null ? ticket.getRequestType().name().replace("_", " ") : "—";
-        String env = ticket.getEnvironment() != null ? String.valueOf(ticket.getEnvironment()) : "—";
+        String reqType = displayRequestType(ticket.getRequestType());
+        String env = displayEnvironment(ticket);
         String status = ticket.getStatus() != null ? formatStatus(ticket.getStatus()) : "—";
         String created = ticket.getCreatedAt() != null ? formatDate(ticket.getCreatedAt()) : "—";
         String updated = ticket.getUpdatedAt() != null ? formatDate(ticket.getUpdatedAt()) : "—";
@@ -848,9 +848,9 @@ public class EmailServiceImpl implements EmailService {
         
         // Meta info
         header.append("<p class='header-meta'>");
-        header.append(ticket.getRequestType().name().replace("_", " "));
+        header.append(displayRequestType(ticket.getRequestType()));
         header.append(" • ").append(ticket.getProductName());
-        header.append(" • ").append(ticket.getEnvironment());
+        header.append(" • ").append(displayEnvironment(ticket));
         header.append("</p>");
         
         header.append("</div>");
@@ -900,9 +900,9 @@ public class EmailServiceImpl implements EmailService {
         // Detail grid
         card.append("<div class='detail-grid'>");
         
-        card.append(buildDetailItem("Request Type", ticket.getRequestType().name().replace("_", " ")));
+        card.append(buildDetailItem("Request Type", displayRequestType(ticket.getRequestType())));
         card.append(buildDetailItem("Project", ticket.getProductName()));
-        card.append(buildDetailItem("Environment", String.valueOf(ticket.getEnvironment())));
+        card.append(buildDetailItem("Environment", displayEnvironment(ticket)));
         card.append(buildDetailItem("Priority", ticket.isManagerApprovalRequired() ? "High (Approval Required)" : "Normal"));
         card.append(buildDetailItem("Requested By", ticket.getRequestedBy()));
         card.append(buildDetailItem("Email", ticket.getRequesterEmail()));
@@ -935,7 +935,7 @@ public class EmailServiceImpl implements EmailService {
         if (type == null) return "";
         
         section.append("<div class='section'>");
-        section.append("<div class='section-title'>").append(type.name().replace("_", " ")).append(" Details</div>");
+        section.append("<div class='section-title'>").append(displayRequestType(type)).append(" Details</div>");
         section.append("<div class='section-content'>");
         section.append("<div class='detail-grid'>");
         
@@ -1005,6 +1005,8 @@ public class EmailServiceImpl implements EmailService {
                 }
                 break;
                 
+            case GENERAL_REQUEST:
+                break;
             case BUILD_REQUEST:
                 if (ticket.getBranchName() != null) {
                     section.append(buildDetailItem("Branch Name", ticket.getBranchName(), true));
@@ -1211,6 +1213,13 @@ public class EmailServiceImpl implements EmailService {
                 }
             }
         }
+        if (ticket.getWorkflowEmailToMandatory() != null) {
+            for (String t : ticket.getWorkflowEmailToMandatory()) {
+                if (t != null && !t.isBlank()) {
+                    to.add(t.trim().toLowerCase(Locale.ROOT));
+                }
+            }
+        }
         if (to.isEmpty() && ticket.getRequesterEmail() != null && !ticket.getRequesterEmail().isBlank()) {
             to.add(ticket.getRequesterEmail().trim().toLowerCase(Locale.ROOT));
         }
@@ -1285,6 +1294,21 @@ public class EmailServiceImpl implements EmailService {
             case CLOSED -> "Closed";
             case REJECTED -> "Rejected";
         };
+    }
+
+    private String displayRequestType(RequestType requestType) {
+        if (requestType == null) {
+            return "—";
+        }
+        String displayName = requestType.getDisplayName();
+        if (displayName != null && !displayName.isBlank()) {
+            return displayName;
+        }
+        return requestType.name().replace("_", " ");
+    }
+
+    private String displayEnvironment(Ticket ticket) {
+        return com.devops.backend.util.TicketDisplayFormat.environmentLine(ticket);
     }
 
     private String getStatusClass(TicketStatus status) {

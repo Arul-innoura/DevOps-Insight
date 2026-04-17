@@ -4310,6 +4310,60 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   max-width: 800px;
 }
 
+/* Postcard “posted away” after successful submit */
+.create-ticket-modal.create-ticket-modal--postcard-send {
+  pointer-events: none;
+  animation: postcardSent 0.64s cubic-bezier(0.33, 1, 0.32, 1) forwards;
+  transform-origin: 50% 42%;
+  will-change: transform, opacity;
+}
+
+@keyframes postcardSent {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+    opacity: 1;
+    filter: drop-shadow(0 12px 28px rgba(15, 23, 42, 0.12));
+  }
+  35% {
+    transform: translate3d(6px, -10px, 0) rotate(-2.5deg) scale(1.02);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(min(18vw, 120px), -38vh, 0) rotate(7deg) scale(0.52);
+    opacity: 0;
+    filter: blur(1px) drop-shadow(0 4px 12px rgba(15, 23, 42, 0.08));
+  }
+}
+
+/* Ticket closed — torn paper / confetti burst */
+.paper-celebration-layer {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100002;
+  overflow: hidden;
+}
+
+.paper-celebration-shard {
+  position: absolute;
+  border-radius: 2px;
+  opacity: 0.96;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  animation: paperShardFall 1.85s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  will-change: transform, opacity;
+}
+
+@keyframes paperShardFall {
+  0% {
+    transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate3d(var(--pc-dx, 0), var(--pc-dy, 200px), 0) rotate(var(--pc-rot, 360deg)) scale(0.55);
+    opacity: 0;
+  }
+}
+
 .request-type-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));

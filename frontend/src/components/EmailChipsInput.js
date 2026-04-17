@@ -71,22 +71,27 @@ export default function EmailChipsInput({
     setShowSuggestions(false);
   };
 
-  const removeEmail = (index) => {
-    const next = emails.filter((_, i) => i !== index);
-    emit(next);
-  };
-
   // Emails that are locked (mandatory) — normalized
   const lockedNormalized = useMemo(
     () => (lockedEmails || []).map(defaultNormalize).filter(Boolean),
     [lockedEmails]
   );
+  const lockedSet = useMemo(() => new Set(lockedNormalized), [lockedNormalized]);
+  const editableEmails = useMemo(
+    () => emails.filter((email) => !lockedSet.has(email)),
+    [emails, lockedSet]
+  );
+
+  const removeEmail = (emailToRemove) => {
+    const next = emails.filter((email) => email !== emailToRemove);
+    emit(next);
+  };
 
   const handleKeyDown = (e) => {
     if (inputLocked) {
-      if (e.key === "Backspace" && !inputValue && emails.length > 0) {
+      if (e.key === "Backspace" && !inputValue && editableEmails.length > 0) {
         e.preventDefault();
-        removeEmail(emails.length - 1);
+        removeEmail(editableEmails[editableEmails.length - 1]);
       }
       return;
     }
@@ -96,9 +101,9 @@ export default function EmailChipsInput({
       addEmail(inputValue);
       return;
     }
-    if (e.key === "Backspace" && !inputValue && emails.length > 0) {
+    if (e.key === "Backspace" && !inputValue && editableEmails.length > 0) {
       e.preventDefault();
-      removeEmail(emails.length - 1);
+      removeEmail(editableEmails[editableEmails.length - 1]);
     }
   };
 
@@ -160,10 +165,10 @@ export default function EmailChipsInput({
             <span className="cc-email-chip-label">{email}</span>
           </span>
         ))}
-        {emails.map((email, index) => (
+        {editableEmails.map((email) => (
           <span key={email} className="cc-email-chip" title={email}>
             <span className="cc-email-chip-label">{email}</span>
-            <button type="button" onClick={() => removeEmail(index)} className="chip-remove" aria-label={`Remove ${email}`}>
+            <button type="button" onClick={() => removeEmail(email)} className="chip-remove" aria-label={`Remove ${email}`}>
               <X size={12} />
             </button>
           </span>

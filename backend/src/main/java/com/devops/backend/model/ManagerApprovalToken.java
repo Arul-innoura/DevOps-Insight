@@ -55,5 +55,8 @@ public class ManagerApprovalToken {
     private boolean used;
     private Instant usedAt;
     private String action;  // APPROVED or REJECTED
+    /** Approver's note after submit; {@link #approvalTriggerNote} keeps the requester's context. */
     private String note;
+    /** Note entered when approval was requested (immutable; not overwritten on approve/decline). */
+    private String approvalTriggerNote;
 }

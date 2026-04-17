@@ -43,6 +43,7 @@ import {
     TicketFilters, 
     TicketDetailsModal 
 } from "../TicketComponents";
+import { launchPaperCelebration } from "../../utils/celebrationFx";
 import { 
     getAllTickets, 
     getDeletedTickets,
@@ -67,6 +68,10 @@ import {
     deleteManager,
     ENVIRONMENTS,
     toDisplayTicketStatus,
+    normalizeEnvironmentLabel,
+    normalizeWebSocketTicketPayload,
+    wsPatchHasMeaningfulAssignee,
+    optimisticSelfAssignOnStatusChange,
     subscribeDataChanges
 } from "../../services/ticketService";
 import { getStatusTimeline } from "../../services/devopsStatusService";
@@ -878,7 +883,7 @@ export const AdminDashboard = () => {
                 rotaMgmt,
                 rotaDays
             ] = await Promise.all([
-                getAllTickets(),
+                getAllTickets({ force: true }),
                 getTicketStats(),
                 getDevOpsTeamMembers(),
                 getProjects({ force: true }),
@@ -961,16 +966,49 @@ export const AdminDashboard = () => {
                 return;
             }
 
-            const effectiveId = data?.id ?? data?.ticketId;
+            const payload = data?.ticket && typeof data.ticket === "object"
+                ? { ...data.ticket, action: data?.action }
+                : data;
+            const effectiveId = payload?.id ?? payload?.ticketId;
             if (effectiveId == null || effectiveId === "") return;
+            const incomingAssignedTo =
+                payload?.assignedTo ??
+                payload?.assigneeName ??
+                payload?.assignedEngineerName ??
+                payload?.assignee?.name;
+            const incomingAssignedToEmail =
+                payload?.assignedToEmail ??
+                payload?.assigneeEmail ??
+                payload?.assignee?.email;
+            const incomingManagerName =
+                payload?.managerName ??
+                payload?.approverName ??
+                payload?.approvalTargetName;
+            const incomingManagerEmail =
+                payload?.managerEmail ??
+                payload?.approverEmail ??
+                payload?.approvalTargetEmail;
             const wsPatch = {
-                ...data,
+                ...normalizeWebSocketTicketPayload(payload),
                 id: effectiveId,
-                ...(data?.status ? { status: toDisplayTicketStatus(data.status) } : {})
+                ...(incomingAssignedTo != null && String(incomingAssignedTo).trim() !== ""
+                    ? { assignedTo: String(incomingAssignedTo).trim() }
+                    : {}),
+                ...(incomingAssignedToEmail != null && String(incomingAssignedToEmail).trim() !== ""
+                    ? { assignedToEmail: String(incomingAssignedToEmail).trim() }
+                    : {}),
+                ...(incomingManagerName !== undefined ? { managerName: incomingManagerName } : {}),
+                ...(incomingManagerEmail !== undefined ? { managerEmail: incomingManagerEmail } : {}),
+                ...((payload?.environmentLabel || payload?.environment)
+                    ? { environment: normalizeEnvironmentLabel(payload.environmentLabel || payload.environment) }
+                    : {}),
+                ...(payload?.status ? { status: toDisplayTicketStatus(payload.status) } : {})
             };
             const isSoftRemove =
                 type === "ticket:deleted" ||
-                (type === "ticket:updated" && Boolean(data?.deleted));
+                (type === "ticket:updated" && Boolean(payload?.deleted));
+            const incomingUpdatedMs = wsPatch?.updatedAt ? new Date(wsPatch.updatedAt).getTime() : NaN;
+            const assigneePatch = wsPatchHasMeaningfulAssignee(wsPatch);
             setTickets((prev) => {
                 if (isSoftRemove) {
                     const next = prev.filter((t) => t.id !== effectiveId);
@@ -981,6 +1019,14 @@ export const AdminDashboard = () => {
                 }
                 const idx = prev.findIndex((t) => t.id === effectiveId);
                 if (idx < 0) return prev;
+                const existingUpdatedMs = prev[idx]?.updatedAt ? new Date(prev[idx].updatedAt).getTime() : NaN;
+                const stale =
+                    !Number.isNaN(incomingUpdatedMs) &&
+                    !Number.isNaN(existingUpdatedMs) &&
+                    incomingUpdatedMs < existingUpdatedMs;
+                if (stale && !assigneePatch) {
+                    return prev;
+                }
                 const next = [...prev];
                 next[idx] = { ...next[idx], ...wsPatch };
                 applyFilters(next, filtersRef.current, activeTabRef.current);
@@ -1006,6 +1052,14 @@ export const AdminDashboard = () => {
                 if (!prev?.id) return prev;
                 if (isSoftRemove && prev.id === effectiveId) return null;
                 if (prev.id !== effectiveId) return prev;
+                const existingUpdatedMs = prev?.updatedAt ? new Date(prev.updatedAt).getTime() : NaN;
+                const staleSel =
+                    !Number.isNaN(incomingUpdatedMs) &&
+                    !Number.isNaN(existingUpdatedMs) &&
+                    incomingUpdatedMs < existingUpdatedMs;
+                if (staleSel && !assigneePatch) {
+                    return prev;
+                }
                 return { ...prev, ...wsPatch };
             });
             setStats((prev) => {
@@ -1150,31 +1204,27 @@ export const AdminDashboard = () => {
     }, [ticketSearch, tickets, viewMode]);
     
     const handleStatusChange = async (ticketId, newStatus, notes, meta = {}) => {
-        setTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId
-                ? {
-                    ...ticket,
-                    status: newStatus,
-                    ...(meta.reopen ? { assignedTo: null, assignedToEmail: null } : {}),
-                }
-                : ticket
-        )));
-        setFilteredTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId
-                ? {
-                    ...ticket,
-                    status: newStatus,
-                    ...(meta.reopen ? { assignedTo: null, assignedToEmail: null } : {}),
-                }
-                : ticket
-        )));
+        const patchRow = (ticket) => {
+            if (ticket.id !== ticketId) return ticket;
+            const selfAssign = optimisticSelfAssignOnStatusChange(ticket, newStatus, userName, userEmail, meta);
+            return {
+                ...ticket,
+                status: newStatus,
+                ...selfAssign,
+                ...(meta.reopen ? { assignedTo: null, assignedToEmail: null } : {}),
+            };
+        };
+        setTickets((prev) => prev.map(patchRow));
+        setFilteredTickets((prev) => prev.map(patchRow));
         try {
             setActionLoading("Updating ticket status...");
             await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes, meta);
             await loadTickets();
-            
+            if (newStatus === TICKET_STATUS.CLOSED) {
+                launchPaperCelebration();
+            }
             if (selectedTicket && selectedTicket.id === ticketId) {
-                const updatedTicket = (await getAllTickets()).find(t => t.id === ticketId);
+                const updatedTicket = (await getAllTickets({ force: true })).find(t => t.id === ticketId);
                 setSelectedTicket(updatedTicket);
             }
         } catch (error) {
@@ -1191,7 +1241,7 @@ export const AdminDashboard = () => {
             await loadTickets();
             
             if (selectedTicket && selectedTicket.id === ticketId) {
-                const updatedTicket = (await getAllTickets()).find(t => t.id === ticketId);
+                const updatedTicket = (await getAllTickets({ force: true })).find(t => t.id === ticketId);
                 setSelectedTicket(updatedTicket);
             }
         } catch (error) {

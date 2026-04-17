@@ -55,6 +55,8 @@ public class Ticket {
 
     @Indexed
     private Environment environment;
+    /** Original UI environment label (custom per-project env names), when different from enum display. */
+    private String environmentLabel;
     
     private String description;
     
@@ -244,5 +246,40 @@ public class Ticket {
                 .newAssignee(newAssignee)
                 .isNote(false)
                 .build());
+    }
+
+    /**
+     * When {@code assignedTo} is blank in storage, recover the latest assignee name from the timeline
+     * (assignment / forward entries or legacy "Ticket assigned to …" notes).
+     */
+    public String resolveAssigneeDisplayNameFromTimeline() {
+        if (timeline == null || timeline.isEmpty()) {
+            return null;
+        }
+        for (int i = timeline.size() - 1; i >= 0; i--) {
+            TimelineEntry e = timeline.get(i);
+            if (e == null) {
+                continue;
+            }
+            if (e.getNewAssignee() != null && !e.getNewAssignee().isBlank()) {
+                return e.getNewAssignee().trim();
+            }
+            String notes = e.getNotes();
+            if (notes == null) {
+                continue;
+            }
+            String prefix = "Ticket assigned to ";
+            if (notes.startsWith(prefix)) {
+                String tail = notes.substring(prefix.length()).trim();
+                if (!tail.isEmpty()) {
+                    int paren = tail.indexOf('(');
+                    String namePart = (paren >= 0 ? tail.substring(0, paren) : tail).trim();
+                    if (!namePart.isEmpty()) {
+                        return namePart;
+                    }
+                }
+            }
+        }
+        return null;
     }
 }

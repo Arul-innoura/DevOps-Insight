@@ -63,6 +63,7 @@ import {
     saveCcEmail,
     toDisplayTicketStatus,
     ticketRequesterMatchesCurrentUser,
+    getTicketAssigneeDisplay,
     NOTE_ATTACHMENT_MAX_BYTES,
     NOTE_ATTACHMENT_MAX_MB
 } from '../services/ticketService';
@@ -759,6 +760,7 @@ const TYPE_ACCENT = {
     'Release Deployment':    { border: '#1d4ed8', bg: '#eff6ff', icon: '#1d4ed8' },
     'Issue Fix':             { border: '#b45309', bg: '#fffbeb', icon: '#b45309' },
     'Build Request':         { border: '#0e7490', bg: '#ecfeff', icon: '#0e7490' },
+    'General Request':       { border: '#0369a1', bg: '#e0f2fe', icon: '#0369a1' },
     'Code Cut':              { border: '#9d174d', bg: '#fdf2f8', icon: '#9d174d' },
     'Other Queries':         { border: '#4b5563', bg: '#f9fafb', icon: '#4b5563' },
 };
@@ -774,6 +776,7 @@ const getRequestTypeIcon = (requestType, size = 16) => {
         case 'Release Deployment':    return <Upload size={size} />;
         case 'Issue Fix':             return <AlertTriangle size={size} />;
         case 'Build Request':         return <GitBranch size={size} />;
+        case 'General Request':       return <FileText size={size} />;
         case 'Code Cut':              return <Tag size={size} />;
         default:                      return <FileText size={size} />;
     }
@@ -821,8 +824,8 @@ function TicketCardInner({
     // Pick up the most relevant service detail 
     const serviceDetail = ticket.releaseVersion || ticket.branchName || ticket.issueType || ticket.databaseType || ticket.deploymentStrategy || null;
 
-    const assignedName = String(ticket?.assignedTo || "").trim();
-    const shouldHighlightAssignedCard = highlightAssigned && assignedName.length > 0;
+    const assignedDisplay = getTicketAssigneeDisplay(ticket);
+    const shouldHighlightAssignedCard = highlightAssigned && assignedDisplay.length > 0;
     const handleCopyTicketId = async (e) => {
         e.stopPropagation();
         const ticketId = String(ticket?.id || "").trim();
@@ -888,8 +891,8 @@ function TicketCardInner({
                             <span className="jtc-person-line" title={ticket.requestedBy || "Unknown User"}>
                                 User: {ticket.requestedBy || "Unknown User"}
                             </span>
-                            <span className={`jtc-person-line ${assignedName ? "assigned" : ""}`} title={assignedName || "Unassigned"}>
-                                Assigned: {assignedName || "Unassigned"}
+                            <span className={`jtc-person-line ${assignedDisplay ? "assigned" : ""}`} title={assignedDisplay || "Unassigned"}>
+                                Assigned: {assignedDisplay || "Unassigned"}
                             </span>
                         </div>
                         <span className="jtc-date" title={formatDate(ticket.updatedAt || ticket.createdAt)}>
@@ -921,7 +924,8 @@ function TicketCardInner({
     );
 }
 
-export const TicketCard = memo(TicketCardInner);
+// Not memoized: assignee/status updates must always repaint the row (memo + merge edge cases left "Assigned: Unassigned" stale).
+export const TicketCard = TicketCardInner;
 
 /** @deprecated Use `TicketCard` with `onOpenById` — kept as an alias for existing imports. */
 export const TicketCardClickable = TicketCard;
@@ -1556,6 +1560,7 @@ export const TicketDetailsModal = ({
     }, [ticket, theme]);
 
     if (!ticket) return null;
+    const assigneeDisplayLine = getTicketAssigneeDisplay(ticket);
     const handleCopyTicketId = async () => {
         const ticketId = String(ticket?.id || "").trim();
         if (!ticketId) return;
@@ -1949,7 +1954,7 @@ export const TicketDetailsModal = ({
                         <div className="jdm-section">
                             <div className="jdm-section-title">{getRequestTypeIcon(ticket.requestType, 14)} Configuration</div>
                             <div className="jdm-fields-grid">
-                                <DetailField icon={Globe} label="Environment" value={ticket.environment} />
+                                <DetailField icon={Globe} label="Environment" value={ticket.environmentLabel || ticket.environment} />
                                 {ticket.databaseType && <DetailField icon={Database} label="Database" value={ticket.databaseType} />}
                                 {ticket.releaseVersion && <DetailField icon={Tag} label="Version" value={ticket.releaseVersion} mono />}
                                 {ticket.deploymentStrategy && <DetailField icon={Upload} label="Strategy" value={ticket.deploymentStrategy} />}
@@ -2256,12 +2261,12 @@ export const TicketDetailsModal = ({
                                     </div>
                                 </div>
                             </div>
-                            {ticket.assignedTo && (
+                            {assigneeDisplayLine && (
                                 <div className="jdm-sidebar-field">
                                     <div className="jdm-sidebar-label"><UserCheck size={12} /> Assigned</div>
                                     <div className="jdm-person-row">
-                                        <span className="jdm-avatar-sm assigned">{ticket.assignedTo.charAt(0).toUpperCase()}</span>
-                                        <div className="jdm-person-name">{ticket.assignedTo}</div>
+                                        <span className="jdm-avatar-sm assigned">{assigneeDisplayLine.charAt(0).toUpperCase()}</span>
+                                        <div className="jdm-person-name">{assigneeDisplayLine}</div>
                                     </div>
                                 </div>
                             )}
@@ -2615,6 +2620,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
     });
     const [error, setError] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
+    const [sendPosting, setSendPosting] = useState(false);
     const [savedEmails, setSavedEmails] = useState([]);
     const [contactHints, setContactHints] = useState([]);
     const [workflowAutoKey, setWorkflowAutoKey] = useState("");
@@ -2639,11 +2645,23 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             setContactHints([]);
             setWorkflowPreview(null);
             setWorkflowAutoKey("");
+            setSendPosting(false);
         }
     }, [isOpen]);
 
     const selectedProjectId = (projects || []).find((p) => p.name === formData.productName)?.id;
     const selectedProject = (projects || []).find((p) => p.name === formData.productName);
+    const routingEntryEmail = (entry) => {
+        if (entry == null) return "";
+        if (typeof entry === "string") return String(entry).trim().toLowerCase();
+        return String(entry.email || "").trim().toLowerCase();
+    };
+    const normalizeRoutingEmailList = (list) =>
+        [...new Set((list || []).map(routingEntryEmail).filter(Boolean))];
+
+    const mandatoryToEmails = normalizeRoutingEmailList(workflowPreview?.emailRouting?.toMandatory);
+    const mandatoryCcEmails = normalizeRoutingEmailList(workflowPreview?.emailRouting?.ccMandatory);
+    const mandatoryBccEmails = normalizeRoutingEmailList(workflowPreview?.emailRouting?.bccMandatory);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -2678,16 +2696,18 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
     useEffect(() => {
         if (!isOpen || step !== 2 || !selectedProjectId || !formData.requestType) {
             setWorkflowPreview(null);
+            setWorkflowPreviewLoading(false);
             return;
         }
         const apiEnum = REQUEST_TYPE_TO_API_ENUM[formData.requestType];
         if (!apiEnum) {
             setWorkflowPreview(null);
+            setWorkflowPreviewLoading(false);
             return;
         }
         let cancelled = false;
         setWorkflowPreviewLoading(true);
-        getEffectiveWorkflow(selectedProjectId, apiEnum)
+        getEffectiveWorkflow(selectedProjectId, apiEnum, formData.environment)
             .then((cfg) => {
                 if (!cancelled) {
                     setWorkflowPreview(cfg);
@@ -2703,7 +2723,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
         return () => {
             cancelled = true;
         };
-    }, [isOpen, step, selectedProjectId, formData.requestType]);
+    }, [isOpen, step, selectedProjectId, formData.requestType, formData.environment]);
 
     useEffect(() => {
         if (!isOpen || !formData.productName) return;
@@ -2716,7 +2736,8 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
 
     useEffect(() => {
         if (!workflowPreview || !selectedProjectId || !formData.requestType) return;
-        const key = `${selectedProjectId}::${formData.requestType}`;
+        const envKey = normalizeEnvironmentLabel(formData.environment || "");
+        const key = `${selectedProjectId}::${formData.requestType}::${envKey}`;
         if (workflowAutoKey === key) return;
 
         // Auto-fill hidden approver for the API payload (not shown in To field)
@@ -2729,18 +2750,8 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
         const autoManagerEmail = firstConfiguredManager?.email || firstApprover?.email || "";
         const autoManagerName = firstConfiguredManager?.name || firstApprover?.name || "";
 
-        // Extract only the non-mandatory (optional/editable) emails for each field.
-        // Mandatory emails are shown as locked chips directly from workflowPreview — not stored in formData.
-        const routingEntryEmail = (e) => {
-            if (e == null) return "";
-            if (typeof e === "string") return String(e).trim().toLowerCase();
-            return String(e.email || "").trim().toLowerCase();
-        };
-
         const optionalOnly = (list, mandatoryList) => {
-            const mandatorySet = new Set(
-                (mandatoryList || []).map((e) => String(e).trim().toLowerCase()).filter(Boolean)
-            );
+            const mandatorySet = new Set(normalizeRoutingEmailList(mandatoryList));
             return [...new Set(
                 (list || [])
                     .map(routingEntryEmail)
@@ -2748,9 +2759,18 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             )];
         };
 
-        const routingTo = optionalOnly(workflowPreview.emailRouting?.to, workflowPreview.emailRouting?.toMandatory);
-        const routingCc = optionalOnly(workflowPreview.emailRouting?.cc, workflowPreview.emailRouting?.ccMandatory);
-        const routingBcc = optionalOnly(workflowPreview.emailRouting?.bcc, workflowPreview.emailRouting?.bccMandatory);
+        const routingTo = [
+            ...mandatoryToEmails,
+            ...optionalOnly(workflowPreview.emailRouting?.to, workflowPreview.emailRouting?.toMandatory)
+        ];
+        const routingCc = [
+            ...mandatoryCcEmails,
+            ...optionalOnly(workflowPreview.emailRouting?.cc, workflowPreview.emailRouting?.ccMandatory)
+        ];
+        const routingBcc = [
+            ...mandatoryBccEmails,
+            ...optionalOnly(workflowPreview.emailRouting?.bcc, workflowPreview.emailRouting?.bccMandatory)
+        ];
 
         setFormData((prev) => ({
             ...prev,
@@ -2762,7 +2782,16 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             bccEmail: routingBcc.join(", ")
         }));
         setWorkflowAutoKey(key);
-    }, [workflowPreview, selectedProjectId, formData.requestType, workflowAutoKey]);
+    }, [
+        workflowPreview,
+        selectedProjectId,
+        formData.requestType,
+        formData.environment,
+        workflowAutoKey,
+        mandatoryToEmails,
+        mandatoryCcEmails,
+        mandatoryBccEmails
+    ]);
     
     if (!isOpen) return null;
 
@@ -2788,8 +2817,11 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
         try {
             setIsSubmitting(true);
             const ticket = await createTicket(formData, user);
-            onSubmit(ticket);
-            onClose();
+            setSendPosting(true);
+            window.setTimeout(() => {
+                onSubmit(ticket);
+                onClose();
+            }, 640);
         } catch (err) {
             setError(err.message);
         } finally {
@@ -2805,7 +2837,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                 return <EnvironmentUpForm formData={formData} onChange={setFormData} />;
             case REQUEST_TYPES.ENVIRONMENT_DOWN:
                 return <EnvironmentDownForm formData={formData} onChange={setFormData} />;
-            case REQUEST_TYPES.BUILD_REQUEST:
+            case REQUEST_TYPES.GENERAL_REQUEST:
                 return <BuildRequestForm formData={formData} onChange={setFormData} />;
             case REQUEST_TYPES.CODE_CUT:
                 return <CodeCutForm formData={formData} onChange={setFormData} />;
@@ -2820,7 +2852,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             [REQUEST_TYPES.ENVIRONMENT_UP]: 'Bring up an existing environment',
             [REQUEST_TYPES.ENVIRONMENT_DOWN]: 'Shut down an environment',
             [REQUEST_TYPES.ISSUE_FIX]: 'Report and request fix for an issue',
-            [REQUEST_TYPES.BUILD_REQUEST]: 'Submit a general request to DevOps team',
+            [REQUEST_TYPES.GENERAL_REQUEST]: 'Submit a general request to DevOps team',
             [REQUEST_TYPES.OTHER_QUERIES]: 'Ask other queries with basic details',
             [REQUEST_TYPES.CODE_CUT]: 'Request a code cut for release'
         };
@@ -2833,7 +2865,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             [REQUEST_TYPES.ENVIRONMENT_UP]: <PlayCircle size={24} />,
             [REQUEST_TYPES.ENVIRONMENT_DOWN]: <Pause size={24} />,
             [REQUEST_TYPES.ISSUE_FIX]: <AlertTriangle size={24} />,
-            [REQUEST_TYPES.BUILD_REQUEST]: <GitBranch size={24} />,
+            [REQUEST_TYPES.GENERAL_REQUEST]: <FileText size={24} />,
             [REQUEST_TYPES.OTHER_QUERIES]: <MessageSquare size={24} />,
             [REQUEST_TYPES.CODE_CUT]: <Tag size={24} />
         };
@@ -2842,7 +2874,10 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
     
     return (
         <div className="modal-overlay" onClick={onClose}>
-            <div className="modal-content create-ticket-modal" onClick={e => e.stopPropagation()}>
+            <div
+                className={`modal-content create-ticket-modal${sendPosting ? " create-ticket-modal--postcard-send" : ""}`}
+                onClick={e => e.stopPropagation()}
+            >
                 <div className="modal-header">
                     <h2>
                         {step === 1 ? 'Select Request Type' : `New ${formData.requestType} Request`}
@@ -2952,11 +2987,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                         <EmailChipsInput
                                             value={formData.toEmail}
                                             onChange={(val) => setFormData((prev) => ({ ...prev, toEmail: val }))}
-                                            lockedEmails={
-                                                (workflowPreview?.emailRouting?.toMandatory || [])
-                                                    .map((e) => String(e).trim().toLowerCase())
-                                                    .filter(Boolean)
-                                            }
+                                            lockedEmails={mandatoryToEmails}
                                             savedEmails={savedEmails}
                                             contactHints={contactHints}
                                             placeholder="Type email and press Enter"
@@ -2965,7 +2996,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                         <small style={{ color: '#64748b', fontSize: '0.75rem', display: 'block', marginTop: 4 }}>
                                             To is set from your project workflow (auto-filled). You can’t add addresses here — use <strong>CC</strong> to copy others.
                                         </small>
-                                        {(workflowPreview?.emailRouting?.toMandatory || []).length > 0 && (
+                                        {mandatoryToEmails.length > 0 && (
                                             <small style={{ color: '#6d28d9', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
                                                 <Lock size={12} aria-hidden />
                                                 Some To addresses are mandatory — set by your admin.
@@ -2976,6 +3007,11 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                                 Recipients load after selecting product &amp; request type.
                                             </small>
                                         )}
+                                        {workflowPreviewLoading && (
+                                            <small style={{ color: '#2563eb', fontSize: '0.75rem', display: 'block', marginTop: 4 }}>
+                                                Loading recipients for selected environment...
+                                            </small>
+                                        )}
                                     </FormField>
                                     <FormField label="CC">
                                         <EmailChipsInput
@@ -2983,13 +3019,9 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                             onChange={(ccEmail) => setFormData((prev) => ({ ...prev, ccEmail }))}
                                             savedEmails={savedEmails}
                                             contactHints={contactHints}
-                                            lockedEmails={
-                                                (workflowPreview?.emailRouting?.ccMandatory || [])
-                                                    .map((e) => String(e).trim().toLowerCase())
-                                                    .filter(Boolean)
-                                            }
+                                            lockedEmails={mandatoryCcEmails}
                                         />
-                                        {(workflowPreview?.emailRouting?.ccMandatory || []).length > 0 && (
+                                        {mandatoryCcEmails.length > 0 && (
                                             <small style={{ color: '#6d28d9', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
                                                 <Lock size={12} aria-hidden />
                                                 Locked emails are mandatory — set by your admin.
@@ -3008,14 +3040,10 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                             onChange={(bccEmail) => setFormData((prev) => ({ ...prev, bccEmail }))}
                                             savedEmails={savedEmails}
                                             contactHints={contactHints}
-                                            lockedEmails={
-                                                (workflowPreview?.emailRouting?.bccMandatory || [])
-                                                    .map((e) => String(e).trim().toLowerCase())
-                                                    .filter(Boolean)
-                                            }
+                                            lockedEmails={mandatoryBccEmails}
                                             placeholder="Type email and press Enter"
                                         />
-                                        {(workflowPreview?.emailRouting?.bccMandatory || []).length > 0 && (
+                                        {mandatoryBccEmails.length > 0 && (
                                             <small style={{ color: '#6d28d9', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginTop: 4 }}>
                                                 <Lock size={12} aria-hidden />
                                                 Locked BCC emails are mandatory — set by your admin.

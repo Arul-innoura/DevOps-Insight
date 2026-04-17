@@ -31,6 +31,8 @@ public class CreateTicketRequest {
     
     @NotNull(message = "Environment is required")
     private Environment environment;
+    /** Raw environment label selected in UI (supports custom per-project environment names). */
+    private String environmentLabel;
     
     private String description;
     

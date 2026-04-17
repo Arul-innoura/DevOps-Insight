@@ -18,8 +18,16 @@ public class ManagerApprovalTokenInfo {
     private String productName;
     private String requestType;
     private String environment;
+    /** Raw ticket environment label when custom/project-specific (preferred for approval page display). */
+    private String environmentLabel;
+    /** Same string as approval emails (label first, then enum display). */
+    private String environmentDisplay;
     /** Ticket purpose / business reason (shown on approval page and in approval email). */
     private String purpose;
+    /** Note entered when approval was requested (shown on approval page). */
+    private String requestContextNote;
+    /** Same as trigger note on the token (plain requester context for approvers). */
+    private String approvalRequestNote;
     private String description;
     private String requesterName;
     private String requesterEmail;

@@ -10,7 +10,7 @@ export const REQUEST_TYPES = {
     NEW_ENVIRONMENT: "New Environment",
     ENVIRONMENT_UP: "Environment Up",
     ENVIRONMENT_DOWN: "Environment Down",
-    BUILD_REQUEST: "General Request",
+    GENERAL_REQUEST: "General Request",
     CODE_CUT: "Code Cut"
 };
 
@@ -28,7 +28,7 @@ export const REQUEST_TYPE_TO_API_ENUM = {
     [REQUEST_TYPES.NEW_ENVIRONMENT]: "NEW_ENVIRONMENT",
     [REQUEST_TYPES.ENVIRONMENT_UP]: "ENVIRONMENT_UP",
     [REQUEST_TYPES.ENVIRONMENT_DOWN]: "ENVIRONMENT_DOWN",
-    [REQUEST_TYPES.BUILD_REQUEST]: "BUILD_REQUEST",
+    [REQUEST_TYPES.GENERAL_REQUEST]: "GENERAL_REQUEST",
     [REQUEST_TYPES.CODE_CUT]: "CODE_CUT"
 };
 
@@ -38,6 +38,123 @@ const LEGACY_REQUEST_TYPE_LABELS = {
     ISSUE_FIX: "Issue Fix",
     OTHER_QUERIES: "Other Queries"
 };
+
+/** API / WebSocket enum name → UI label (same as create form). */
+const API_REQUEST_TYPE_TO_DISPLAY = {
+    NEW_ENVIRONMENT: REQUEST_TYPES.NEW_ENVIRONMENT,
+    ENVIRONMENT_UP: REQUEST_TYPES.ENVIRONMENT_UP,
+    ENVIRONMENT_DOWN: REQUEST_TYPES.ENVIRONMENT_DOWN,
+    GENERAL_REQUEST: REQUEST_TYPES.GENERAL_REQUEST,
+    /** Legacy tickets: enum was used for general DevOps work before GENERAL_REQUEST existed. */
+    BUILD_REQUEST: REQUEST_TYPES.GENERAL_REQUEST,
+    CODE_CUT: REQUEST_TYPES.CODE_CUT,
+    RELEASE_DEPLOYMENT: LEGACY_REQUEST_TYPE_LABELS.RELEASE_DEPLOYMENT,
+    ISSUE_FIX: LEGACY_REQUEST_TYPE_LABELS.ISSUE_FIX,
+    OTHER_QUERIES: LEGACY_REQUEST_TYPE_LABELS.OTHER_QUERIES
+};
+
+/**
+ * @param {string|null|undefined} value — enum name (e.g. GENERAL_REQUEST) or display label
+ * @returns {string|null} display label, or null if unknown
+ */
+export function requestTypeApiValueToDisplay(value) {
+    if (value == null || value === "") return null;
+    const raw = String(value).trim();
+    const upper = raw.toUpperCase().replace(/[\s-]+/g, "_");
+    if (API_REQUEST_TYPE_TO_DISPLAY[upper]) return API_REQUEST_TYPE_TO_DISPLAY[upper];
+    if (Object.values(REQUEST_TYPES).includes(raw)) return raw;
+    for (const [k, v] of Object.entries(LEGACY_REQUEST_TYPE_LABELS)) {
+        if (k === upper || v === raw) return v;
+    }
+    return null;
+}
+
+/**
+ * Shapes raw WebSocket / partial API payloads before merging into list rows so enum-only
+ * updates do not replace display labels, and omitted assignee fields do not clear optimistic UI.
+ * @param {Record<string, unknown>} payload
+ */
+export function normalizeWebSocketTicketPayload(payload) {
+    if (!payload || typeof payload !== "object") return {};
+    const out = { ...payload };
+    const own = (k) => Object.prototype.hasOwnProperty.call(payload, k);
+
+    if (own("requestType")) {
+        const mapped = requestTypeApiValueToDisplay(out.requestType);
+        if (mapped) out.requestType = mapped;
+    }
+    // Partial WS payloads often include assignedTo: null; merging that would clear a valid assignee on the row.
+    const blankAssign = (v) => v == null || String(v).trim() === "";
+    if (!own("assignedTo") || blankAssign(out.assignedTo)) {
+        delete out.assignedTo;
+    }
+    if (!own("assignedToEmail") || blankAssign(out.assignedToEmail)) {
+        delete out.assignedToEmail;
+    }
+    if (own("environmentLabel") && String(out.environmentLabel || "").trim() !== "") {
+        out.environment = normalizeEnvironmentLabel(out.environmentLabel);
+    } else if (own("environment") && out.environment != null && String(out.environment).trim() !== "") {
+        out.environment = normalizeEnvironmentLabel(out.environment);
+    }
+    // Partial WS payloads never include timeline; null would wipe client timeline used for assignee display.
+    if (own("timeline") && !Array.isArray(out.timeline)) {
+        delete out.timeline;
+    }
+    return out;
+}
+
+function deriveAssigneeNameFromTimeline(ticket) {
+    const timeline = Array.isArray(ticket?.timeline) ? ticket.timeline : [];
+    for (let i = timeline.length - 1; i >= 0; i--) {
+        const e = timeline[i];
+        const na = String(e?.newAssignee || "").trim();
+        if (na) return na;
+        const n = String(e?.notes || "");
+        const nLower = n.toLowerCase();
+        const prefix = "ticket assigned to ";
+        const at = nLower.indexOf(prefix);
+        if (at >= 0) {
+            const tail = n.slice(at + prefix.length).trim();
+            if (tail) {
+                const paren = tail.indexOf("(");
+                const namePart = (paren >= 0 ? tail.slice(0, paren) : tail).trim();
+                if (namePart) return namePart;
+            }
+        }
+        const fwd = " to ";
+        const fwdIdx = nLower.lastIndexOf(fwd);
+        if (fwdIdx >= 0 && nLower.includes("forward")) {
+            const tail = n.slice(fwdIdx + fwd.length).trim();
+            if (tail) {
+                const paren = tail.indexOf("(");
+                const namePart = (paren >= 0 ? tail.slice(0, paren) : tail).trim();
+                if (namePart) return namePart;
+            }
+        }
+    }
+    return "";
+}
+
+/**
+ * Display line for ticket cards: stored assignee, then legacy fields, then email, then latest timeline assignment.
+ */
+export function getTicketAssigneeDisplay(ticket) {
+    const a = String(ticket?.assignedTo || "").trim();
+    if (a) return a;
+    const legacy = String(ticket?.assigneeName || ticket?.assignedEngineerName || "").trim();
+    if (legacy) return legacy;
+    const em = String(ticket?.assignedToEmail || "").trim();
+    if (em) return em;
+    return deriveAssigneeNameFromTimeline(ticket);
+}
+
+/** True when a WS merge patch carries a non-blank assignee (do not drop as "stale"). */
+export function wsPatchHasMeaningfulAssignee(patch) {
+    if (!patch || typeof patch !== "object") return false;
+    const n = patch.assignedTo != null && String(patch.assignedTo).trim() !== "";
+    const e = patch.assignedToEmail != null && String(patch.assignedToEmail).trim() !== "";
+    return n || e;
+}
 
 // Ticket Statuses
 export const TICKET_STATUS = {
@@ -53,6 +170,34 @@ export const TICKET_STATUS = {
     COMPLETED: "Completed",
     CLOSED: "Closed"
 };
+
+/**
+ * When DevOps/Admin picks a workflow status that claims an unowned ticket (matches server auto-assign),
+ * patch assignee fields optimistically so list cards update immediately.
+ */
+export function optimisticSelfAssignOnStatusChange(ticket, newStatus, actorName, actorEmail, meta = {}) {
+    if (meta?.reopen) return {};
+    const no =
+        !String(ticket?.assignedTo || "").trim() &&
+        !String(ticket?.assignedToEmail || "").trim();
+    if (!no) return {};
+    const name = String(actorName || "").trim();
+    if (!name) return {};
+    const claimStatuses = new Set([
+        TICKET_STATUS.ACCEPTED,
+        TICKET_STATUS.IN_PROGRESS,
+        TICKET_STATUS.MANAGER_APPROVED,
+        TICKET_STATUS.COST_APPROVED,
+        TICKET_STATUS.ACTION_REQUIRED,
+        TICKET_STATUS.ON_HOLD
+    ]);
+    if (!claimStatuses.has(newStatus)) return {};
+    const em = String(actorEmail || "").trim();
+    return {
+        assignedTo: name,
+        assignedToEmail: em || String(ticket?.assignedToEmail || "").trim()
+    };
+}
 
 /** Primary list filters (not individual workflow states like manager/cost pending). */
 export const TICKET_FILTER_BUCKET = {
@@ -120,12 +265,21 @@ export function ticketMatchesPrimaryStatusFilter(ticket, bucket, ctx = {}) {
     const assigneeEmail = String(ticket?.assignedToEmail || "").trim().toLowerCase();
 
     switch (bucket) {
-        case TICKET_FILTER_BUCKET.UNASSIGNED:
-            return (
-                st === TICKET_STATUS.CREATED &&
+        case TICKET_FILTER_BUCKET.UNASSIGNED: {
+            const noAssignee =
                 !String(assignee || "").trim() &&
-                !String(assigneeEmail || "").trim()
-            );
+                !String(assigneeEmail || "").trim() &&
+                !deriveAssigneeNameFromTimeline(ticket);
+            if (!noAssignee) return false;
+            const waitingPickup =
+                st === TICKET_STATUS.CREATED ||
+                st === TICKET_STATUS.MANAGER_APPROVAL_PENDING ||
+                st === TICKET_STATUS.MANAGER_APPROVED ||
+                st === TICKET_STATUS.COST_APPROVAL_PENDING ||
+                st === TICKET_STATUS.COST_APPROVED ||
+                st === TICKET_STATUS.ACCEPTED;
+            return waitingPickup;
+        }
         case TICKET_FILTER_BUCKET.ASSIGNED_ME:
             return (
                 st !== TICKET_STATUS.CLOSED &&
@@ -177,6 +331,21 @@ const ENV_DISPLAY_TO_API = {
     Production: "PRODUCTION"
 };
 
+const ENV_NORMALIZED_ALIAS_TO_DISPLAY = {
+    dev: "Development",
+    development: "Development",
+    qa: "Quality Assurance",
+    quality_assurance: "Quality Assurance",
+    qualityassurance: "Quality Assurance",
+    stage: "Staging",
+    staging: "Staging",
+    uat: "User Acceptance Testing",
+    user_acceptance_testing: "User Acceptance Testing",
+    useracceptancetesting: "User Acceptance Testing",
+    production: "Production",
+    prod: "Production"
+};
+
 /** Map any legacy / API / short value to canonical display label used in dropdowns. */
 export function normalizeEnvironmentLabel(value) {
     if (value == null || value === "") return "";
@@ -184,27 +353,10 @@ export function normalizeEnvironmentLabel(value) {
     const upper = s.toUpperCase();
     if (ENV_API_TO_DISPLAY[upper]) return ENV_API_TO_DISPLAY[upper];
     if (ENV_DISPLAY_TO_API[s]) return s;
-    const lower = s.toLowerCase();
-    const legacy = {
-        dev: "Development",
-        development: "Development",
-        qa: "Quality Assurance",
-        stage: "Staging",
-        staging: "Staging",
-        uat: "User Acceptance Testing",
-        production: "Production",
-        prod: "Production"
-    };
-    if (legacy[lower]) return legacy[lower];
-    const titled = s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
-    const titledMap = {
-        Dev: "Development",
-        Qa: "Quality Assurance",
-        Stage: "Staging",
-        Uat: "User Acceptance Testing",
-        Production: "Production"
-    };
-    if (titledMap[titled]) return titledMap[titled];
+    const compact = s.toLowerCase().replace(/[\s-]+/g, "_");
+    const compactNoUnderscore = compact.replace(/_/g, "");
+    if (ENV_NORMALIZED_ALIAS_TO_DISPLAY[compact]) return ENV_NORMALIZED_ALIAS_TO_DISPLAY[compact];
+    if (ENV_NORMALIZED_ALIAS_TO_DISPLAY[compactNoUnderscore]) return ENV_NORMALIZED_ALIAS_TO_DISPLAY[compactNoUnderscore];
     return s;
 }
 
@@ -592,25 +744,41 @@ const toApiStatus = (displayStatus) => {
 };
 
 const toApiRequestType = (displayType) => {
+    const raw = String(displayType ?? "").trim();
+    if (!raw) {
+        throw new Error("Request type is required");
+    }
     const map = {
         [REQUEST_TYPES.NEW_ENVIRONMENT]: "NEW_ENVIRONMENT",
         [REQUEST_TYPES.ENVIRONMENT_UP]: "ENVIRONMENT_UP",
         [REQUEST_TYPES.ENVIRONMENT_DOWN]: "ENVIRONMENT_DOWN",
-        [REQUEST_TYPES.BUILD_REQUEST]: "BUILD_REQUEST",
+        [REQUEST_TYPES.GENERAL_REQUEST]: "GENERAL_REQUEST",
         [REQUEST_TYPES.CODE_CUT]: "CODE_CUT",
         "Issue Fix": "ISSUE_FIX",
-        "Other Queries": "OTHER_QUERIES"
+        "Other Queries": "OTHER_QUERIES",
+        "Build Request": "BUILD_REQUEST"
     };
-    return map[displayType] || "NEW_ENVIRONMENT";
+    if (map[raw]) return map[raw];
+    const apiEnum = raw.toUpperCase().replace(/[\s-]+/g, "_");
+    const supported = new Set(Object.values(map));
+    if (supported.has(apiEnum)) return apiEnum;
+    throw new Error(`Unsupported request type value: ${raw}`);
 };
 
 const toApiEnvironment = (displayEnv) => {
+    const raw = String(displayEnv ?? "").trim();
+    if (!raw) {
+        throw new Error("Environment is required");
+    }
     const canon = normalizeEnvironmentLabel(displayEnv);
     if (ENV_DISPLAY_TO_API[canon]) return ENV_DISPLAY_TO_API[canon];
-    const legacy = { Dev: "DEV", QA: "QA", Stage: "STAGE", Production: "PRODUCTION", Uat: "UAT" };
-    if (legacy[displayEnv]) return legacy[displayEnv];
-    const u = String(displayEnv || "").toUpperCase();
+    const u = raw.toUpperCase().replace(/[\s-]+/g, "_");
     if (ENV_API_TO_DISPLAY[u]) return u;
+    const l = raw.toLowerCase();
+    if (/\bqa\b|quality/.test(l)) return "QA";
+    if (/\buat\b|acceptance/.test(l)) return "UAT";
+    if (/\bstage\b|staging/.test(l)) return "STAGE";
+    if (/\bprod\b|production/.test(l)) return "PRODUCTION";
     return "DEV";
 };
 
@@ -692,16 +860,21 @@ const mapTimeline = (timeline = []) =>
 const mapTicket = (ticket) => {
     if (!ticket) return ticket;
     const requestTypeCode = ticket.requestType || ticket.type;
-    const assignedTo =
-        ticket.assignedTo ||
-        ticket.assigneeName ||
-        ticket.assignee?.name ||
-        ticket.assignedEngineerName ||
+    const requestTypeFromApi = requestTypeApiValueToDisplay(requestTypeCode);
+    const pickStr = (v) => String(v ?? "").trim();
+    let assignedTo =
+        pickStr(ticket.assignedTo) ||
+        pickStr(ticket.assigneeName) ||
+        pickStr(ticket.assignee?.name) ||
+        pickStr(ticket.assignedEngineerName) ||
         "";
-    const assignedToEmail =
-        ticket.assigneeEmail ||
-        ticket.assignedToEmail ||
-        ticket.assignee?.email ||
+    if (!assignedTo) {
+        assignedTo = deriveAssigneeNameFromTimeline(ticket);
+    }
+    let assignedToEmail =
+        pickStr(ticket.assigneeEmail) ||
+        pickStr(ticket.assignedToEmail) ||
+        pickStr(ticket.assignee?.email) ||
         "";
     const requestedBy =
         ticket.requestedBy ||
@@ -724,11 +897,12 @@ const mapTicket = (ticket) => {
     return {
         ...ticket,
         requestType:
+            requestTypeFromApi ||
             REQUEST_TYPES[requestTypeCode] ||
             LEGACY_REQUEST_TYPE_LABELS[requestTypeCode] ||
             requestTypeCode ||
-            REQUEST_TYPES.BUILD_REQUEST,
-        environment: environmentApiToDisplay(ticket.environment),
+            REQUEST_TYPES.GENERAL_REQUEST,
+        environment: String(ticket.environmentLabel || "").trim() || environmentApiToDisplay(ticket.environment),
         status: toDisplayTicketStatus(ticket.status),
         costApprovalRequired: !!ticket.costApprovalRequired,
         estimatedCost: ticket.estimatedCost ?? null,
@@ -763,6 +937,7 @@ const mapCreateTicketPayload = (ticketData) => ({
     requestType: toApiRequestType(ticketData.requestType),
     productName: ticketData.productName,
     environment: toApiEnvironment(ticketData.environment),
+    environmentLabel: String(ticketData.environment ?? "").trim(),
     description: ticketData.description || "",
     managerName: ticketData.managerName || "",
     managerEmail: ticketData.managerEmail || "",
@@ -801,14 +976,17 @@ export const createTicket = async (ticketData) => {
     return mapTicket(created);
 };
 
-export const getAllTickets = async () => {
+export const getAllTickets = async (opts = {}) => {
+    const force = Boolean(opts && opts.force);
     const cacheKey = CACHE_KEYS.TICKETS_ALL;
-    const cached = getCached(cacheKey);
-    if (cached) {
-        void apiRequest("/tickets")
-            .then((data) => setCached(cacheKey, mapTickets(data)))
-            .catch(() => {});
-        return cached;
+    if (!force) {
+        const cached = getCached(cacheKey);
+        if (cached) {
+            void apiRequest("/tickets")
+                .then((data) => setCached(cacheKey, mapTickets(data)))
+                .catch(() => {});
+            return cached;
+        }
     }
     const data = await apiRequest("/tickets");
     return setCached(cacheKey, mapTickets(data));
@@ -851,7 +1029,7 @@ export const searchMyTicketsApi = async (q) => {
 };
 
 export const getActiveTicketsForDevOps = async () => {
-    const all = await getAllTickets();
+    const all = await getAllTickets({ force: true });
     return all.filter((ticket) => ticket.isActive !== false);
 };
 
@@ -1028,7 +1206,7 @@ export const getTicketStats = async () => {
                 });
                 const byRequestType = {};
                 Object.entries(stats.byRequestType || {}).forEach(([k, v]) => {
-                    byRequestType[REQUEST_TYPES[k] || REQUEST_TYPES.BUILD_REQUEST] = v;
+                    byRequestType[requestTypeApiValueToDisplay(k) || REQUEST_TYPES.GENERAL_REQUEST] = v;
                 });
                 const byEnvironment = {};
                 Object.entries(stats.byEnvironment || {}).forEach(([k, v]) => {
@@ -1062,7 +1240,7 @@ export const getTicketStats = async () => {
     });
     const byRequestType = {};
     Object.entries(stats.byRequestType || {}).forEach(([k, v]) => {
-        byRequestType[REQUEST_TYPES[k] || REQUEST_TYPES.BUILD_REQUEST] = v;
+        byRequestType[requestTypeApiValueToDisplay(k) || REQUEST_TYPES.GENERAL_REQUEST] = v;
     });
     const byEnvironment = {};
     Object.entries(stats.byEnvironment || {}).forEach(([k, v]) => {

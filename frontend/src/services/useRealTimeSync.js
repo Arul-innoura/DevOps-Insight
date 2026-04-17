@@ -10,7 +10,8 @@ import { applyCacheInvalidationHint } from "./ticketService";
 import { 
     playShortNotification, 
     playSuccessNotification,
-    playNewTicketNotification
+    playNewTicketNotification,
+    primeAudioContext
 } from "./notificationService";
 
 /**
@@ -125,7 +126,7 @@ export const useRealTimeSync = ({
         // New ticket created — always play the distinctive arrival chime
         const handleNewTicket = (data) => {
             if (didInitialLoad.current && playNewTicketSound) {
-                playNewTicketNotification();
+                void primeAudioContext().then(() => playNewTicketNotification());
             }
             onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_CREATED, data);
             if (refreshOnEvents) {
@@ -136,7 +137,7 @@ export const useRealTimeSync = ({
         // Existing ticket updated (assignment, note, etc.)
         const handleTicketEvent = (data) => {
             if (didInitialLoad.current && playUpdateSound) {
-                playShortNotification();
+                void primeAudioContext().then(() => playShortNotification());
             }
             onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_UPDATED, data);
             if (refreshOnEvents) {
@@ -146,7 +147,7 @@ export const useRealTimeSync = ({
 
         const handleTicketDeleted = (data) => {
             if (didInitialLoad.current && playUpdateSound) {
-                playShortNotification();
+                void primeAudioContext().then(() => playShortNotification());
             }
             const id = data?.id ?? data?.ticketId;
             const normalized = id != null && id !== "" ? { ...data, id, ticketId: data?.ticketId ?? id } : data;
@@ -167,9 +168,9 @@ export const useRealTimeSync = ({
             if (didInitialLoad.current) {
                 const status = data?.status;
                 if (status === 'COMPLETED' || status === 'CLOSED') {
-                    playSuccessNotification();
+                    void primeAudioContext().then(() => playSuccessNotification());
                 } else if (playUpdateSound) {
-                    playShortNotification();
+                    void primeAudioContext().then(() => playShortNotification());
                 }
             }
             

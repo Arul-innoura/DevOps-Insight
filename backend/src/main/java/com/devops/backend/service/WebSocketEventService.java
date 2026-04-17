@@ -62,8 +62,18 @@ public class WebSocketEventService {
         map.put("id", ticket.getId());
         map.put("requestType", ticket.getRequestType() != null ? ticket.getRequestType().name() : null);
         map.put("productName", ticket.getProductName());
+        map.put("environmentLabel", ticket.getEnvironmentLabel());
+        map.put("environment", ticket.getEnvironment() != null ? ticket.getEnvironment().name() : null);
         map.put("status", ticket.getStatus() != null ? ticket.getStatus().name() : null);
-        map.put("assignedTo", ticket.getAssignedTo());
+        String wsAssignee = ticket.getAssignedTo();
+        if (wsAssignee == null || wsAssignee.isBlank()) {
+            String derived = ticket.resolveAssigneeDisplayNameFromTimeline();
+            wsAssignee = derived != null && !derived.isBlank() ? derived : null;
+        }
+        map.put("assignedTo", wsAssignee);
+        map.put("assignedToEmail", ticket.getAssignedToEmail());
+        map.put("managerName", ticket.getManagerName());
+        map.put("managerEmail", ticket.getManagerEmail());
         map.put("requestedBy", ticket.getRequestedBy());
         map.put("updatedAt", ticket.getUpdatedAt() != null ? ticket.getUpdatedAt().toString() : null);
         map.put("deleted", ticket.isDeleted());

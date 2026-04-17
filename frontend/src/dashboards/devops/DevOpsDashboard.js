@@ -61,6 +61,10 @@ import {
     TICKET_STATUS,
     TICKET_FILTER_BUCKET,
     toDisplayTicketStatus,
+    normalizeEnvironmentLabel,
+    normalizeWebSocketTicketPayload,
+    wsPatchHasMeaningfulAssignee,
+    optimisticSelfAssignOnStatusChange,
     ticketMatchesPrimaryStatusFilter,
     getDevOpsTeamMembers,
     updateDevOpsAvailability,
@@ -84,6 +88,7 @@ import {
     setVolume,
     getVolume
 } from "../../services/notificationService";
+import { launchPaperCelebration } from "../../utils/celebrationFx";
 import AnalyticsDashboard from "../admin/AnalyticsDashboard";
 import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
@@ -409,16 +414,35 @@ export const DevOpsDashboard = () => {
         if (!updatedTicket?.id) return;
         setTickets((prev) => {
             const exists = prev.some((t) => t.id === updatedTicket.id);
-            const next = exists
-                ? prev.map((t) => (t.id === updatedTicket.id ? updatedTicket : t))
-                : [updatedTicket, ...prev];
+            const mergeRow = (t) => {
+                if (t.id !== updatedTicket.id) return t;
+                const merged = { ...t, ...updatedTicket };
+                const incomingBlank =
+                    !String(updatedTicket.assignedTo || "").trim() &&
+                    !String(updatedTicket.assignedToEmail || "").trim();
+                if (incomingBlank) {
+                    merged.assignedTo = t.assignedTo;
+                    merged.assignedToEmail = t.assignedToEmail;
+                }
+                return merged;
+            };
+            const next = exists ? prev.map(mergeRow) : [updatedTicket, ...prev];
             recalcSectionCounts(next);
             if (activeSectionRef.current === 'requests') {
                 applySectionFilter(next, requestTabRef.current, filtersRef.current);
             }
             return next;
         });
-        setSelectedTicket((prev) => (prev && prev.id === updatedTicket.id ? updatedTicket : prev));
+        setSelectedTicket((prev) => {
+            if (!prev || prev.id !== updatedTicket.id) return prev;
+            const incomingBlank =
+                !String(updatedTicket.assignedTo || "").trim() &&
+                !String(updatedTicket.assignedToEmail || "").trim();
+            if (incomingBlank) {
+                return { ...prev, ...updatedTicket, assignedTo: prev.assignedTo, assignedToEmail: prev.assignedToEmail };
+            }
+            return { ...prev, ...updatedTicket };
+        });
     }, [recalcSectionCounts]);
 
     const withTimeoutFallback = useCallback(async (promise, timeoutMs, fallbackValue) => {
@@ -539,16 +563,49 @@ export const DevOpsDashboard = () => {
                 return;
             }
 
-            const effectiveId = data?.id ?? data?.ticketId;
+            const payload = data?.ticket && typeof data.ticket === "object"
+                ? { ...data.ticket, action: data?.action }
+                : data;
+            const effectiveId = payload?.id ?? payload?.ticketId;
             if (effectiveId == null || effectiveId === "") return;
+            const incomingAssignedTo =
+                payload?.assignedTo ??
+                payload?.assigneeName ??
+                payload?.assignedEngineerName ??
+                payload?.assignee?.name;
+            const incomingAssignedToEmail =
+                payload?.assignedToEmail ??
+                payload?.assigneeEmail ??
+                payload?.assignee?.email;
+            const incomingManagerName =
+                payload?.managerName ??
+                payload?.approverName ??
+                payload?.approvalTargetName;
+            const incomingManagerEmail =
+                payload?.managerEmail ??
+                payload?.approverEmail ??
+                payload?.approvalTargetEmail;
             const wsPatch = {
-                ...data,
+                ...normalizeWebSocketTicketPayload(payload),
                 id: effectiveId,
-                ...(data?.status ? { status: toDisplayTicketStatus(data.status) } : {})
+                ...(incomingAssignedTo != null && String(incomingAssignedTo).trim() !== ""
+                    ? { assignedTo: String(incomingAssignedTo).trim() }
+                    : {}),
+                ...(incomingAssignedToEmail != null && String(incomingAssignedToEmail).trim() !== ""
+                    ? { assignedToEmail: String(incomingAssignedToEmail).trim() }
+                    : {}),
+                ...(incomingManagerName !== undefined ? { managerName: incomingManagerName } : {}),
+                ...(incomingManagerEmail !== undefined ? { managerEmail: incomingManagerEmail } : {}),
+                ...((payload?.environmentLabel || payload?.environment)
+                    ? { environment: normalizeEnvironmentLabel(payload.environmentLabel || payload.environment) }
+                    : {}),
+                ...(payload?.status ? { status: toDisplayTicketStatus(payload.status) } : {})
             };
             const isSoftRemove =
                 type === "ticket:deleted" ||
-                (type === "ticket:updated" && Boolean(data?.deleted));
+                (type === "ticket:updated" && Boolean(payload?.deleted));
+            const incomingUpdatedMs = wsPatch?.updatedAt ? new Date(wsPatch.updatedAt).getTime() : NaN;
+            const assigneePatch = wsPatchHasMeaningfulAssignee(wsPatch);
 
             setTickets((prev) => {
                 if (isSoftRemove) {
@@ -563,6 +620,14 @@ export const DevOpsDashboard = () => {
                 }
                 const idx = prev.findIndex((t) => t.id === effectiveId);
                 if (idx < 0) return prev;
+                const existingUpdatedMs = prev[idx]?.updatedAt ? new Date(prev[idx].updatedAt).getTime() : NaN;
+                const stale =
+                    !Number.isNaN(incomingUpdatedMs) &&
+                    !Number.isNaN(existingUpdatedMs) &&
+                    incomingUpdatedMs < existingUpdatedMs;
+                if (stale && !assigneePatch) {
+                    return prev;
+                }
                 const next = [...prev];
                 next[idx] = { ...next[idx], ...wsPatch };
                 recalcSectionCounts(next);
@@ -575,6 +640,14 @@ export const DevOpsDashboard = () => {
                 if (!prev?.id) return prev;
                 if (isSoftRemove && prev.id === effectiveId) return null;
                 if (prev.id !== effectiveId) return prev;
+                const existingUpdatedMs = prev?.updatedAt ? new Date(prev.updatedAt).getTime() : NaN;
+                const staleSel =
+                    !Number.isNaN(incomingUpdatedMs) &&
+                    !Number.isNaN(existingUpdatedMs) &&
+                    incomingUpdatedMs < existingUpdatedMs;
+                if (staleSel && !assigneePatch) {
+                    return prev;
+                }
                 return { ...prev, ...wsPatch };
             });
             suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;
@@ -806,10 +879,24 @@ export const DevOpsDashboard = () => {
     
     const handleAcceptTicket = async (ticketId) => {
         setTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId ? { ...ticket, status: TICKET_STATUS.ACCEPTED, assignedTo: userName } : ticket
+            ticket.id === ticketId
+                ? {
+                    ...ticket,
+                    status: TICKET_STATUS.ACCEPTED,
+                    assignedTo: userName,
+                    assignedToEmail: userEmail || ticket.assignedToEmail || ""
+                }
+                : ticket
         )));
         setFilteredTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId ? { ...ticket, status: TICKET_STATUS.ACCEPTED, assignedTo: userName } : ticket
+            ticket.id === ticketId
+                ? {
+                    ...ticket,
+                    status: TICKET_STATUS.ACCEPTED,
+                    assignedTo: userName,
+                    assignedToEmail: userEmail || ticket.assignedToEmail || ""
+                }
+                : ticket
         )));
         try {
             setActionLoading("Assigning ticket...");
@@ -823,28 +910,25 @@ export const DevOpsDashboard = () => {
     };
     
     const handleStatusChange = async (ticketId, newStatus, notes, meta = {}) => {
-        setTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId
-                ? {
-                    ...ticket,
-                    status: newStatus,
-                    ...(meta.reopen ? { assignedTo: null, assignedToEmail: null } : {}),
-                }
-                : ticket
-        )));
-        setFilteredTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId
-                ? {
-                    ...ticket,
-                    status: newStatus,
-                    ...(meta.reopen ? { assignedTo: null, assignedToEmail: null } : {}),
-                }
-                : ticket
-        )));
+        const patchRow = (ticket) => {
+            if (ticket.id !== ticketId) return ticket;
+            const selfAssign = optimisticSelfAssignOnStatusChange(ticket, newStatus, userName, userEmail, meta);
+            return {
+                ...ticket,
+                status: newStatus,
+                ...selfAssign,
+                ...(meta.reopen ? { assignedTo: null, assignedToEmail: null } : {}),
+            };
+        };
+        setTickets((prev) => prev.map(patchRow));
+        setFilteredTickets((prev) => prev.map(patchRow));
         try {
             setActionLoading("Updating ticket status...");
             const updated = await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes, meta);
             upsertTicketLocally(updated);
+            if (newStatus === TICKET_STATUS.CLOSED) {
+                launchPaperCelebration();
+            }
         } catch (error) {
             alert(`Error: ${error.message}`);
         } finally {

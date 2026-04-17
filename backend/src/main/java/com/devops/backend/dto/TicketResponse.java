@@ -27,6 +27,7 @@ public class TicketResponse {
     private String productName;
     private String projectId;
     private Environment environment;
+    private String environmentLabel;
 
     private WorkflowConfiguration workflowConfiguration;
     private java.util.List<WorkflowStageView> workflowStages;

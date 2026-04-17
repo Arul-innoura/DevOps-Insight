@@ -12,7 +12,11 @@ import {
     Loader2
 } from 'lucide-react';
 import { resolveApiBaseUrl } from "../config/apiBaseUrl";
-import { TICKET_STATUS, toApiTicketStatus } from '../services/ticketService';
+import {
+    TICKET_STATUS,
+    toApiTicketStatus,
+    requestTypeApiValueToDisplay
+} from '../services/ticketService';
 
 /**
  * Manager Approval Page
@@ -21,6 +25,18 @@ import { TICKET_STATUS, toApiTicketStatus } from '../services/ticketService';
  */
 
 const API_BASE_URL = resolveApiBaseUrl();
+
+const displayRequestType = (value) =>
+    requestTypeApiValueToDisplay(value) || String(value || '').trim() || '';
+
+/** Match backend / email: prefer server-computed line, then label, then value — no client-side alias remapping. */
+const displayEnvironment = (tokenInfo) => {
+    const line = String(tokenInfo?.environmentDisplay || "").trim();
+    if (line) return line;
+    const label = String(tokenInfo?.environmentLabel || "").trim();
+    const value = String(tokenInfo?.environment || "").trim();
+    return label || value || "—";
+};
 
 const ManagerApprovalPage = () => {
     const [searchParams] = useSearchParams();
@@ -57,17 +73,31 @@ const ManagerApprovalPage = () => {
 
     const validateToken = async () => {
         try {
-            const response = await fetch(
-                `${API_BASE_URL}/public/manager-approval/validate?token=${encodeURIComponent(token)}${preSelectedAction ? `&action=${preSelectedAction}` : ''}`
-            );
-            const data = await response.json();
+            const url = `${API_BASE_URL}/public/manager-approval/validate?token=${encodeURIComponent(token)}${preSelectedAction ? `&action=${preSelectedAction}` : ""}`;
+            const response = await fetch(url, {
+                method: "GET",
+                headers: { Accept: "application/json" },
+                cache: "no-store",
+                credentials: "omit"
+            });
+            if (!response.ok) {
+                setError(`Could not load approval details (HTTP ${response.status}). Check API URL and network.`);
+                setTokenInfo({ valid: false, errorMessage: "Request failed" });
+                return;
+            }
+            const data = await response.json().catch(() => null);
+            if (!data || typeof data !== "object") {
+                setError("Invalid response from server");
+                setTokenInfo({ valid: false, errorMessage: "Invalid response" });
+                return;
+            }
             setTokenInfo(data);
-            
+
             if (data.action) {
                 setSelectedAction(data.action);
             }
         } catch (err) {
-            setError('Failed to validate approval link');
+            setError("Failed to validate approval link");
         } finally {
             setLoading(false);
         }
@@ -87,7 +117,10 @@ const ManagerApprovalPage = () => {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
+                    Accept: 'application/json'
                 },
+                cache: 'no-store',
+                credentials: 'omit',
                 body: JSON.stringify({
                     token,
                     action: selectedAction,
@@ -95,7 +128,7 @@ const ManagerApprovalPage = () => {
                 })
             });
 
-            const data = await response.json();
+            const data = await response.json().catch(() => ({}));
             
             if (data.success) {
                 const statusApiValue = data.newStatus || null;
@@ -227,6 +260,13 @@ const ManagerApprovalPage = () => {
     const intentFromLink =
         preSelectedAction === 'approve' || preSelectedAction === 'reject' ? preSelectedAction : null;
 
+    const approvalNoteTrim = String(tokenInfo.approvalRequestNote || "").trim();
+    const contextNoteTrim = String(tokenInfo.requestContextNote || "").trim();
+    const purposeTrim = String(tokenInfo.purpose || "").trim();
+    const showApproverMessage =
+        approvalNoteTrim ||
+        (contextNoteTrim && contextNoteTrim !== purposeTrim);
+
     // Main approval form
     return (
         <div style={styles.container} className="manager-approval-page">
@@ -272,17 +312,21 @@ const ManagerApprovalPage = () => {
                             <FileText size={18} /> Request details
                         </h2>
 
-                        {tokenInfo.requestContextNote?.trim() ? (
+                        {showApproverMessage ? (
                             <div style={styles.purposeBox}>
-                                <p style={styles.purposeLabel}>Message for this approval</p>
-                                <p style={styles.purposeText}>{tokenInfo.requestContextNote.trim()}</p>
+                                <p style={styles.purposeLabel}>
+                                    {approvalNoteTrim ? "Approval note" : "Message for this approval"}
+                                </p>
+                                <p style={styles.purposeText}>
+                                    {approvalNoteTrim || contextNoteTrim}
+                                </p>
                             </div>
                         ) : null}
 
-                        {tokenInfo.purpose?.trim() ? (
+                        {purposeTrim ? (
                             <div style={styles.purposeBox}>
-                                <p style={styles.purposeLabel}>Purpose:</p>
-                                <p style={styles.purposeText}>{tokenInfo.purpose.trim()}</p>
+                                <p style={styles.purposeLabel}>Purpose (ticket)</p>
+                                <p style={styles.purposeText}>{purposeTrim}</p>
                             </div>
                         ) : null}
                         
@@ -297,11 +341,11 @@ const ManagerApprovalPage = () => {
                             </div>
                             <div style={styles.infoItem}>
                                 <span style={styles.infoLabel}>Request Type</span>
-                                <span style={styles.infoValue}>{tokenInfo.requestType?.replace(/_/g, ' ')}</span>
+                                <span style={styles.infoValue}>{displayRequestType(tokenInfo.requestType)}</span>
                             </div>
                             <div style={styles.infoItem}>
                                 <span style={styles.infoLabel}>Environment</span>
-                                <span style={styles.infoValue}>{tokenInfo.environment}</span>
+                                <span style={styles.infoValue}>{displayEnvironment(tokenInfo)}</span>
                             </div>
                             {isCostApproval && (
                                 <div style={styles.infoItem}>

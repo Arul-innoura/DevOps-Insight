@@ -177,6 +177,56 @@ const canPlaySound = (soundType, minInterval = 500) => {
     return true;
 };
 
+/** Shorter gaps for bursty real-time events; longer for heavy chimes. */
+const throttleIntervalForSoundType = (soundType) => {
+    const t = String(soundType || "");
+    if (t === "short" || t === "dataSyncWs") return 85;
+    if (t === "ticketWsUpdate" || t === "status" || t === "message" || t === "pop") return 140;
+    if (t === "success" || t === "error" || t === "warning" || t === "urgent") return 200;
+    if (t === "long" || t === "assignment" || t === "teamRosterWs" || t === "availabilityWs") return 220;
+    if (t === "newTicketArrival" || t === "celebration") return 380;
+    if (t === "chord") return 280;
+    return 260;
+};
+
+/**
+ * Schedule audio only after AudioContext is running (avoids silent starts while suspended).
+ */
+const runWhenAudioContextRunning = (fn) => {
+    const ctx = getAudioContext();
+    if (!ctx || typeof window === "undefined") return;
+    const run = () => {
+        try {
+            fn(ctx);
+        } catch (e) {
+            console.warn("[NotificationService] audio play failed", e);
+        }
+    };
+    if (ctx.state === "running") {
+        run();
+        return;
+    }
+    void ctx.resume()
+        .then(() => {
+            if (ctx.state === "running") run();
+            else requestAnimationFrame(() => { if (ctx.state === "running") run(); });
+        })
+        .catch(() => {
+            requestAnimationFrame(() => {
+                void ctx.resume()
+                    .then(() => { if (ctx.state === "running") run(); })
+                    .catch(() => {});
+            });
+        });
+};
+
+/** Resume context (e.g. from toast / click) so the next chime is not dropped. */
+export const primeAudioContext = () => {
+    const ctx = getAudioContext();
+    if (!ctx) return Promise.resolve();
+    return ctx.resume().catch(() => {});
+};
+
 /**
  * Play professional multi-tone sound with envelope shaping
  */
@@ -192,60 +242,59 @@ const playEnterpriseSound = ({
     soundType = "default"
 }) => {
     if (typeof window === "undefined" || !soundEnabled) return;
-    if (!canPlaySound(soundType, 400)) return;
+    if (!canPlaySound(soundType, throttleIntervalForSoundType(soundType))) return;
 
-    const ctx = ensureAudioReady();
-    if (!ctx) return;
+    runWhenAudioContextRunning((ctx) => {
+        const adjustedVolume = baseVolume * volumeLevel;
+        const masterGain = ctx.createGain();
+        const compressor = ctx.createDynamicsCompressor();
+        
+        // Professional compression for consistent volume
+        compressor.threshold.setValueAtTime(-24, ctx.currentTime);
+        compressor.knee.setValueAtTime(30, ctx.currentTime);
+        compressor.ratio.setValueAtTime(12, ctx.currentTime);
+        compressor.attack.setValueAtTime(0.003, ctx.currentTime);
+        compressor.release.setValueAtTime(0.25, ctx.currentTime);
+        
+        masterGain.connect(compressor);
+        compressor.connect(ctx.destination);
+        masterGain.gain.setValueAtTime(adjustedVolume, ctx.currentTime);
 
-    const adjustedVolume = baseVolume * volumeLevel;
-    const masterGain = ctx.createGain();
-    const compressor = ctx.createDynamicsCompressor();
-    
-    // Professional compression for consistent volume
-    compressor.threshold.setValueAtTime(-24, ctx.currentTime);
-    compressor.knee.setValueAtTime(30, ctx.currentTime);
-    compressor.ratio.setValueAtTime(12, ctx.currentTime);
-    compressor.attack.setValueAtTime(0.003, ctx.currentTime);
-    compressor.release.setValueAtTime(0.25, ctx.currentTime);
-    
-    masterGain.connect(compressor);
-    compressor.connect(ctx.destination);
-    masterGain.gain.setValueAtTime(adjustedVolume, ctx.currentTime);
+        notes.forEach((noteData, i) => {
+            const freq = typeof noteData === 'number' ? noteData : noteData.freq;
+            const noteVol = typeof noteData === 'number' ? 1 : (noteData.vol || 1);
+            
+            const osc = ctx.createOscillator();
+            const noteGain = ctx.createGain();
+            
+            osc.type = waveType;
+            osc.frequency.setValueAtTime(freq, ctx.currentTime);
+            
+            const startTime = ctx.currentTime + i * noteDuration;
+            const attackEnd = startTime + attack;
+            const decayEnd = attackEnd + decay;
+            const sustainEnd = startTime + noteDuration - release;
+            const endTime = startTime + noteDuration;
+            
+            // ADSR envelope for professional sound
+            noteGain.gain.setValueAtTime(0.0001, startTime);
+            noteGain.gain.exponentialRampToValueAtTime(noteVol, attackEnd);
+            noteGain.gain.exponentialRampToValueAtTime(noteVol * sustain, decayEnd);
+            noteGain.gain.setValueAtTime(noteVol * sustain, sustainEnd);
+            noteGain.gain.exponentialRampToValueAtTime(0.0001, endTime);
+            
+            osc.connect(noteGain);
+            noteGain.connect(masterGain);
+            osc.start(startTime);
+            osc.stop(endTime + 0.05);
+        });
 
-    notes.forEach((noteData, i) => {
-        const freq = typeof noteData === 'number' ? noteData : noteData.freq;
-        const noteVol = typeof noteData === 'number' ? 1 : (noteData.vol || 1);
-        
-        const osc = ctx.createOscillator();
-        const noteGain = ctx.createGain();
-        
-        osc.type = waveType;
-        osc.frequency.setValueAtTime(freq, ctx.currentTime);
-        
-        const startTime = ctx.currentTime + i * noteDuration;
-        const attackEnd = startTime + attack;
-        const decayEnd = attackEnd + decay;
-        const sustainEnd = startTime + noteDuration - release;
-        const endTime = startTime + noteDuration;
-        
-        // ADSR envelope for professional sound
-        noteGain.gain.setValueAtTime(0.0001, startTime);
-        noteGain.gain.exponentialRampToValueAtTime(noteVol, attackEnd);
-        noteGain.gain.exponentialRampToValueAtTime(noteVol * sustain, decayEnd);
-        noteGain.gain.setValueAtTime(noteVol * sustain, sustainEnd);
-        noteGain.gain.exponentialRampToValueAtTime(0.0001, endTime);
-        
-        osc.connect(noteGain);
-        noteGain.connect(masterGain);
-        osc.start(startTime);
-        osc.stop(endTime + 0.05);
+        const totalDuration = notes.length * noteDuration;
+        setTimeout(() => {
+            masterGain.disconnect();
+            compressor.disconnect();
+        }, totalDuration * 1000 + 200);
     });
-
-    const totalDuration = notes.length * noteDuration;
-    setTimeout(() => {
-        masterGain.disconnect();
-        compressor.disconnect();
-    }, totalDuration * 1000 + 200);
 };
 
 /**
@@ -258,66 +307,65 @@ const playHarmonicChord = ({
     soundType = "chord"
 }) => {
     if (typeof window === "undefined" || !soundEnabled) return;
-    if (!canPlaySound(soundType, 600)) return;
+    if (!canPlaySound(soundType, throttleIntervalForSoundType(soundType))) return;
 
-    const ctx = ensureAudioReady();
-    if (!ctx) return;
+    runWhenAudioContextRunning((ctx) => {
+        const adjustedVolume = baseVolume * volumeLevel;
+        const masterGain = ctx.createGain();
+        const compressor = ctx.createDynamicsCompressor();
+        
+        compressor.threshold.setValueAtTime(-20, ctx.currentTime);
+        compressor.knee.setValueAtTime(40, ctx.currentTime);
+        compressor.ratio.setValueAtTime(8, ctx.currentTime);
+        
+        masterGain.connect(compressor);
+        compressor.connect(ctx.destination);
+        masterGain.gain.setValueAtTime(adjustedVolume, ctx.currentTime);
+        
+        const startTime = ctx.currentTime;
+        const endTime = startTime + duration;
 
-    const adjustedVolume = baseVolume * volumeLevel;
-    const masterGain = ctx.createGain();
-    const compressor = ctx.createDynamicsCompressor();
-    
-    compressor.threshold.setValueAtTime(-20, ctx.currentTime);
-    compressor.knee.setValueAtTime(40, ctx.currentTime);
-    compressor.ratio.setValueAtTime(8, ctx.currentTime);
-    
-    masterGain.connect(compressor);
-    compressor.connect(ctx.destination);
-    masterGain.gain.setValueAtTime(adjustedVolume, ctx.currentTime);
-    
-    const startTime = ctx.currentTime;
-    const endTime = startTime + duration;
+        fundamentals.forEach((freq, idx) => {
+            // Main tone
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(freq, startTime);
+            
+            // Subtle harmonics for richness
+            const harmonic = ctx.createOscillator();
+            const harmGain = ctx.createGain();
+            harmonic.type = "sine";
+            harmonic.frequency.setValueAtTime(freq * 2, startTime);
+            harmGain.gain.setValueAtTime(0.15, startTime);
+            
+            // Envelope
+            const vol = 1 / fundamentals.length;
+            gain.gain.setValueAtTime(0.0001, startTime);
+            gain.gain.exponentialRampToValueAtTime(vol, startTime + 0.03);
+            gain.gain.setValueAtTime(vol, endTime - 0.15);
+            gain.gain.exponentialRampToValueAtTime(0.0001, endTime);
+            
+            harmGain.gain.setValueAtTime(0.0001, startTime);
+            harmGain.gain.exponentialRampToValueAtTime(0.1 * vol, startTime + 0.03);
+            harmGain.gain.exponentialRampToValueAtTime(0.0001, endTime);
+            
+            osc.connect(gain);
+            harmonic.connect(harmGain);
+            gain.connect(masterGain);
+            harmGain.connect(masterGain);
+            
+            osc.start(startTime);
+            osc.stop(endTime + 0.05);
+            harmonic.start(startTime);
+            harmonic.stop(endTime + 0.05);
+        });
 
-    fundamentals.forEach((freq, idx) => {
-        // Main tone
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(freq, startTime);
-        
-        // Subtle harmonics for richness
-        const harmonic = ctx.createOscillator();
-        const harmGain = ctx.createGain();
-        harmonic.type = "sine";
-        harmonic.frequency.setValueAtTime(freq * 2, startTime);
-        harmGain.gain.setValueAtTime(0.15, startTime);
-        
-        // Envelope
-        const vol = 1 / fundamentals.length;
-        gain.gain.setValueAtTime(0.0001, startTime);
-        gain.gain.exponentialRampToValueAtTime(vol, startTime + 0.03);
-        gain.gain.setValueAtTime(vol, endTime - 0.15);
-        gain.gain.exponentialRampToValueAtTime(0.0001, endTime);
-        
-        harmGain.gain.setValueAtTime(0.0001, startTime);
-        harmGain.gain.exponentialRampToValueAtTime(0.1 * vol, startTime + 0.03);
-        harmGain.gain.exponentialRampToValueAtTime(0.0001, endTime);
-        
-        osc.connect(gain);
-        harmonic.connect(harmGain);
-        gain.connect(masterGain);
-        harmGain.connect(masterGain);
-        
-        osc.start(startTime);
-        osc.stop(endTime + 0.05);
-        harmonic.start(startTime);
-        harmonic.stop(endTime + 0.05);
+        setTimeout(() => {
+            masterGain.disconnect();
+            compressor.disconnect();
+        }, duration * 1000 + 200);
     });
-
-    setTimeout(() => {
-        masterGain.disconnect();
-        compressor.disconnect();
-    }, duration * 1000 + 200);
 };
 
 // ============ PROFESSIONAL NOTIFICATION SOUNDS ============
@@ -389,70 +437,69 @@ export const playLongNotification = () => {
  */
 export const playNewTicketArrival = () => {
     if (typeof window === "undefined" || !soundEnabled) return;
-    if (!canPlaySound("newTicketArrival", 650)) return;
+    if (!canPlaySound("newTicketArrival", throttleIntervalForSoundType("newTicketArrival"))) return;
 
-    const ctx = ensureAudioReady();
-    if (!ctx) return;
+    runWhenAudioContextRunning((ctx) => {
+        const vol = 0.26 * volumeLevel;
+        const now = ctx.currentTime;
 
-    const vol = 0.26 * volumeLevel;
-    const now = ctx.currentTime;
+        const compressor = ctx.createDynamicsCompressor();
+        compressor.threshold.setValueAtTime(-16, now);
+        compressor.knee.setValueAtTime(24, now);
+        compressor.ratio.setValueAtTime(8, now);
+        compressor.attack.setValueAtTime(0.002, now);
+        compressor.release.setValueAtTime(0.18, now);
+        compressor.connect(ctx.destination);
 
-    const compressor = ctx.createDynamicsCompressor();
-    compressor.threshold.setValueAtTime(-16, now);
-    compressor.knee.setValueAtTime(24, now);
-    compressor.ratio.setValueAtTime(8, now);
-    compressor.attack.setValueAtTime(0.002, now);
-    compressor.release.setValueAtTime(0.18, now);
-    compressor.connect(ctx.destination);
+        const master = ctx.createGain();
+        master.gain.setValueAtTime(vol, now);
+        master.connect(compressor);
 
-    const master = ctx.createGain();
-    master.gain.setValueAtTime(vol, now);
-    master.connect(compressor);
+        // Formal "service bell" — ascending major motif + resolving fifth (≈ 0.95 s)
+        const bells = [
+            { freq: 523.25, delay: 0.0, dur: 0.14, peak: 0.95, wave: "triangle" }, // C5
+            { freq: 659.25, delay: 0.12, dur: 0.14, peak: 1.0, wave: "triangle" }, // E5
+            { freq: 783.99, delay: 0.24, dur: 0.15, peak: 1.0, wave: "triangle" }, // G5
+            { freq: 1046.5, delay: 0.38, dur: 0.16, peak: 0.92, wave: "sine" }, // C6
+            { freq: 783.99, delay: 0.58, dur: 0.28, peak: 0.88, wave: "sine" }, // G5 resolve
+            { freq: 523.25, delay: 0.72, dur: 0.22, peak: 0.55, wave: "sine" } // C5 anchor
+        ];
 
-    // Formal "service bell" — ascending major motif + resolving fifth (≈ 0.95 s)
-    const bells = [
-        { freq: 523.25, delay: 0.0, dur: 0.14, peak: 0.95, wave: "triangle" }, // C5
-        { freq: 659.25, delay: 0.12, dur: 0.14, peak: 1.0, wave: "triangle" }, // E5
-        { freq: 783.99, delay: 0.24, dur: 0.15, peak: 1.0, wave: "triangle" }, // G5
-        { freq: 1046.5, delay: 0.38, dur: 0.16, peak: 0.92, wave: "sine" }, // C6
-        { freq: 783.99, delay: 0.58, dur: 0.28, peak: 0.88, wave: "sine" }, // G5 resolve
-        { freq: 523.25, delay: 0.72, dur: 0.22, peak: 0.55, wave: "sine" } // C5 anchor
-    ];
+        bells.forEach(({ freq, delay, dur, peak, wave }) => {
+            const start = now + delay;
+            const end = start + dur;
 
-    bells.forEach(({ freq, delay, dur, peak, wave }) => {
-        const start = now + delay;
-        const end = start + dur;
+            const osc = ctx.createOscillator();
+            const g = ctx.createGain();
+            osc.type = wave;
+            osc.frequency.setValueAtTime(freq, start);
+            g.gain.setValueAtTime(0.0001, start);
+            g.gain.exponentialRampToValueAtTime(peak, start + 0.018);
+            g.gain.exponentialRampToValueAtTime(peak * 0.55, end - 0.05);
+            g.gain.exponentialRampToValueAtTime(0.0001, end);
+            osc.connect(g);
+            g.connect(master);
+            osc.start(start);
+            osc.stop(end + 0.03);
 
-        const osc = ctx.createOscillator();
-        const g = ctx.createGain();
-        osc.type = wave;
-        osc.frequency.setValueAtTime(freq, start);
-        g.gain.setValueAtTime(0.0001, start);
-        g.gain.exponentialRampToValueAtTime(peak, start + 0.018);
-        g.gain.exponentialRampToValueAtTime(peak * 0.55, end - 0.05);
-        g.gain.exponentialRampToValueAtTime(0.0001, end);
-        osc.connect(g);
-        g.connect(master);
-        osc.start(start);
-        osc.stop(end + 0.03);
+            const osc2 = ctx.createOscillator();
+            const g2 = ctx.createGain();
+            osc2.type = "sine";
+            osc2.frequency.setValueAtTime(freq * 2, start);
+            g2.gain.setValueAtTime(0.0001, start);
+            g2.gain.exponentialRampToValueAtTime(peak * 0.12, start + 0.02);
+            g2.gain.exponentialRampToValueAtTime(0.0001, end);
+            osc2.connect(g2);
+            g2.connect(master);
+            osc2.start(start);
+            osc2.stop(end + 0.03);
+        });
 
-        const osc2 = ctx.createOscillator();
-        const g2 = ctx.createGain();
-        osc2.type = "sine";
-        osc2.frequency.setValueAtTime(freq * 2, start);
-        g2.gain.setValueAtTime(0.0001, start);
-        g2.gain.exponentialRampToValueAtTime(peak * 0.12, start + 0.02);
-        g2.gain.exponentialRampToValueAtTime(0.0001, end);
-        osc2.connect(g2);
-        g2.connect(master);
-        osc2.start(start);
-        osc2.stop(end + 0.03);
+        setTimeout(() => {
+            master.disconnect();
+            compressor.disconnect();
+        }, 1100);
     });
-
-    setTimeout(() => {
-        master.disconnect();
-        compressor.disconnect();
-    }, 1100);
 };
 
 /**
@@ -672,49 +719,47 @@ export const playDataSyncChime = () => {
  * Rich, satisfying fanfare
  */
 export const playCelebrationNotification = () => {
-    // Play chord progression
-    const ctx = ensureAudioReady();
-    if (!ctx || !soundEnabled || !canPlaySound("celebration", 1000)) return;
-    
-    const adjustedVolume = 0.06 * volumeLevel;
-    const masterGain = ctx.createGain();
-    masterGain.connect(ctx.destination);
-    masterGain.gain.setValueAtTime(adjustedVolume, ctx.currentTime);
-    
-    // First chord: C major
-    [523, 659, 784].forEach(freq => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = "sine";
-        osc.frequency.setValueAtTime(freq, ctx.currentTime);
-        gain.gain.setValueAtTime(0.3, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.3);
-        osc.connect(gain);
-        gain.connect(masterGain);
-        osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.35);
-    });
-    
-    // Second chord: G major (delayed)
-    setTimeout(() => {
-        if (!soundEnabled) return;
-        const ctx2 = ensureAudioReady();
-        if (!ctx2) return;
-        [392, 494, 587, 784].forEach(freq => {
-            const osc = ctx2.createOscillator();
-            const gain = ctx2.createGain();
+    if (typeof window === "undefined" || !soundEnabled) return;
+    if (!canPlaySound("celebration", throttleIntervalForSoundType("celebration"))) return;
+
+    runWhenAudioContextRunning((ctx) => {
+        const adjustedVolume = 0.06 * volumeLevel;
+        const masterGain = ctx.createGain();
+        masterGain.connect(ctx.destination);
+        const t0 = ctx.currentTime;
+        masterGain.gain.setValueAtTime(adjustedVolume, t0);
+
+        // First chord: C major
+        [523, 659, 784].forEach((freq) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
             osc.type = "sine";
-            osc.frequency.setValueAtTime(freq, ctx2.currentTime);
-            gain.gain.setValueAtTime(0.35, ctx2.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.0001, ctx2.currentTime + 0.5);
+            osc.frequency.setValueAtTime(freq, t0);
+            gain.gain.setValueAtTime(0.3, t0);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.3);
             osc.connect(gain);
             gain.connect(masterGain);
-            osc.start(ctx2.currentTime);
-            osc.stop(ctx2.currentTime + 0.55);
+            osc.start(t0);
+            osc.stop(t0 + 0.35);
         });
-    }, 200);
-    
-    setTimeout(() => masterGain.disconnect(), 1000);
+
+        // Second chord: G major (same timeline — avoids a second suspended context)
+        const t1 = t0 + 0.2;
+        [392, 494, 587, 784].forEach((freq) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(freq, t1);
+            gain.gain.setValueAtTime(0.35, t1);
+            gain.gain.exponentialRampToValueAtTime(0.0001, t1 + 0.5);
+            osc.connect(gain);
+            gain.connect(masterGain);
+            osc.start(t1);
+            osc.stop(t1 + 0.55);
+        });
+
+        setTimeout(() => masterGain.disconnect(), 1000);
+    });
 };
 
 // Aliases for backward compatibility
@@ -786,7 +831,7 @@ export const playNotification = (type) => {
 /** Settings: play the sound mapped to a real-time category (ignores category toggles). */
 export const previewSoundCategory = (key) => {
     if (typeof window === "undefined" || !soundEnabled) return;
-    void ensureAudioReady()?.resume?.();
+    void primeAudioContext();
     switch (key) {
         case "newTicket":
             playNewTicketArrival();

@@ -39,7 +39,13 @@ export const saveProjectWorkflow = (projectId, body) =>
         body: JSON.stringify(body)
     });
 
-export const getEffectiveWorkflow = (projectId, requestTypeEnum) =>
-    apiRequest(
-        `/projects/${encodeURIComponent(projectId)}/workflow/effective?requestType=${encodeURIComponent(requestTypeEnum)}`
-    );
+export const getEffectiveWorkflow = (projectId, requestTypeEnum, environment = "") => {
+    const params = new URLSearchParams({
+        requestType: String(requestTypeEnum || "").trim()
+    });
+    const env = String(environment || "").trim();
+    if (env) {
+        params.set("environment", env);
+    }
+    return apiRequest(`/projects/${encodeURIComponent(projectId)}/workflow/effective?${params.toString()}`);
+};

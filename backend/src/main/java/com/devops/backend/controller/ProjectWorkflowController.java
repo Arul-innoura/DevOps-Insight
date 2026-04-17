@@ -43,10 +43,11 @@ public class ProjectWorkflowController {
     @PreAuthorize("hasAnyAuthority('APPROLE_User','APPROLE_DevOps','APPROLE_Admin')")
     public ResponseEntity<WorkflowConfiguration> effective(
             @PathVariable String projectId,
-            @RequestParam("requestType") String requestType) {
+            @RequestParam("requestType") String requestType,
+            @RequestParam(value = "environment", required = false) String environment) {
         try {
             RequestType rt = RequestType.valueOf(requestType.trim().toUpperCase());
-            return ResponseEntity.ok(projectWorkflowService.resolveEffective(projectId, rt));
+            return ResponseEntity.ok(projectWorkflowService.resolveEffective(projectId, rt, environment));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().build();
         }

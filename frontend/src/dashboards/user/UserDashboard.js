@@ -38,11 +38,15 @@ import {
     getDevOpsTeamMembers,
     getProjects,
     getManagers,
+    normalizeEnvironmentLabel,
+    normalizeWebSocketTicketPayload,
+    wsPatchHasMeaningfulAssignee,
     subscribeDataChanges
 } from "../../services/ticketService";
 import { useRealTimeSync, useConnectionStatus } from "../../services/useRealTimeSync";
 import { useToast, SyncIndicator } from "../../services/ToastNotification";
 import { getSoundSettings, setSoundEnabled, setVolume } from "../../services/notificationService";
+import { launchPaperCelebration } from "../../utils/celebrationFx";
 import {
     getMyNotificationPreferences,
     saveMyNotificationPreferences
@@ -179,7 +183,7 @@ export const UserDashboard = () => {
         if (!silent) setIsSyncing(true);
         try {
             const [userTickets, members, projectList, managerList] = await Promise.all([
-                getTicketsByUser(userEmail),
+                getTicketsByUser(userEmail, { force: true }),
                 getDevOpsTeamMembers(),
                 getProjects({ force: true }),
                 getManagers(true, { force: true })
@@ -241,16 +245,49 @@ export const UserDashboard = () => {
                 return;
             }
 
-            const effectiveId = data?.id ?? data?.ticketId;
+            const payload = data?.ticket && typeof data.ticket === "object"
+                ? { ...data.ticket, action: data?.action }
+                : data;
+            const effectiveId = payload?.id ?? payload?.ticketId;
             if (effectiveId == null || effectiveId === "") return;
+            const incomingAssignedTo =
+                payload?.assignedTo ??
+                payload?.assigneeName ??
+                payload?.assignedEngineerName ??
+                payload?.assignee?.name;
+            const incomingAssignedToEmail =
+                payload?.assignedToEmail ??
+                payload?.assigneeEmail ??
+                payload?.assignee?.email;
+            const incomingManagerName =
+                payload?.managerName ??
+                payload?.approverName ??
+                payload?.approvalTargetName;
+            const incomingManagerEmail =
+                payload?.managerEmail ??
+                payload?.approverEmail ??
+                payload?.approvalTargetEmail;
             const wsPatch = {
-                ...data,
+                ...normalizeWebSocketTicketPayload(payload),
                 id: effectiveId,
-                ...(data?.status ? { status: toDisplayTicketStatus(data.status) } : {})
+                ...(incomingAssignedTo != null && String(incomingAssignedTo).trim() !== ""
+                    ? { assignedTo: String(incomingAssignedTo).trim() }
+                    : {}),
+                ...(incomingAssignedToEmail != null && String(incomingAssignedToEmail).trim() !== ""
+                    ? { assignedToEmail: String(incomingAssignedToEmail).trim() }
+                    : {}),
+                ...(incomingManagerName !== undefined ? { managerName: incomingManagerName } : {}),
+                ...(incomingManagerEmail !== undefined ? { managerEmail: incomingManagerEmail } : {}),
+                ...((payload?.environmentLabel || payload?.environment)
+                    ? { environment: normalizeEnvironmentLabel(payload.environmentLabel || payload.environment) }
+                    : {}),
+                ...(payload?.status ? { status: toDisplayTicketStatus(payload.status) } : {})
             };
             const isSoftRemove =
                 type === "ticket:deleted" ||
-                (type === "ticket:updated" && Boolean(data?.deleted));
+                (type === "ticket:updated" && Boolean(payload?.deleted));
+            const incomingUpdatedMs = wsPatch?.updatedAt ? new Date(wsPatch.updatedAt).getTime() : NaN;
+            const assigneePatch = wsPatchHasMeaningfulAssignee(wsPatch);
 
             setTickets((prev) => {
                 if (isSoftRemove) {
@@ -262,6 +299,14 @@ export const UserDashboard = () => {
                 }
                 const idx = prev.findIndex((t) => t.id === effectiveId);
                 if (idx < 0) return prev;
+                const existingUpdatedMs = prev[idx]?.updatedAt ? new Date(prev[idx].updatedAt).getTime() : NaN;
+                const stale =
+                    !Number.isNaN(incomingUpdatedMs) &&
+                    !Number.isNaN(existingUpdatedMs) &&
+                    incomingUpdatedMs < existingUpdatedMs;
+                if (stale && !assigneePatch) {
+                    return prev;
+                }
                 const next = [...prev];
                 next[idx] = { ...next[idx], ...wsPatch };
                 applyFilters(next, filtersRef.current, activeTabRef.current);
@@ -271,6 +316,14 @@ export const UserDashboard = () => {
                 if (!prev?.id) return prev;
                 if (isSoftRemove && prev.id === effectiveId) return null;
                 if (prev.id !== effectiveId) return prev;
+                const existingUpdatedMs = prev?.updatedAt ? new Date(prev.updatedAt).getTime() : NaN;
+                const staleSel =
+                    !Number.isNaN(incomingUpdatedMs) &&
+                    !Number.isNaN(existingUpdatedMs) &&
+                    incomingUpdatedMs < existingUpdatedMs;
+                if (staleSel && !assigneePatch) {
+                    return prev;
+                }
                 return { ...prev, ...wsPatch };
             });
             suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;
@@ -438,6 +491,9 @@ export const UserDashboard = () => {
             );
             await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes, meta);
             await loadTickets();
+            if (newStatus === TICKET_STATUS.CLOSED) {
+                launchPaperCelebration();
+            }
             if (meta.reopen) {
                 toast.success("Ticket reopened", "Your request is back in the team queue. History is unchanged.");
             } else if (newStatus === TICKET_STATUS.MANAGER_APPROVAL_PENDING) {

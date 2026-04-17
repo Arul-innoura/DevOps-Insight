@@ -12,7 +12,7 @@ public interface ProjectWorkflowService {
 
     ProjectWorkflowSettings save(ProjectWorkflowSettings settings, String actorName);
 
-    WorkflowConfiguration resolveEffective(String projectId, RequestType requestType);
+    WorkflowConfiguration resolveEffective(String projectId, RequestType requestType, String environmentKey);
 
     /**
      * Overlay environment-specific workflow infrastructure (e.g. monthly cost for QA) onto a base snapshot.

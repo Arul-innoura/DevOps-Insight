@@ -4,7 +4,9 @@ import com.devops.backend.dto.ManagerApprovalRequest;
 import com.devops.backend.dto.ManagerApprovalTokenInfo;
 import com.devops.backend.exception.ResourceNotFoundException;
 import com.devops.backend.model.ManagerApprovalToken;
+import com.devops.backend.model.RequestType;
 import com.devops.backend.model.Ticket;
+import com.devops.backend.util.TicketDisplayFormat;
 import com.devops.backend.model.TicketStatus;
 import com.devops.backend.model.workflow.WorkflowConfiguration;
 import com.devops.backend.repository.ManagerApprovalTokenRepository;
@@ -92,13 +94,20 @@ public class ManagerApprovalController {
                     .build());
         }
         
+        String triggerNote = approvalToken != null && approvalToken.getApprovalTriggerNote() != null
+                ? approvalToken.getApprovalTriggerNote().trim()
+                : null;
         ManagerApprovalTokenInfo.ManagerApprovalTokenInfoBuilder infoBuilder = ManagerApprovalTokenInfo.builder()
                 .valid(true)
                 .ticketId(ticket.getId())
                 .productName(ticket.getProductName())
-                .requestType(ticket.getRequestType() != null ? ticket.getRequestType().name() : null)
-                .environment(ticket.getEnvironment() != null ? ticket.getEnvironment().name() : null)
+                .requestType(resolveDisplayRequestType(ticket))
+                .environment(TicketDisplayFormat.environmentLine(ticket))
+                .environmentLabel(ticket.getEnvironmentLabel())
+                .environmentDisplay(TicketDisplayFormat.environmentLine(ticket))
                 .purpose(ticket.getPurpose())
+                .approvalRequestNote(triggerNote != null && !triggerNote.isBlank() ? triggerNote : null)
+                .requestContextNote(resolveRequestContextNote(ticket, approvalToken))
                 .description(ticket.getDescription())
                 .requesterName(ticket.getRequestedBy())
                 .requesterEmail(ticket.getRequesterEmail())
@@ -119,6 +128,53 @@ public class ManagerApprovalController {
         }
         
         return ResponseEntity.ok(infoBuilder.build());
+    }
+
+    private String resolveDisplayRequestType(Ticket ticket) {
+        if (ticket.getRequestType() == null) {
+            return null;
+        }
+        // Historically BUILD_REQUEST was used for routine general work; UI label stays "General Request".
+        if (ticket.getRequestType() == RequestType.BUILD_REQUEST) {
+            return "General Request";
+        }
+        String label = ticket.getRequestType().getDisplayName();
+        if (label != null && !label.isBlank()) {
+            return label.trim();
+        }
+        return ticket.getRequestType().name();
+    }
+
+    private String resolveRequestContextNote(Ticket ticket, ManagerApprovalToken approvalToken) {
+        if (approvalToken != null && approvalToken.getApprovalTriggerNote() != null
+                && !approvalToken.getApprovalTriggerNote().isBlank()) {
+            return approvalToken.getApprovalTriggerNote().trim();
+        }
+        if (approvalToken != null && !approvalToken.isUsed()
+                && approvalToken.getNote() != null && !approvalToken.getNote().isBlank()) {
+            return approvalToken.getNote().trim();
+        }
+        if (ticket.getTimeline() == null || ticket.getTimeline().isEmpty()) {
+            return null;
+        }
+        TicketStatus expectedStatus = "COST_APPROVAL".equalsIgnoreCase(approvalToken != null ? approvalToken.getTokenType() : null)
+                ? TicketStatus.COST_APPROVAL_PENDING
+                : TicketStatus.MANAGER_APPROVAL_PENDING;
+        String byStatus = ticket.getTimeline().stream()
+                .filter(e -> !e.isNote() && e.getStatus() == expectedStatus)
+                .reduce((a, b) -> b)
+                .map(e -> e.getNotes() != null ? e.getNotes().trim() : null)
+                .orElse(null);
+        if (byStatus != null && !byStatus.isBlank()) {
+            return byStatus;
+        }
+        return ticket.getTimeline().stream()
+                .filter(e -> !e.isNote())
+                .map(e -> e.getNotes() != null ? e.getNotes().trim() : null)
+                .filter(n -> n != null && !n.isBlank())
+                .filter(n -> n.contains("Purpose:") || n.contains("Designation:") || n.contains("Notes:"))
+                .reduce((a, b) -> b)
+                .orElse(null);
     }
 
     /**

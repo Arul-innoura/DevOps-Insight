@@ -113,7 +113,111 @@ public class TicketServiceImpl implements TicketService {
             throw new IllegalStateException(TICKET_DELETED_READONLY_MSG);
         }
     }
-    
+
+    private static boolean hasNoAssignee(Ticket ticket) {
+        if (ticket == null) {
+            return true;
+        }
+        boolean noName = ticket.getAssignedTo() == null || ticket.getAssignedTo().isBlank();
+        boolean noEmail = ticket.getAssignedToEmail() == null || ticket.getAssignedToEmail().isBlank();
+        return noName && noEmail;
+    }
+
+    private static boolean jwtHasAnyRole(Jwt jwt, String... roles) {
+        if (jwt == null || roles == null || roles.length == 0) {
+            return false;
+        }
+        List<String> claimRoles = jwt.getClaimAsStringList("roles");
+        if (claimRoles == null) {
+            return false;
+        }
+        for (String wanted : roles) {
+            if (wanted == null) {
+                continue;
+            }
+            for (String c : claimRoles) {
+                if (c != null && wanted.equalsIgnoreCase(c)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isUserOnlyActor(Jwt jwt) {
+        return jwtHasAnyRole(jwt, "APPROLE_User")
+                && !jwtHasAnyRole(jwt, "APPROLE_DevOps", "APPROLE_Admin");
+    }
+
+    /**
+     * When DevOps/Admin advances an unowned ticket, take ownership so queues and cards stay consistent.
+     */
+    private void applyDevOpsAutoAssignIfEligible(
+            Ticket ticket, TicketStatus nextStatus, String userName, String userEmail, Jwt jwt) {
+        if (jwt == null || !jwtHasAnyRole(jwt, "APPROLE_DevOps", "APPROLE_Admin") || isUserOnlyActor(jwt)) {
+            return;
+        }
+        if (!hasNoAssignee(ticket)) {
+            return;
+        }
+        if (userName == null || userName.isBlank()) {
+            return;
+        }
+        if (nextStatus == null) {
+            return;
+        }
+        if (nextStatus == TicketStatus.MANAGER_APPROVAL_PENDING || nextStatus == TicketStatus.COST_APPROVAL_PENDING) {
+            return;
+        }
+        if (nextStatus == TicketStatus.CLOSED || nextStatus == TicketStatus.COMPLETED || nextStatus == TicketStatus.REJECTED) {
+            return;
+        }
+        String trimmedName = userName.trim();
+        String trimmedEmail = userEmail != null ? userEmail.trim() : "";
+        ticket.setAssignedTo(trimmedName);
+        ticket.setAssignedToEmail(trimmedEmail.isEmpty() ? null : trimmedEmail);
+        ticket.addAssignmentEntry(
+                trimmedName,
+                trimmedEmail.isEmpty() ? "" : trimmedEmail,
+                trimmedName,
+                trimmedEmail.isEmpty() ? "" : trimmedEmail);
+        log.info("Auto-assigned ticket {} to {} after status {}", ticket.getId(), trimmedName, nextStatus);
+    }
+
+    /**
+     * If the ticket is still unowned after {@link #applyDevOpsAutoAssignIfEligible} (e.g. JWT {@code roles} claim
+     * missing APPROLE_* in some Azure setups), assign to the acting user for the same statuses we treat as "pick up".
+     */
+    private void applyAssigneeFallbackIfStillUnowned(
+            Ticket ticket, TicketStatus nextStatus, String userName, String userEmail) {
+        if (!hasNoAssignee(ticket)) {
+            return;
+        }
+        if (userName == null || userName.isBlank() || "Unknown User".equalsIgnoreCase(userName.trim())) {
+            return;
+        }
+        if (nextStatus == null) {
+            return;
+        }
+        if (nextStatus == TicketStatus.MANAGER_APPROVAL_PENDING || nextStatus == TicketStatus.COST_APPROVAL_PENDING) {
+            return;
+        }
+        if (nextStatus == TicketStatus.CLOSED || nextStatus == TicketStatus.COMPLETED
+                || nextStatus == TicketStatus.REJECTED) {
+            return;
+        }
+        String trimmedName = userName.trim();
+        String trimmedEmail = userEmail != null ? userEmail.trim() : "";
+        ticket.setAssignedTo(trimmedName);
+        ticket.setAssignedToEmail(trimmedEmail.isEmpty() ? null : trimmedEmail);
+        ticket.addAssignmentEntry(
+                trimmedName,
+                trimmedEmail.isEmpty() ? "" : trimmedEmail,
+                trimmedName,
+                trimmedEmail.isEmpty() ? "" : trimmedEmail);
+        log.info("Fallback auto-assigned ticket {} to {} after status {}", ticket.getId(), trimmedName, nextStatus);
+    }
+
     @Override
     public TicketResponse createTicket(CreateTicketRequest request, String userName, String userEmail) {
         log.info("Creating ticket for user: {} ({})", userName, userEmail);
@@ -126,6 +230,10 @@ public class TicketServiceImpl implements TicketService {
                 .requestType(request.getRequestType())
                 .productName(request.getProductName())
                 .environment(request.getEnvironment())
+                .environmentLabel(
+                        request.getEnvironmentLabel() != null && !request.getEnvironmentLabel().isBlank()
+                                ? request.getEnvironmentLabel().trim()
+                                : (request.getEnvironment() != null ? request.getEnvironment().getDisplayName() : null))
                 .description(request.getDescription())
                 .requestedBy(userName)
                 .requesterEmail(userEmail)
@@ -372,6 +480,8 @@ public class TicketServiceImpl implements TicketService {
             ticket.setCurrentApprovalLevel(null);
             applyManagerApprovalRecipient(ticket, request);
         }
+        applyDevOpsAutoAssignIfEligible(ticket, request.getNewStatus(), userName, userEmail, jwt);
+        applyAssigneeFallbackIfStillUnowned(ticket, request.getNewStatus(), userName, userEmail);
         ticket.addTimelineEntry(request.getNewStatus(), userName, userEmail, 
                 request.getNotes() != null ? request.getNotes() : "Status changed to " + request.getNewStatus());
         
@@ -434,6 +544,7 @@ public class TicketServiceImpl implements TicketService {
                        UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         
         // Manual approval only — token is not tied to a level chain
+        String trimmedRequesterNote = requesterNotes != null && !requesterNotes.isBlank() ? requesterNotes.trim() : null;
         ManagerApprovalToken approvalToken = ManagerApprovalToken.builder()
                 .token(token)
                 .ticketId(ticket.getId())
@@ -445,6 +556,8 @@ public class TicketServiceImpl implements TicketService {
                 .expiresAt(Instant.now().plus(7, ChronoUnit.DAYS))
                 .used(false)
                 .tokenType("MANAGER_APPROVAL")
+                .approvalTriggerNote(trimmedRequesterNote)
+                .note(trimmedRequesterNote)
                 .build();
         
         approvalTokenRepository.save(approvalToken);
@@ -545,7 +658,7 @@ public class TicketServiceImpl implements TicketService {
     /**
      * Create cost approval token and send cost approval email
      */
-    private void sendCostApprovalEmail(Ticket ticket, String userName) {
+    private void sendCostApprovalEmail(Ticket ticket, String userName, String requesterNotes) {
         if (ticket.getManagerEmail() == null || ticket.getManagerEmail().isBlank()) {
             throw new IllegalStateException("Cannot send cost approval email — no recipient address on ticket " + ticket.getId());
         }
@@ -555,6 +668,7 @@ public class TicketServiceImpl implements TicketService {
                        UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         
         // Create and save cost approval token (expires in 7 days)
+        String trimmedCostContext = requesterNotes != null && !requesterNotes.isBlank() ? requesterNotes.trim() : null;
         ManagerApprovalToken approvalToken = ManagerApprovalToken.builder()
                 .token(token)
                 .ticketId(ticket.getId())
@@ -567,6 +681,8 @@ public class TicketServiceImpl implements TicketService {
                 .estimatedCost(ticket.getEstimatedCost())
                 .costCurrency(ticket.getCostCurrency())
                 .costSubmittedBy(userName)
+                .approvalTriggerNote(trimmedCostContext)
+                .note(trimmedCostContext)
                 .build();
         
         approvalTokenRepository.save(approvalToken);
@@ -615,7 +731,7 @@ public class TicketServiceImpl implements TicketService {
         Ticket savedTicket = ticketRepository.save(ticket);
         evictTicketCaches();
         
-        sendCostApprovalEmail(savedTicket, userName);
+        sendCostApprovalEmail(savedTicket, userName, request.getNotes());
         
         TicketResponse response = mapToResponse(savedTicket);
 
@@ -915,7 +1031,7 @@ public class TicketServiceImpl implements TicketService {
     private String generateTicketId(CreateTicketRequest request) {
         String requestShortCode = request.getRequestType() != null
                 ? request.getRequestType().getShortCode()
-                : RequestType.BUILD_REQUEST.getShortCode();
+                : RequestType.GENERAL_REQUEST.getShortCode();
         String projectToken = toProjectToken(request.getProductName());
         String idPrefix = "EH-" + requestShortCode + "-" + projectToken + "-";
 
@@ -1083,7 +1199,32 @@ public class TicketServiceImpl implements TicketService {
     @Cacheable("tickets-unassigned")
     public List<TicketResponse> getUnassignedTickets() {
         log.info("Fetching unassigned tickets");
-        List<Ticket> tickets = ticketRepository.findActiveUnassignedByStatus(TicketStatus.CREATED);
+        List<Ticket> tickets = ticketRepository.findActiveByStatusIn(
+                List.of(
+                        TicketStatus.CREATED,
+                        TicketStatus.MANAGER_APPROVAL_PENDING,
+                        TicketStatus.MANAGER_APPROVED,
+                        TicketStatus.COST_APPROVAL_PENDING,
+                        TicketStatus.COST_APPROVED,
+                        TicketStatus.ACCEPTED
+                )
+        ).stream()
+                .filter(t -> {
+                    boolean noEmail = t.getAssignedToEmail() == null || t.getAssignedToEmail().isBlank();
+                    boolean noStoredName = t.getAssignedTo() == null || t.getAssignedTo().isBlank();
+                    String derived = noStoredName ? t.resolveAssigneeDisplayNameFromTimeline() : null;
+                    boolean noName = noStoredName && (derived == null || derived.isBlank());
+                    return noName && noEmail;
+                })
+                .sorted((a, b) -> {
+                    Instant ai = a.getCreatedAt();
+                    Instant bi = b.getCreatedAt();
+                    if (ai == null && bi == null) return 0;
+                    if (ai == null) return 1;
+                    if (bi == null) return -1;
+                    return bi.compareTo(ai);
+                })
+                .collect(Collectors.toList());
         return tickets.stream()
                 .map(this::mapToResponse)
                 .collect(Collectors.toList());
@@ -1141,7 +1282,12 @@ public class TicketServiceImpl implements TicketService {
         }
         projectRepository.findByNameIgnoreCase(request.getProductName().trim()).ifPresent(project -> {
             ticket.setProjectId(project.getId());
-            WorkflowConfiguration wf = projectWorkflowService.resolveEffective(project.getId(), request.getRequestType());
+            WorkflowConfiguration wf = projectWorkflowService.resolveEffective(
+                    project.getId(),
+                    request.getRequestType(),
+                    request.getEnvironmentLabel() != null && !request.getEnvironmentLabel().isBlank()
+                            ? request.getEnvironmentLabel()
+                            : (request.getEnvironment() != null ? request.getEnvironment().getDisplayName() : null));
             InfrastructureConfig mergedInfra = projectWorkflowService.mergeInfrastructureForEnvironment(
                     project.getId(), request.getEnvironment(), wf.getInfrastructure());
             wf.setInfrastructure(mergedInfra);
@@ -1382,6 +1528,19 @@ public class TicketServiceImpl implements TicketService {
         return "pending";
     }
 
+    /** Prefer stored assignee; if missing, derive from timeline so list cards stay accurate. */
+    private static String resolveAssignedToForApi(Ticket ticket) {
+        if (ticket == null) {
+            return null;
+        }
+        String stored = ticket.getAssignedTo();
+        if (stored != null && !stored.isBlank()) {
+            return stored.trim();
+        }
+        String fromTimeline = ticket.resolveAssigneeDisplayNameFromTimeline();
+        return fromTimeline != null && !fromTimeline.isBlank() ? fromTimeline : null;
+    }
+
     private TicketResponse mapToResponse(Ticket ticket) {
         WorkflowConfiguration wf = workflowSnapshotService.parse(ticket.getWorkflowSnapshotJson());
         if (ticket.getProjectId() != null && ticket.getEnvironment() != null) {
@@ -1394,6 +1553,7 @@ public class TicketServiceImpl implements TicketService {
                 .requestType(ticket.getRequestType())
                 .productName(ticket.getProductName())
                 .projectId(ticket.getProjectId())
+                .environmentLabel(ticket.getEnvironmentLabel())
                 .workflowConfiguration(wf)
                 .workflowStages(buildWorkflowStages(ticket, wf))
                 .currentApprovalLevel(ticket.getCurrentApprovalLevel())
@@ -1421,7 +1581,7 @@ public class TicketServiceImpl implements TicketService {
                 .costSubmittedByEmail(ticket.getCostSubmittedByEmail())
                 .status(ticket.getStatus())
                 .active(ticket.isActive())
-                .assignedTo(ticket.getAssignedTo())
+                .assignedTo(resolveAssignedToForApi(ticket))
                 .assignedToEmail(ticket.getAssignedToEmail())
                 .createdAt(ticket.getCreatedAt())
                 .updatedAt(ticket.getUpdatedAt())
