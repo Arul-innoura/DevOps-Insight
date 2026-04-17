@@ -41,6 +41,12 @@ public class AnalyticsSettings {
     @Builder.Default
     private List<ProjectTimelineSegment> projectTimelineSegments = new ArrayList<>();
 
+    /**
+     * DevOps/Admin-controlled visibility of environment + product rows on the monitoring analytics page.
+     */
+    @Builder.Default
+    private List<MonitoringDisplayToggle> monitoringDisplayToggles = new ArrayList<>();
+
     private Instant updatedAt;
     private String updatedBy;
 }

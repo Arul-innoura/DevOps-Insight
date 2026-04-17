@@ -89,6 +89,17 @@ function normalizeAnalyticsSettings(raw) {
         projectTimelineSegments: Array.isArray(s.projectTimelineSegments)
             ? s.projectTimelineSegments.map((row, i) => ({ ...row, sortOrder: Number(row?.sortOrder) || i }))
             : [],
+        monitoringDisplayToggles: Array.isArray(s.monitoringDisplayToggles)
+            ? s.monitoringDisplayToggles.map((t) => ({
+                  productName: t.productName || '',
+                  environment: t.environment || '',
+                  enabled: t.enabled !== false,
+                  runningOverride:
+                      t.runningOverride === true ? true : t.runningOverride === false ? false : null,
+                  manualRunningSince: t.manualRunningSince ?? null,
+                  manualRunningStoppedAt: t.manualRunningStoppedAt ?? null,
+              }))
+            : [],
         updatedAt: s.updatedAt,
         updatedBy: s.updatedBy,
     };

@@ -1,11 +1,12 @@
-import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import {
-    Activity, BarChart3, Clock, Users, Layers, Globe, Server,
-    Cpu, HardDrive, ChevronDown, Calendar, Edit2, Check, X,
-    TrendingUp, Zap, AlertCircle, Database, Cloud, Package,
-    RefreshCw, Info, CheckCircle, PlayCircle
+    Activity, BarChart3, Clock, Layers, Globe, Server,
+    Calendar, Edit2, Check, X,
+    AlertCircle, Database, Info,
+    SlidersHorizontal, Save, Loader2,
 } from 'lucide-react';
 import { TICKET_STATUS } from '../services/ticketService';
+import { getAnalyticsSettings, saveMonitoringDisplayToggles } from '../services/analyticsSettingsService';
 
 /* ──────────────────────────────────────────────
    CONSTANTS
@@ -80,10 +81,82 @@ const overlapHours = (s, e, dayStart, dayEnd) => {
     return Math.min((oe - os) / 3_600_000, 24);
 };
 
-const computeDailyBreakdown = (tickets, envName, days) => {
-    const envTickets = tickets.filter(
-        (t) => (t.environment || '') === envName || (t.environment || '').replace(/_/g, ' ') === envName
-    );
+const parseIsoMs = (v) => {
+    if (v == null || v === '') return null;
+    const n = new Date(v).getTime();
+    return Number.isFinite(n) ? n : null;
+};
+
+/** Extra bar-chart hours from a DevOps manual Running / Stopped segment (not from ticket rows). */
+function manualSessionHoursForDay(meta, dayStart, dayEnd, nowMs) {
+    if (!meta) return 0;
+    const ro = meta.runningOverride;
+    const sinceMs = parseIsoMs(meta.manualRunningSince);
+    const stoppedMs = parseIsoMs(meta.manualRunningStoppedAt);
+    if (ro === true && sinceMs != null) {
+        return overlapHours(sinceMs, nowMs, dayStart, dayEnd);
+    }
+    if (ro === false && sinceMs != null && stoppedMs != null) {
+        return overlapHours(sinceMs, Math.max(sinceMs, stoppedMs), dayStart, dayEnd);
+    }
+    return 0;
+}
+
+function addManualHoursForEnvIntoDay(productHours, metaMap, envName, dayStart, dayEnd, nowMs) {
+    if (!metaMap || metaMap.size === 0) return;
+    metaMap.forEach((meta, key) => {
+        const sep = key.indexOf('||');
+        if (sep < 0) return;
+        const productName = key.slice(0, sep);
+        const environment = key.slice(sep + 2);
+        const want = (envName || '').replace(/_/g, ' ');
+        const envNorm = environment.replace(/_/g, ' ');
+        if (envNorm !== want && environment !== envName) return;
+        const h = manualSessionHoursForDay(meta, dayStart, dayEnd, nowMs);
+        if (h <= 0) return;
+        productHours[productName] = Math.min((productHours[productName] || 0) + h, 24);
+    });
+}
+
+/** Tooltip copy: sub-hour runtimes show as whole minutes (e.g. 5 min), not 0.0h. */
+function formatRuntimeDuration(hours) {
+    if (hours == null || !Number.isFinite(hours) || hours <= 0) return '0 min';
+    const totalMinutes = hours * 60;
+    if (totalMinutes < 1) return '<1 min';
+    if (hours < 1) {
+        return `${Math.round(totalMinutes)} min`;
+    }
+    const h = Math.floor(hours);
+    const m = Math.round((hours - h) * 60);
+    if (m === 0) return `${h}h`;
+    return `${h}h ${m}m`;
+}
+
+/** Many tickets omit environment; bucket so charts still render for standard users. */
+function normalizedTicketEnv(t) {
+    const raw = t && t.environment != null ? String(t.environment).trim() : '';
+    if (!raw) return 'Unknown';
+    return raw.replace(/_/g, ' ');
+}
+
+function normalizedTicketProduct(t) {
+    const raw = t && t.productName != null ? String(t.productName).trim() : '';
+    return raw || 'Unknown';
+}
+
+/** Bar chart hours only count tickets that have reached Completed (not in-progress or other states). */
+function isCompletedForBarChart(t) {
+    return t && t.status === TICKET_STATUS.COMPLETED;
+}
+
+const computeDailyBreakdown = (tickets, envName, days, toggleMeta, nowMs) => {
+    const envTickets = tickets.filter((t) => {
+        if (!isCompletedForBarChart(t)) return false;
+        const e = normalizedTicketEnv(t);
+        const want = (envName || '').replace(/_/g, ' ');
+        return e === want || e === envName;
+    });
+    const endNow = Number.isFinite(nowMs) ? nowMs : Date.now();
     return days.map((day) => {
         const ds = new Date(day); ds.setHours(0, 0, 0, 0);
         const de = new Date(day); de.setHours(23, 59, 59, 999);
@@ -92,10 +165,11 @@ const computeDailyBreakdown = (tickets, envName, days) => {
             const { start, end } = getTicketPeriod(t);
             const h = overlapHours(start, end, ds.getTime(), de.getTime());
             if (h > 0) {
-                const p = t.productName || 'Unknown';
+                const p = normalizedTicketProduct(t);
                 productHours[p] = Math.min((productHours[p] || 0) + h, 24);
             }
         });
+        addManualHoursForEnvIntoDay(productHours, toggleMeta, envName, ds.getTime(), de.getTime(), endNow);
         const totalHours = Math.min(
             Object.values(productHours).reduce((s, h) => s + h, 0),
             24
@@ -104,79 +178,169 @@ const computeDailyBreakdown = (tickets, envName, days) => {
     });
 };
 
+const pairKey = (product, env) => `${product || ''}||${env || ''}`;
+
+/** Per product×environment: visibility + optional DevOps running override (null = use ticket activity only). */
+function buildToggleMetaByPair(toggles) {
+    const m = new Map();
+    (toggles || []).forEach((t) => {
+        m.set(pairKey(t.productName, t.environment), {
+            enabled: t.enabled !== false,
+            runningOverride:
+                t.runningOverride === true ? true : t.runningOverride === false ? false : null,
+            manualRunningSince: t.manualRunningSince ?? null,
+            manualRunningStoppedAt: t.manualRunningStoppedAt ?? null,
+        });
+    });
+    return m;
+}
+
+function isPairShown(metaMap, product, env) {
+    const meta = metaMap.get(pairKey(product, env));
+    if (!meta) return true;
+    return meta.enabled;
+}
+
+function isProductRunningDisplayed(metaMap, tickets, envName, productName) {
+    const meta = metaMap.get(pairKey(productName, envName));
+    if (meta && meta.runningOverride === true) return true;
+    if (meta && meta.runningOverride === false) return false;
+    /** Auto (null): live Running / Stopped follows open tickets only. */
+    return isProductUpInEnv(tickets, envName, productName);
+}
+
+function runningMetricSource(metaMap, envName, productName) {
+    const meta = metaMap.get(pairKey(productName, envName));
+    if (meta && (meta.runningOverride === true || meta.runningOverride === false)) return 'devops';
+    return 'tickets';
+}
+
+function matchEnvTicket(t, envName) {
+    const e = normalizedTicketEnv(t);
+    const want = (envName || '').replace(/_/g, ' ');
+    return e === want || e === envName;
+}
+
+const TERMINAL_TICKET = [TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED, TICKET_STATUS.REJECTED];
+
+/** Green "up" = this product is currently running in the environment (open work). */
+function isProductUpInEnv(tickets, envName, productName) {
+    return tickets.some(
+        (t) =>
+            matchEnvTicket(t, envName) &&
+            normalizedTicketProduct(t) === productName &&
+            !TERMINAL_TICKET.includes(t.status)
+    );
+}
+
 /* ──────────────────────────────────────────────
-   STACKED BAR CHART
+   DAILY STACKED BARS (per environment)
 ────────────────────────────────────────────── */
-const StackedBarChart = ({ dailyData, productColors, allProducts, chartHeight = 200 }) => {
+const DailyStackedBarChart = ({
+    dailyData,
+    productOrder,
+    productColors,
+    productMetrics,
+    chartHeight = 200,
+    barMinWidth = 28,
+    emptyMsg,
+}) => {
     const [tip, setTip] = useState(null);
-    const tipRef = useRef(null);
 
-    const yMarks = [24, 18, 12, 6, 0];
+    const handleEnter = useCallback(
+        (e, day) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            const segs = productOrder
+                .map((p) => {
+                    const hours = day.productHours[p] || 0;
+                    const m = productMetrics && productMetrics[p];
+                    return {
+                        product: p,
+                        hours,
+                        color: productColors[p],
+                        liveRunning: m ? m.running : false,
+                        liveSource: m ? m.source : 'tickets',
+                    };
+                })
+                .filter((s) => s.hours > 0);
+            setTip({
+                x: rect.left + rect.width / 2,
+                y: rect.top,
+                day,
+                segs,
+            });
+        },
+        [productOrder, productColors, productMetrics]
+    );
 
-    const handleMouseEnter = useCallback((e, day) => {
-        const rect = e.currentTarget.getBoundingClientRect();
-        const segs = allProducts
-            .map((p) => ({ product: p, hours: day.productHours[p] || 0, color: productColors[p] }))
-            .filter((s) => s.hours > 0);
-        setTip({ x: rect.left + rect.width / 2, y: rect.top, day, segs });
-    }, [allProducts, productColors]);
+    if (!dailyData || dailyData.length === 0) {
+        return <div className="em-empty">{emptyMsg || 'No data for this range.'}</div>;
+    }
 
+    const maxDayTotal = Math.max(0.01, ...dailyData.map((d) => d.totalHours));
     return (
-        <div className="em-chart-outer">
-            {/* Y axis */}
-            <div className="em-yaxis">
-                {yMarks.map((h) => (
-                    <div key={h} className="em-yaxis-row">
-                        <span className="em-yaxis-label">{h}h</span>
-                        <div className="em-yaxis-line" />
-                    </div>
-                ))}
-            </div>
-
-            {/* Scrollable bars */}
-            <div className="em-bars-scroll">
-                <div className="em-bars-inner" style={{ minWidth: Math.max(dailyData.length * 32, 400) }}>
+        <div className="em-chart-outer em-chart-outer--full-width">
+            <div className="em-bars-scroll em-bars-scroll--flush">
+                <div
+                    className="em-bars-inner"
+                    style={{ minWidth: Math.max(dailyData.length * barMinWidth, 220) }}
+                >
                     {dailyData.map((day, idx) => {
-                        const sortedProds = allProducts.filter((p) => (day.productHours[p] || 0) > 0);
-                        let cumPct = 0;
+                        const sortedProds = productOrder.filter((p) => (day.productHours[p] || 0) > 0);
+                        const total = day.totalHours;
+                        const colPct = total > 0 ? Math.max(6, (total / maxDayTotal) * 100) : 0;
                         return (
                             <div
                                 key={idx}
                                 className="em-bar-col"
-                                onMouseEnter={(e) => handleMouseEnter(e, day)}
+                                onMouseEnter={(e) => handleEnter(e, day)}
                                 onMouseLeave={() => setTip(null)}
                             >
                                 <div className="em-bar-stack" style={{ height: chartHeight }}>
-                                    {sortedProds.map((p) => {
-                                        const h = day.productHours[p] || 0;
-                                        const pct = (h / 24) * 100;
-                                        const bottom = cumPct;
-                                        cumPct += pct;
-                                        return (
-                                            <div
-                                                key={p}
-                                                className="em-bar-seg"
-                                                style={{
-                                                    height: `${pct}%`,
-                                                    bottom: `${bottom}%`,
-                                                    background: productColors[p] || '#94a3b8',
-                                                }}
-                                            />
-                                        );
-                                    })}
-                                    {day.totalHours === 0 && (
+                                    {total > 0 && (
+                                        <div
+                                            className="em-bar-day-column"
+                                            style={{
+                                                position: 'absolute',
+                                                left: 2,
+                                                right: 2,
+                                                bottom: 0,
+                                                height: `${colPct}%`,
+                                                display: 'flex',
+                                                flexDirection: 'column',
+                                                justifyContent: 'flex-end',
+                                                borderRadius: '4px 4px 0 0',
+                                                overflow: 'hidden',
+                                            }}
+                                        >
+                                            {sortedProds.map((p) => {
+                                                const h = day.productHours[p] || 0;
+                                                return (
+                                                    <div
+                                                        key={p}
+                                                        style={{
+                                                            height: `${(h / total) * 100}%`,
+                                                            minHeight: 3,
+                                                            background: productColors[p] || '#94a3b8',
+                                                        }}
+                                                    />
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                    {total === 0 && (
                                         <div className="em-bar-empty-seg" style={{ height: '3%', bottom: 0 }} />
                                     )}
                                 </div>
                                 <div className="em-bar-xlabel">{day.label.split(' ')[1] || day.label}</div>
-                                <div className="em-bar-xmonth">{idx === 0 || day.date.getDate() === 1 ? day.label.split(' ')[0] : ''}</div>
+                                <div className="em-bar-xmonth">
+                                    {idx === 0 || day.date.getDate() === 1 ? day.label.split(' ')[0] : ''}
+                                </div>
                             </div>
                         );
                     })}
                 </div>
             </div>
-
-            {/* Tooltip */}
             {tip && (
                 <div
                     className="em-tooltip"
@@ -184,18 +348,31 @@ const StackedBarChart = ({ dailyData, productColors, allProducts, chartHeight = 
                 >
                     <div className="em-tip-date">{tip.day.fullLabel}</div>
                     {tip.segs.length === 0 ? (
-                        <div className="em-tip-empty">No activity</div>
+                        <div className="em-tip-empty">No product hours</div>
                     ) : (
                         tip.segs.map((s) => (
-                            <div key={s.product} className="em-tip-row">
-                                <span className="em-tip-dot" style={{ background: s.color }} />
-                                <span className="em-tip-name">{s.product}</span>
-                                <span className="em-tip-val">{s.hours.toFixed(1)}h</span>
+                            <div key={s.product} className="em-tip-row em-tip-row--stacked">
+                                <div className="em-tip-row-main">
+                                    <span className="em-tip-dot" style={{ background: s.color }} />
+                                    <span className="em-tip-name">{s.product}</span>
+                                    <span className="em-tip-val">{formatRuntimeDuration(s.hours)}</span>
+                                </div>
+                                <div className="em-tip-live">
+                                    Live:{' '}
+                                    <strong className={s.liveRunning ? 'em-tip-live-on' : 'em-tip-live-off'}>
+                                        {s.liveRunning ? 'Running' : 'Stopped'}
+                                    </strong>
+                                    <span className="em-tip-live-src">
+                                        {s.liveSource === 'devops' ? '(DevOps)' : '(from activity)'}
+                                    </span>
+                                </div>
                             </div>
                         ))
                     )}
                     {tip.segs.length > 0 && (
-                        <div className="em-tip-total">Total: {tip.day.totalHours.toFixed(1)}h</div>
+                        <div className="em-tip-total">
+                            Day total: {formatRuntimeDuration(tip.segs.reduce((a, s) => a + s.hours, 0))}
+                        </div>
                     )}
                 </div>
             )}
@@ -204,30 +381,14 @@ const StackedBarChart = ({ dailyData, productColors, allProducts, chartHeight = 
 };
 
 /* ──────────────────────────────────────────────
-   SUMMARY CARD
-────────────────────────────────────────────── */
-const SumCard = ({ icon: Icon, label, value, sub, color }) => (
-    <div className="em-sum-card">
-        <div className="em-sum-icon" style={{ background: `${color}18`, color }}>
-            <Icon size={20} />
-        </div>
-        <div>
-            <div className="em-sum-value">{value}</div>
-            <div className="em-sum-label">{label}</div>
-            {sub && <div className="em-sum-sub">{sub}</div>}
-        </div>
-    </div>
-);
-
-/* ──────────────────────────────────────────────
    ENV → PRODUCT MAP GRID
 ────────────────────────────────────────────── */
-const EnvProductMap = ({ tickets, productColors, allProducts }) => {
+const EnvProductMap = ({ tickets, productColors }) => {
     const envMap = useMemo(() => {
         const m = {};
         tickets.forEach((t) => {
-            const env = t.environment || 'Unknown';
-            const prod = t.productName || 'Unknown';
+            const env = normalizedTicketEnv(t);
+            const prod = normalizedTicketProduct(t);
             if (!m[env]) m[env] = new Set();
             m[env].add(prod);
         });
@@ -358,126 +519,214 @@ const InfraPanel = ({ tickets, projects }) => {
 };
 
 /* ──────────────────────────────────────────────
-   DEVOPS EXTRA METRICS
+   DEVOPS / ADMIN — CHART DISPLAY (saved to DB)
 ────────────────────────────────────────────── */
-const DevOpsMetrics = ({ tickets, devOpsMembers }) => {
-    const metrics = useMemo(() => {
-        const total = tickets.length;
-        const inProgress = tickets.filter((t) => t.status === TICKET_STATUS.IN_PROGRESS).length;
-        const completed = tickets.filter((t) => [TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(t.status)).length;
-        const actionReq = tickets.filter((t) => t.status === TICKET_STATUS.ACTION_REQUIRED).length;
-        const onHold = tickets.filter((t) => t.status === TICKET_STATUS.ON_HOLD).length;
-        const pending = tickets.filter((t) => t.status === TICKET_STATUS.CREATED).length;
-        const managerPending = tickets.filter((t) => t.status === TICKET_STATUS.MANAGER_APPROVAL_PENDING).length;
-        const costPending = tickets.filter((t) => t.status === TICKET_STATUS.COST_APPROVAL_PENDING).length;
+const MonitoringDisplaySettingsPanel = ({ tickets, onSettingsUpdated }) => {
+    const [rows, setRows] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [message, setMessage] = useState('');
 
-        const resolveTimes = tickets
-            .filter((t) => t.status === TICKET_STATUS.COMPLETED && t.createdAt && t.updatedAt)
-            .map((t) => (new Date(t.updatedAt) - new Date(t.createdAt)) / 86_400_000);
-        const avgResolve = resolveTimes.length
-            ? (resolveTimes.reduce((a, b) => a + b, 0) / resolveTimes.length).toFixed(1)
-            : null;
-
-        const assigned = tickets.filter((t) => t.assignedTo).length;
-        const unassigned = total - assigned;
-
-        const byEnv = {};
+    const rebuildRows = useCallback((settingsDoc) => {
+        const toggles = settingsDoc?.monitoringDisplayToggles || [];
+        const toggleByKey = new Map(toggles.map((t) => [pairKey(t.productName, t.environment), t]));
+        const pairs = new Set();
         tickets.forEach((t) => {
-            const e = t.environment || 'Unknown';
-            byEnv[e] = (byEnv[e] || 0) + 1;
+            pairs.add(pairKey(normalizedTicketProduct(t), normalizedTicketEnv(t)));
         });
-        const topEnv = Object.entries(byEnv).sort((a, b) => b[1] - a[1])[0];
+        const list = [...pairs]
+            .map((k) => {
+                const sep = k.indexOf('||');
+                const productName = sep >= 0 ? k.slice(0, sep) : k;
+                const environment = sep >= 0 ? k.slice(sep + 2) : '';
+                const t = toggleByKey.get(k);
+                return {
+                    productName,
+                    environment,
+                    enabled: t ? t.enabled !== false : true,
+                    runningOverride:
+                        t && t.runningOverride === true
+                            ? true
+                            : t && t.runningOverride === false
+                              ? false
+                              : null,
+                    manualRunningSince: t?.manualRunningSince ?? null,
+                    manualRunningStoppedAt: t?.manualRunningStoppedAt ?? null,
+                };
+            })
+            .sort(
+                (a, b) =>
+                    a.environment.localeCompare(b.environment) || a.productName.localeCompare(b.productName)
+            );
+        setRows(list);
+    }, [tickets]);
 
-        return {
-            total, inProgress, completed, actionReq, onHold, pending,
-            managerPending, costPending, avgResolve, assigned, unassigned, topEnv,
-            resolutionRate: total > 0 ? Math.round((completed / total) * 100) : 0,
+    useEffect(() => {
+        let cancelled = false;
+        setLoading(true);
+        setMessage('');
+        getAnalyticsSettings()
+            .then((doc) => {
+                if (!cancelled) rebuildRows(doc);
+            })
+            .catch((e) => {
+                if (!cancelled) setMessage(e.message || 'Could not load settings');
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+        return () => {
+            cancelled = true;
         };
-    }, [tickets]);
+    }, [rebuildRows]);
 
-    // Workload per devops member
-    const memberWorkload = useMemo(() => {
-        const map = {};
-        tickets.forEach((t) => {
-            if (!t.assignedTo) return;
-            if (!map[t.assignedTo]) map[t.assignedTo] = { name: t.assignedTo, total: 0, active: 0, done: 0 };
-            map[t.assignedTo].total++;
-            if (t.status === TICKET_STATUS.IN_PROGRESS) map[t.assignedTo].active++;
-            if ([TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED].includes(t.status)) map[t.assignedTo].done++;
-        });
-        return Object.values(map).sort((a, b) => b.total - a.total).slice(0, 8);
-    }, [tickets]);
+    const flipRow = (idx) => {
+        setRows((prev) =>
+            prev.map((row, i) => (i === idx ? { ...row, enabled: !row.enabled } : row))
+        );
+    };
 
-    const maxWorkload = Math.max(1, ...memberWorkload.map((m) => m.total));
+    const setRunningOverride = (idx, value) => {
+        setRows((prev) =>
+            prev.map((row, i) => {
+                if (i !== idx) return row;
+                const nowIso = new Date().toISOString();
+                if (value === true) {
+                    return {
+                        ...row,
+                        runningOverride: true,
+                        manualRunningSince: nowIso,
+                        manualRunningStoppedAt: null,
+                    };
+                }
+                if (value === false) {
+                    const wasRunning = row.runningOverride === true;
+                    return {
+                        ...row,
+                        runningOverride: false,
+                        manualRunningSince: wasRunning ? row.manualRunningSince : null,
+                        manualRunningStoppedAt: wasRunning ? nowIso : null,
+                    };
+                }
+                return {
+                    ...row,
+                    runningOverride: null,
+                    manualRunningSince: null,
+                    manualRunningStoppedAt: null,
+                };
+            })
+        );
+    };
 
-    // Recent 7-day trend
-    const weekTrend = useMemo(() => {
-        const days = [];
-        for (let i = 6; i >= 0; i--) {
-            const d = new Date();
-            d.setDate(d.getDate() - i);
-            d.setHours(0, 0, 0, 0);
-            const next = new Date(d);
-            next.setDate(next.getDate() + 1);
-            const count = tickets.filter((t) => {
-                if (!t.createdAt) return false;
-                const ts = new Date(t.createdAt).getTime();
-                return ts >= d.getTime() && ts < next.getTime();
-            }).length;
-            days.push({ label: fmtShortDate(d), count });
+    const handleSave = async () => {
+        setSaving(true);
+        setMessage('');
+        try {
+            const saved = await saveMonitoringDisplayToggles(rows);
+            rebuildRows(saved);
+            onSettingsUpdated?.(saved);
+            setMessage('Saved to server.');
+        } catch (e) {
+            setMessage(e.message || 'Save failed');
+        } finally {
+            setSaving(false);
         }
-        return days;
-    }, [tickets]);
-    const maxWeek = Math.max(1, ...weekTrend.map((d) => d.count));
+    };
+
+    if (loading) {
+        return (
+            <div className="em-display-panel">
+                <div className="em-empty">
+                    <Loader2 size={20} className="em-spin" /> Loading display settings…
+                </div>
+            </div>
+        );
+    }
 
     return (
-        <div className="em-devops-section">
-            {/* KPI row */}
-            <div className="em-devops-kpis">
-                <SumCard icon={Layers} label="Total Tickets" value={metrics.total} color="#2563eb" />
-                <SumCard icon={PlayCircle} label="In Progress" value={metrics.inProgress} color="#7c3aed" />
-                <SumCard icon={CheckCircle} label="Completed" value={metrics.completed} sub={`${metrics.resolutionRate}% rate`} color="#16a34a" />
-                <SumCard icon={AlertCircle} label="Action Required" value={metrics.actionReq} color="#dc2626" />
-                <SumCard icon={Clock} label="Avg Resolve" value={metrics.avgResolve ? `${metrics.avgResolve}d` : '—'} color="#ea580c" />
-                <SumCard icon={Users} label="Assigned / Unassigned" value={`${metrics.assigned} / ${metrics.unassigned}`} color="#0891b2" />
-                <SumCard icon={Zap} label="Awaiting Approval" value={metrics.managerPending + metrics.costPending} color="#f59e0b" />
-                <SumCard icon={Activity} label="On Hold" value={metrics.onHold} color="#64748b" />
-            </div>
-
-            {/* Week trend + team workload */}
-            <div className="em-devops-row">
-                <div className="em-devops-card">
-                    <div className="em-card-title"><BarChart3 size={16} /> New Tickets — Last 7 Days</div>
-                    <div className="em-week-bars">
-                        {weekTrend.map((d, i) => (
-                            <div key={i} className="em-week-col" title={`${d.label}: ${d.count}`}>
-                                <div className="em-week-bar" style={{ height: `${Math.max(4, (d.count / maxWeek) * 100)}%` }} />
-                                <span className="em-week-label">{d.label.split(' ')[1]}</span>
-                            </div>
-                        ))}
-                    </div>
+        <div className="em-display-panel">
+            <div className="em-display-panel-head">
+                <div>
+                    <h3 className="em-display-title">
+                        <SlidersHorizontal size={18} /> Charts & live status
+                    </h3>
+                    <p className="em-display-desc">
+                        <strong>Show on chart</strong> hides a product in that environment for everyone.
+                        <strong> Live status:</strong> <strong>Running</strong> starts a manual uptime window from the
+                        moment you click it until <strong>Stopped</strong> (charts and pills follow that, not ticket
+                        polling). <strong>Auto</strong> uses open tickets only for Running / Stopped and does not use
+                        the manual window.
+                    </p>
                 </div>
-
-                {memberWorkload.length > 0 && (
-                    <div className="em-devops-card">
-                        <div className="em-card-title"><Users size={16} /> Team Workload</div>
-                        <div className="em-workload-list">
-                            {memberWorkload.map((m) => (
-                                <div key={m.name} className="em-workload-row">
-                                    <span className="em-workload-name" title={m.name}>
-                                        {m.name.split(' ').map((s) => s[0]).join('').toUpperCase().slice(0, 2)}
-                                    </span>
-                                    <div className="em-workload-track">
-                                        <div className="em-workload-fill-active" style={{ width: `${(m.active / maxWorkload) * 100}%` }} />
-                                        <div className="em-workload-fill-done" style={{ width: `${(m.done / maxWorkload) * 100}%`, left: `${(m.active / maxWorkload) * 100}%` }} />
-                                    </div>
-                                    <span className="em-workload-val">{m.total}</span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
+                <button type="button" className="em-display-save" onClick={handleSave} disabled={saving}>
+                    {saving ? <Loader2 size={16} className="em-spin" /> : <Save size={16} />}
+                    {saving ? 'Saving…' : 'Save'}
+                </button>
             </div>
+            {message && <div className={`em-display-msg ${message.includes('fail') ? 'err' : ''}`}>{message}</div>}
+            {rows.length === 0 ? (
+                <div className="em-empty">No environment + product pairs found in tickets yet.</div>
+            ) : (
+                <div className="em-display-table-wrap">
+                    <table className="em-display-table">
+                        <thead>
+                            <tr>
+                                <th>Environment</th>
+                                <th>Product</th>
+                                <th>Show on chart</th>
+                                <th>Live status (Running / Stopped)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {rows.map((row, idx) => (
+                                <tr key={pairKey(row.productName, row.environment)}>
+                                    <td>
+                                        <span className="em-display-env" style={{ color: getEnvColor(row.environment) }}>
+                                            {row.environment}
+                                        </span>
+                                    </td>
+                                    <td>{row.productName}</td>
+                                    <td>
+                                        <button
+                                            type="button"
+                                            className={`em-toggle ${row.enabled ? 'on' : 'off'}`}
+                                            onClick={() => flipRow(idx)}
+                                        >
+                                            <span className="em-toggle-knob" />
+                                            {row.enabled ? 'On' : 'Off'}
+                                        </button>
+                                    </td>
+                                    <td>
+                                        <div className="em-live-trio" role="group" aria-label="Live running metric">
+                                            <button
+                                                type="button"
+                                                className={`em-live-trio-btn ${row.runningOverride == null ? 'active' : ''}`}
+                                                onClick={() => setRunningOverride(idx, null)}
+                                            >
+                                                Auto
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className={`em-live-trio-btn ${row.runningOverride === true ? 'active' : ''}`}
+                                                onClick={() => setRunningOverride(idx, true)}
+                                            >
+                                                Running
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className={`em-live-trio-btn ${row.runningOverride === false ? 'active' : ''}`}
+                                                onClick={() => setRunningOverride(idx, false)}
+                                            >
+                                                Stopped
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
         </div>
     );
 };
@@ -591,247 +840,314 @@ const AdminEditPanel = ({ tickets, projects }) => {
 const EnvMonitoringDashboard = ({
     tickets = [],
     projects = [],
-    devOpsMembers = [],
-    userRole = 'user',   // 'user' | 'devops' | 'admin'
+    devOpsMembers: _devOpsMembers = [],
+    userRole = 'user', // 'user' | 'devops' | 'admin'
 }) => {
     const now = new Date();
     const defaultFrom = new Date(now);
     defaultFrom.setDate(defaultFrom.getDate() - 29);
 
-    const [selectedEnv, setSelectedEnv] = useState('');
-    const [dateFrom, setDateFrom] = useState(toDateStr(defaultFrom));
-    const [dateTo, setDateTo] = useState(toDateStr(now));
-    const [activeProducts, setActiveProducts] = useState([]);  // empty = all
-    const [activeTab, setActiveTab] = useState('activity');     // 'activity' | 'infra' | 'admin'
-
+    const isUser = userRole === 'user';
     const isDevOps = userRole === 'devops';
     const isAdmin = userRole === 'admin';
 
-    // Derive all envs from tickets
-    const allEnvs = useMemo(
-        () => [...new Set(tickets.map((t) => t.environment).filter(Boolean))].sort(),
-        [tickets]
+    const [dateFrom, setDateFrom] = useState(toDateStr(defaultFrom));
+    const [dateTo, setDateTo] = useState(toDateStr(now));
+    const [activeTab, setActiveTab] = useState('activity');
+    const [monitoringSettings, setMonitoringSettings] = useState(null);
+
+    useEffect(() => {
+        let cancelled = false;
+        getAnalyticsSettings()
+            .then((doc) => {
+                if (!cancelled) setMonitoringSettings(doc);
+            })
+            .catch(() => {
+                if (!cancelled) setMonitoringSettings({});
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    const toggleMetaByPair = useMemo(
+        () => buildToggleMetaByPair(monitoringSettings?.monitoringDisplayToggles),
+        [monitoringSettings]
     );
 
-    // Auto-select first env
+    const [liveTick, setLiveTick] = useState(0);
+    const hasActiveManualRunning = useMemo(() => {
+        for (const meta of toggleMetaByPair.values()) {
+            if (meta.runningOverride === true && meta.manualRunningSince) return true;
+        }
+        return false;
+    }, [toggleMetaByPair]);
+
     useEffect(() => {
-        if (!selectedEnv && allEnvs.length > 0) setSelectedEnv(allEnvs[0]);
-    }, [allEnvs, selectedEnv]);
+        if (!hasActiveManualRunning) return undefined;
+        const id = setInterval(() => setLiveTick((n) => n + 1), 30000);
+        return () => clearInterval(id);
+    }, [hasActiveManualRunning]);
 
-    // All products in selected env
-    const productsInEnv = useMemo(() => {
-        const envTickets = tickets.filter(
-            (t) => (t.environment || '') === selectedEnv || (t.environment || '').replace(/_/g, ' ') === selectedEnv
-        );
-        return [...new Set(envTickets.map((t) => t.productName).filter(Boolean))].sort();
-    }, [tickets, selectedEnv]);
+    const ticketsForCharts = useMemo(
+        () =>
+            tickets.filter((t) => {
+                const p = normalizedTicketProduct(t);
+                const e = normalizedTicketEnv(t);
+                return isPairShown(toggleMetaByPair, p, e);
+            }),
+        [tickets, toggleMetaByPair]
+    );
 
-    // All products (for color assignment)
     const allProducts = useMemo(
-        () => [...new Set(tickets.map((t) => t.productName).filter(Boolean))].sort(),
-        [tickets]
+        () => [...new Set(ticketsForCharts.map((t) => normalizedTicketProduct(t)))].sort(),
+        [ticketsForCharts]
     );
 
     const productColors = useMemo(() => {
         const m = {};
-        allProducts.forEach((p, i) => { m[p] = PRODUCT_COLORS[i % PRODUCT_COLORS.length]; });
+        allProducts.forEach((p, i) => {
+            m[p] = PRODUCT_COLORS[i % PRODUCT_COLORS.length];
+        });
         return m;
     }, [allProducts]);
 
-    // Day range
-    const days = useMemo(() => getDayRange(dateFrom, dateTo), [dateFrom, dateTo]);
+    const days = useMemo(() => {
+        let from = dateFrom;
+        let to = dateTo;
+        if (from > to) {
+            const x = from;
+            from = to;
+            to = x;
+        }
+        let range = getDayRange(from, to);
+        if (range.length === 0) {
+            const t = toDateStr(new Date());
+            range = getDayRange(t, t);
+        }
+        return range;
+    }, [dateFrom, dateTo]);
 
-    // Filtered tickets (by active product chips)
-    const filteredTickets = useMemo(() => {
-        if (activeProducts.length === 0) return tickets;
-        return tickets.filter((t) => activeProducts.includes(t.productName || 'Unknown'));
-    }, [tickets, activeProducts]);
-
-    // Daily breakdown for selected env
-    const dailyData = useMemo(
-        () => computeDailyBreakdown(filteredTickets, selectedEnv, days),
-        [filteredTickets, selectedEnv, days]
+    const chartNowMs = useMemo(
+        () => Date.now(),
+        [liveTick, dateFrom, dateTo, ticketsForCharts, monitoringSettings]
     );
 
-    // Products visible in chart
-    const visibleProducts = activeProducts.length > 0 ? activeProducts : productsInEnv;
+    const environments = useMemo(
+        () => [...new Set(ticketsForCharts.map((t) => normalizedTicketEnv(t)))].sort(),
+        [ticketsForCharts]
+    );
 
-    // Summary metrics
-    const summary = useMemo(() => {
-        const envTickets = filteredTickets.filter(
-            (t) => (t.environment || '') === selectedEnv || (t.environment || '').replace(/_/g, ' ') === selectedEnv
-        );
-        const totalH = dailyData.reduce((s, d) => s + d.totalHours, 0);
-        const activeDays = dailyData.filter((d) => d.totalHours > 0).length;
-        const uptimePct = days.length > 0 ? Math.round((activeDays / days.length) * 100) : 0;
-        const activeNow = envTickets.filter(
-            (t) => ![TICKET_STATUS.COMPLETED, TICKET_STATUS.CLOSED, TICKET_STATUS.REJECTED].includes(t.status)
-        ).length;
-        return { totalH: totalH.toFixed(1), activeDays, uptimePct, activeNow, envTotal: envTickets.length };
-    }, [dailyData, filteredTickets, selectedEnv, days]);
-
-    const toggleProduct = (p) => {
-        setActiveProducts((prev) =>
-            prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]
-        );
-    };
+    const productMetricsByEnv = useMemo(() => {
+        const out = {};
+        environments.forEach((env) => {
+            const productsInEnv = [
+                ...new Set(
+                    ticketsForCharts
+                        .filter((t) => matchEnvTicket(t, env))
+                        .map((t) => normalizedTicketProduct(t))
+                ),
+            ].sort();
+            const m = {};
+            productsInEnv.forEach((p) => {
+                m[p] = {
+                    running: isProductRunningDisplayed(toggleMetaByPair, ticketsForCharts, env, p),
+                    source: runningMetricSource(toggleMetaByPair, env, p),
+                };
+            });
+            out[env] = m;
+        });
+        return out;
+    }, [environments, ticketsForCharts, toggleMetaByPair]);
 
     const showAdmin = isAdmin || isDevOps;
 
     return (
         <div className="em-root">
-            {/* ── Header ── */}
             <div className="em-header">
                 <div className="em-header-left">
                     <div className="em-header-icon">
                         <Activity size={22} />
                     </div>
                     <div>
-                        <h2 className="em-header-title">Environment Monitoring</h2>
-                        <p className="em-header-sub">Uptime &amp; activity by environment and product</p>
+                        <h2 className="em-header-title">{isUser ? 'Analytics' : 'Environment monitoring'}</h2>
+                        <p className="em-header-sub">
+                            {isUser
+                                ? 'Each environment has its own chart. Colors match products (legend + bars). Hover a day for hours and live Running / Stopped.'
+                                : 'Running / Stopped are manual (from click time until you change). Auto follows tickets only. Bar colors = products; tooltips include hours and live status.'}
+                        </p>
                     </div>
                 </div>
                 <div className="em-header-controls">
-                    {/* Environment selector */}
-                    <div className="em-env-select-wrap">
-                        <span className="em-env-dot" style={{ background: getEnvColor(selectedEnv) }} />
-                        <select
-                            className="em-env-select"
-                            value={selectedEnv}
-                            onChange={(e) => { setSelectedEnv(e.target.value); setActiveProducts([]); }}
-                        >
-                            {allEnvs.length === 0 && <option value="">No environments</option>}
-                            {allEnvs.map((e) => <option key={e} value={e}>{e}</option>)}
-                        </select>
-                        <ChevronDown size={14} className="em-select-chev" />
-                    </div>
-
-                    {/* Date range */}
                     <div className="em-date-range">
                         <Calendar size={14} style={{ color: '#64748b' }} />
+                        <span className="em-date-label">From</span>
                         <input type="date" className="em-date-input" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
                         <span style={{ color: '#94a3b8', fontSize: 12 }}>–</span>
+                        <span className="em-date-label">To</span>
                         <input type="date" className="em-date-input" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
                     </div>
                 </div>
             </div>
 
-            {/* ── Tab bar (devops/admin gets extra tabs) ── */}
             {showAdmin && (
                 <div className="em-tabs">
-                    <button className={`em-tab ${activeTab === 'activity' ? 'active' : ''}`} onClick={() => setActiveTab('activity')}>
+                    <button type="button" className={`em-tab ${activeTab === 'activity' ? 'active' : ''}`} onClick={() => setActiveTab('activity')}>
                         <BarChart3 size={14} /> Activity
                     </button>
-                    <button className={`em-tab ${activeTab === 'infra' ? 'active' : ''}`} onClick={() => setActiveTab('infra')}>
+                    <button type="button" className={`em-tab ${activeTab === 'infra' ? 'active' : ''}`} onClick={() => setActiveTab('infra')}>
                         <Server size={14} /> Infrastructure
                     </button>
-                    <button className={`em-tab ${activeTab === 'metrics' ? 'active' : ''}`} onClick={() => setActiveTab('metrics')}>
-                        <Zap size={14} /> Full Metrics
+                    <button type="button" className={`em-tab ${activeTab === 'display' ? 'active' : ''}`} onClick={() => setActiveTab('display')}>
+                        <SlidersHorizontal size={14} /> Charts & live status
                     </button>
                     {isAdmin && (
-                        <button className={`em-tab ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => setActiveTab('admin')}>
-                            <Edit2 size={14} /> Admin Edit
+                        <button type="button" className={`em-tab ${activeTab === 'admin' ? 'active' : ''}`} onClick={() => setActiveTab('admin')}>
+                            <Edit2 size={14} /> Admin edit
                         </button>
                     )}
                 </div>
             )}
 
-            {/* ── Main stacked bar chart (Activity / user view) ── */}
-            {(activeTab === 'activity' || !showAdmin) && (
-                <div className="em-chart-card">
-                    <div className="em-chart-card-header">
-                        <div className="em-chart-title">
-                            <BarChart3 size={16} />
-                            Daily Activity — <span style={{ color: getEnvColor(selectedEnv) }}>{selectedEnv || 'All'}</span>
-                            <span className="em-chart-sub">Hours active per product per day (hover for details)</span>
-                        </div>
-                        {/* Legend */}
-                        <div className="em-legend">
-                            {visibleProducts.map((p) => (
-                                <span key={p} className="em-legend-item">
-                                    <span className="em-legend-dot" style={{ background: productColors[p] }} />
-                                    {p}
-                                </span>
-                            ))}
-                        </div>
-                    </div>
-                    {dailyData.length === 0 ? (
-                        <div className="em-empty">No data for the selected range.</div>
-                    ) : (
-                        <StackedBarChart
-                            dailyData={dailyData}
-                            productColors={productColors}
-                            allProducts={visibleProducts}
-                            chartHeight={200}
-                        />
-                    )}
-                </div>
-            )}
-
-            {/* ── Summary cards ── */}
-            <div className="em-sum-row">
-                <SumCard icon={Clock} label="Total Active Hours" value={`${summary.totalH}h`} color="#3b82f6" />
-                <SumCard icon={Globe} label="Active Days" value={summary.activeDays} sub={`of ${days.length} days`} color="#8b5cf6" />
-                <SumCard icon={TrendingUp} label="Uptime" value={`${summary.uptimePct}%`} color="#10b981" />
-                <SumCard icon={Layers} label="Active Tickets" value={summary.activeNow} sub="currently running" color="#f59e0b" />
-                {(isDevOps || isAdmin) && (
-                    <SumCard icon={Activity} label="All Tickets (env)" value={summary.envTotal} color="#0891b2" />
-                )}
-            </div>
-
-            {/* ── Environment → Products map ── */}
             {(activeTab === 'activity' || !showAdmin) && (
                 <>
-                    <div className="em-section-label"><Globe size={14} /> Environments &amp; Products</div>
-                    <EnvProductMap tickets={tickets} productColors={productColors} allProducts={allProducts} />
+                    {environments.length === 0 ? (
+                        <div className="em-chart-card">
+                            <div className="em-empty">
+                                {isUser
+                                    ? 'No product / environment data for this account yet.'
+                                    : 'No data (or everything is hidden under Charts & live status).'}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="em-env-mini-grid">
+                        {environments.map((env) => {
+                            const productsInEnv = [
+                                ...new Set(
+                                    ticketsForCharts
+                                        .filter((t) => matchEnvTicket(t, env))
+                                        .map((t) => normalizedTicketProduct(t))
+                                ),
+                            ].sort();
+                            const dailyData = computeDailyBreakdown(
+                                ticketsForCharts,
+                                env,
+                                days,
+                                toggleMetaByPair,
+                                chartNowMs
+                            );
+                            const hasHours = dailyData.some((d) => d.totalHours > 0);
+                            return (
+                                <div key={env} className="em-chart-card em-mini-env-card">
+                                    <div className="em-mini-env-head">
+                                        <div className="em-mini-env-title-row">
+                                            <span className="em-mini-env-dot" style={{ background: getEnvColor(env) }} />
+                                            <h3 className="em-mini-env-name">{env}</h3>
+                                        </div>
+                                        <p className="em-mini-env-meta">
+                                            {days.length} day{days.length !== 1 ? 's' : ''} · hover a column for per-product hours
+                                        </p>
+                                    </div>
+                                    <div
+                                        className="em-status-strip em-status-strip--compact"
+                                        aria-label="Product up or down in this environment"
+                                    >
+                                        {productsInEnv.map((p) => {
+                                            const up = isProductRunningDisplayed(
+                                                toggleMetaByPair,
+                                                ticketsForCharts,
+                                                env,
+                                                p
+                                            );
+                                            const src = runningMetricSource(toggleMetaByPair, env, p);
+                                            const c = productColors[p] || '#64748b';
+                                            return (
+                                                <span
+                                                    key={p}
+                                                    className={`em-status-pill em-status-pill--product ${up ? 'up' : 'down'}`}
+                                                    title={
+                                                        `${p} in ${env}: ${up ? 'Running' : 'Stopped'}` +
+                                                        (src === 'devops' ? ' (set by DevOps)' : ' (from activity)')
+                                                    }
+                                                >
+                                                    <span className="em-status-prod-dot" style={{ background: c }} />
+                                                    <span className="em-status-prod-name">{p}</span>
+                                                    <span className="em-status-prod-flag">{up ? 'Run' : 'Stop'}</span>
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                    <DailyStackedBarChart
+                                        dailyData={dailyData}
+                                        productOrder={productsInEnv}
+                                        productColors={productColors}
+                                        productMetrics={productMetricsByEnv[env] || {}}
+                                        chartHeight={132}
+                                        barMinWidth={20}
+                                        emptyMsg={
+                                            hasHours
+                                                ? ''
+                                                : 'No hours in this range for this environment.'
+                                        }
+                                    />
+                                    {productsInEnv.length > 0 && (
+                                        <div className="em-env-metrics-footer" aria-label="Live metrics by product">
+                                            {productsInEnv.map((p) => {
+                                                const mm = (productMetricsByEnv[env] || {})[p] || {
+                                                    running: false,
+                                                    source: 'tickets',
+                                                };
+                                                return (
+                                                    <div
+                                                        key={p}
+                                                        className="em-metric-mini"
+                                                        style={{ borderLeftColor: productColors[p] || '#94a3b8' }}
+                                                    >
+                                                        <span className="em-metric-mini-name">{p}</span>
+                                                        <span
+                                                            className={
+                                                                mm.running ? 'em-metric-mini-val on' : 'em-metric-mini-val off'
+                                                            }
+                                                        >
+                                                            {mm.running ? 'Running' : 'Stopped'}
+                                                        </span>
+                                                        <span className="em-metric-mini-src">
+                                                            {mm.source === 'devops' ? 'DevOps' : 'Activity'}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                        </div>
+                    )}
                 </>
             )}
 
-            {/* ── Product filter chips ── */}
-            {(activeTab === 'activity' || !showAdmin) && productsInEnv.length > 0 && (
-                <div className="em-prod-filter">
-                    <span className="em-prod-filter-label">Filter products:</span>
-                    {productsInEnv.map((p) => (
-                        <button
-                            key={p}
-                            className={`em-prod-chip-btn ${activeProducts.includes(p) ? 'active' : ''}`}
-                            style={{
-                                '--chip-color': productColors[p] || '#94a3b8',
-                                background: activeProducts.includes(p) ? `${productColors[p]}22` : undefined,
-                                borderColor: activeProducts.includes(p) ? productColors[p] : undefined,
-                                color: activeProducts.includes(p) ? productColors[p] : undefined,
-                            }}
-                            onClick={() => toggleProduct(p)}
-                        >
-                            <span className="em-chip-dot" style={{ background: productColors[p] }} />
-                            {p}
-                        </button>
-                    ))}
-                    {activeProducts.length > 0 && (
-                        <button className="em-chip-clear" onClick={() => setActiveProducts([])}>
-                            <X size={12} /> Clear
-                        </button>
-                    )}
-                </div>
+            {(activeTab === 'activity' || !showAdmin) && (
+                <>
+                    <div className="em-section-label">
+                        <Globe size={14} /> Environments &amp; products (shown on chart)
+                    </div>
+                    <EnvProductMap tickets={ticketsForCharts} productColors={productColors} />
+                </>
             )}
 
-            {/* ── Infrastructure tab ── */}
             {showAdmin && activeTab === 'infra' && (
                 <div className="em-section-wrap">
-                    <div className="em-section-label"><Server size={14} /> Infrastructure Workload by Product</div>
+                    <div className="em-section-label"><Server size={14} /> Infrastructure workload by product</div>
                     <InfraPanel tickets={tickets} projects={projects} />
                 </div>
             )}
 
-            {/* ── Full metrics tab (devops) ── */}
-            {showAdmin && activeTab === 'metrics' && (
-                <DevOpsMetrics tickets={tickets} devOpsMembers={devOpsMembers} />
+            {showAdmin && activeTab === 'display' && (
+                <MonitoringDisplaySettingsPanel tickets={tickets} onSettingsUpdated={setMonitoringSettings} />
             )}
 
-            {/* ── Admin edit tab ── */}
-            {isAdmin && activeTab === 'admin' && (
-                <AdminEditPanel tickets={tickets} projects={projects} />
-            )}
+            {isAdmin && activeTab === 'admin' && <AdminEditPanel tickets={tickets} projects={projects} />}
         </div>
     );
 };

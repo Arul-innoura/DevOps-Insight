@@ -90,7 +90,7 @@ import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
-import { useTheme } from "../../services/ThemeContext";
+import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
 
@@ -782,7 +782,6 @@ const StatusTimelineView = ({ devOpsMembers, timelineStatusColors }) => {
 
 export const AdminDashboard = () => {
     const { instance, accounts } = useMsal();
-    const { theme, setTheme, themes } = useTheme();
     const { addToast } = useToast();
     
     const account = accounts[0];
@@ -1619,28 +1618,7 @@ export const AdminDashboard = () => {
                                         Theme
                                     </span>
                                 </div>
-                                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
-                                    {themes.map((t) => (
-                                        <button
-                                            key={t}
-                                            onClick={() => setTheme(t)}
-                                            style={{
-                                                padding: '0.5rem 1.25rem',
-                                                borderRadius: 8,
-                                                border: theme === t ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
-                                                background: theme === t ? 'var(--accent-light)' : 'var(--card-bg)',
-                                                color: 'var(--text-main)',
-                                                fontWeight: theme === t ? 600 : 400,
-                                                cursor: 'pointer',
-                                                textTransform: 'capitalize',
-                                                fontSize: '0.875rem',
-                                                transition: 'all 0.2s ease'
-                                            }}
-                                        >
-                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : t === 'retro' ? '🕹️ Retro' : '🎬 DevOps'}
-                                        </button>
-                                    ))}
-                                </div>
+                                <ThemePickerRow />
                             </div>
                         </div>
                     </div>

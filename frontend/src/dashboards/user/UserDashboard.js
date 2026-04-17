@@ -53,7 +53,7 @@ import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
 import TicketSearchBar from "../../components/TicketSearchBar";
-import { useTheme } from "../../services/ThemeContext";
+import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
 
@@ -62,8 +62,7 @@ const USER_SIDEBAR_NAV_DEFAULTS = { workspace: true, system: true, account: true
 export const UserDashboard = () => {
     const { instance, accounts } = useMsal();
     const toast = useToast();
-    const { theme, setTheme, themes } = useTheme();
-    
+
     const account = accounts[0];
     const userName = account?.name || "Standard User";
     const idClaims = account?.idTokenClaims || {};
@@ -591,10 +590,10 @@ export const UserDashboard = () => {
                                 <span className="breadcrumb-separator">/</span>
                                 <span className="breadcrumb-current">My Requests</span>
                             </div>
-                            <h1 style={{ fontSize: '1.75rem', fontWeight: '700', color: '#111827', marginTop: '8px' }}>
+                            <h1 style={{ fontSize: '1.75rem', fontWeight: '700', color: 'var(--text-main)', marginTop: '8px' }}>
                                 My Requests
                             </h1>
-                            <p style={{ color: '#4b5563', marginTop: '0.5rem', fontSize: '0.9rem' }}>
+                            <p style={{ color: 'var(--text-sub)', marginTop: '0.5rem', fontSize: '0.9rem' }}>
                                 Create and track your infrastructure and deployment requests
                             </p>
                         </div>
@@ -671,12 +670,12 @@ export const UserDashboard = () => {
                                         Email notifications
                                     </span>
                                 </div>
-                                <p style={{ fontSize: "0.8rem", color: "#4b5563", margin: "0 0 1rem" }}>
+                                <p style={{ fontSize: "0.8rem", color: "var(--text-sub)", margin: "0 0 1rem" }}>
                                     Choose which ticket emails you receive on your account address. Project admins can mark
                                     some channels as mandatory in workflow settings; those messages are always sent.
                                 </p>
                                 {emailNotifLoading && (
-                                    <p style={{ color: "#4b5563", fontSize: "0.875rem" }}>Loading preferences…</p>
+                                    <p style={{ color: "var(--text-sub)", fontSize: "0.875rem" }}>Loading preferences…</p>
                                 )}
                                 {!emailNotifLoading && emailNotifPrefs && (
                                     <div style={{ display: "flex", flexDirection: "column", gap: "0.65rem" }}>
@@ -710,7 +709,7 @@ export const UserDashboard = () => {
                                                     gap: 10,
                                                     cursor: emailNotifSaving ? "default" : "pointer",
                                                     fontSize: "0.875rem",
-                                                    color: "#111827"
+                                                    color: "var(--text-main)"
                                                 }}
                                             >
                                                 <input
@@ -747,28 +746,7 @@ export const UserDashboard = () => {
                                         Theme
                                     </span>
                                 </div>
-                                <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.75rem' }}>
-                                    {themes.map((t) => (
-                                        <button
-                                            key={t}
-                                            onClick={() => setTheme(t)}
-                                            style={{
-                                                padding: '0.5rem 1.25rem',
-                                                borderRadius: 8,
-                                                border: theme === t ? '2px solid var(--accent-color)' : '2px solid var(--border-color)',
-                                                background: theme === t ? 'var(--accent-light)' : 'var(--card-bg)',
-                                                color: 'var(--text-main)',
-                                                fontWeight: theme === t ? 600 : 400,
-                                                cursor: 'pointer',
-                                                textTransform: 'capitalize',
-                                                fontSize: '0.875rem',
-                                                transition: 'all 0.2s ease'
-                                            }}
-                                        >
-                                            {t === 'light' ? '☀️ Light' : t === 'dark' ? '🌙 Dark' : t === 'retro' ? '🕹️ Retro' : '🎬 DevOps'}
-                                        </button>
-                                    ))}
-                                </div>
+                                <ThemePickerRow />
                             </div>
                         </div>
                     </div>

@@ -1,5 +1,6 @@
 package com.devops.backend.controller;
 
+import com.devops.backend.dto.MonitoringDisplayUpdateRequest;
 import com.devops.backend.model.analytics.AnalyticsSettings;
 import com.devops.backend.service.AnalyticsSettingsService;
 import lombok.RequiredArgsConstructor;
@@ -32,6 +33,17 @@ public class AnalyticsSettingsController {
             @RequestBody AnalyticsSettings body,
             @AuthenticationPrincipal Jwt jwt) {
         return ResponseEntity.ok(analyticsSettingsService.save(body, extractName(jwt)));
+    }
+
+    @PutMapping("/monitoring-display")
+    @PreAuthorize("hasAnyAuthority('APPROLE_DevOps','APPROLE_Admin')")
+    public ResponseEntity<AnalyticsSettings> putMonitoringDisplay(
+            @RequestBody MonitoringDisplayUpdateRequest body,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok(
+                analyticsSettingsService.saveMonitoringDisplayToggles(
+                        body != null ? body.getMonitoringDisplayToggles() : null,
+                        extractName(jwt)));
     }
 
     private static String extractName(Jwt jwt) {

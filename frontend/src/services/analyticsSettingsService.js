@@ -37,3 +37,10 @@ export const saveAnalyticsSettings = (body) =>
         method: "PUT",
         body: JSON.stringify(body),
     });
+
+/** DevOps / Admin: persist which environment × product rows appear on monitoring charts */
+export const saveMonitoringDisplayToggles = (monitoringDisplayToggles) =>
+    apiRequest("/analytics-settings/monitoring-display", {
+        method: "PUT",
+        body: JSON.stringify({ monitoringDisplayToggles: monitoringDisplayToggles || [] }),
+    });
