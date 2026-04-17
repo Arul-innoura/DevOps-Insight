@@ -144,6 +144,18 @@ export const useRealTimeSync = ({
             }
         };
 
+        const handleTicketDeleted = (data) => {
+            if (didInitialLoad.current && playUpdateSound) {
+                playShortNotification();
+            }
+            const id = data?.id ?? data?.ticketId;
+            const normalized = id != null && id !== "" ? { ...data, id, ticketId: data?.ticketId ?? id } : data;
+            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_DELETED, normalized);
+            if (refreshOnEvents) {
+                debouncedRefresh();
+            }
+        };
+
         const handleCacheInvalidation = (hint) => {
             applyCacheInvalidationHint(hint);
         };
@@ -170,7 +182,7 @@ export const useRealTimeSync = ({
         const handlersByType = new Map([
             [WS_MESSAGE_TYPES.TICKET_CREATED, handleNewTicket],
             [WS_MESSAGE_TYPES.TICKET_UPDATED, handleTicketEvent],
-            [WS_MESSAGE_TYPES.TICKET_DELETED, handleTicketEvent],
+            [WS_MESSAGE_TYPES.TICKET_DELETED, handleTicketDeleted],
             [WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, handleStatusChange],
             [WS_MESSAGE_TYPES.TICKET_ASSIGNED, handleTicketEvent],
             [WS_MESSAGE_TYPES.DEVOPS_UPDATED, handleTicketEvent],

@@ -241,21 +241,26 @@ export const UserDashboard = () => {
                 return;
             }
 
-            if (!data?.id) return;
+            const effectiveId = data?.id ?? data?.ticketId;
+            if (effectiveId == null || effectiveId === "") return;
             const wsPatch = {
                 ...data,
+                id: effectiveId,
                 ...(data?.status ? { status: toDisplayTicketStatus(data.status) } : {})
             };
+            const isSoftRemove =
+                type === "ticket:deleted" ||
+                (type === "ticket:updated" && Boolean(data?.deleted));
 
             setTickets((prev) => {
-                if (type === "ticket:deleted") {
-                    const next = prev.filter((t) => t.id !== data.id);
+                if (isSoftRemove) {
+                    const next = prev.filter((t) => t.id !== effectiveId);
                     if (next.length !== prev.length) {
                         applyFilters(next, filtersRef.current, activeTabRef.current);
                     }
                     return next;
                 }
-                const idx = prev.findIndex((t) => t.id === data.id);
+                const idx = prev.findIndex((t) => t.id === effectiveId);
                 if (idx < 0) return prev;
                 const next = [...prev];
                 next[idx] = { ...next[idx], ...wsPatch };
@@ -264,8 +269,8 @@ export const UserDashboard = () => {
             });
             setSelectedTicket((prev) => {
                 if (!prev?.id) return prev;
-                if (type === "ticket:deleted" && prev.id === data.id) return null;
-                if (prev.id !== data.id) return prev;
+                if (isSoftRemove && prev.id === effectiveId) return null;
+                if (prev.id !== effectiveId) return prev;
                 return { ...prev, ...wsPatch };
             });
             suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;

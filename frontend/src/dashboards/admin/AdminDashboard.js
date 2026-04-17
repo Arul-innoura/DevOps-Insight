@@ -961,20 +961,25 @@ export const AdminDashboard = () => {
                 return;
             }
 
-            if (!data?.id) return;
+            const effectiveId = data?.id ?? data?.ticketId;
+            if (effectiveId == null || effectiveId === "") return;
             const wsPatch = {
                 ...data,
+                id: effectiveId,
                 ...(data?.status ? { status: toDisplayTicketStatus(data.status) } : {})
             };
+            const isSoftRemove =
+                type === "ticket:deleted" ||
+                (type === "ticket:updated" && Boolean(data?.deleted));
             setTickets((prev) => {
-                if (type === "ticket:deleted") {
-                    const next = prev.filter((t) => t.id !== data.id);
+                if (isSoftRemove) {
+                    const next = prev.filter((t) => t.id !== effectiveId);
                     if (next.length !== prev.length) {
                         applyFilters(next, filtersRef.current, activeTabRef.current);
                     }
                     return next;
                 }
-                const idx = prev.findIndex((t) => t.id === data.id);
+                const idx = prev.findIndex((t) => t.id === effectiveId);
                 if (idx < 0) return prev;
                 const next = [...prev];
                 next[idx] = { ...next[idx], ...wsPatch };
@@ -983,15 +988,15 @@ export const AdminDashboard = () => {
             });
             setDeletedTicketsList((prev) => {
                 if (!Array.isArray(prev) || prev.length === 0) return prev;
-                if (type === "ticket:deleted") {
-                    const existing = prev.some((t) => t.id === data.id);
+                if (isSoftRemove) {
+                    const existing = prev.some((t) => t.id === effectiveId);
                     if (existing) return prev;
-                    return [{ ...data, ...wsPatch }, ...prev];
+                    return [{ ...data, ...wsPatch, id: effectiveId }, ...prev];
                 }
-                const idx = prev.findIndex((t) => t.id === data.id);
+                const idx = prev.findIndex((t) => t.id === effectiveId);
                 if (idx < 0) return prev;
                 if (type === "ticket:created") {
-                    return prev.filter((t) => t.id !== data.id);
+                    return prev.filter((t) => t.id !== effectiveId);
                 }
                 const next = [...prev];
                 next[idx] = { ...next[idx], ...wsPatch };
@@ -999,8 +1004,8 @@ export const AdminDashboard = () => {
             });
             setSelectedTicket((prev) => {
                 if (!prev?.id) return prev;
-                if (type === "ticket:deleted" && prev.id === data.id) return null;
-                if (prev.id !== data.id) return prev;
+                if (isSoftRemove && prev.id === effectiveId) return null;
+                if (prev.id !== effectiveId) return prev;
                 return { ...prev, ...wsPatch };
             });
             setStats((prev) => {
@@ -1019,7 +1024,7 @@ export const AdminDashboard = () => {
                         inProgress: status === TICKET_STATUS.IN_PROGRESS ? delta("inProgress", 1) : Number(prev.inProgress || 0)
                     };
                 }
-                if (type === "ticket:deleted") {
+                if (isSoftRemove) {
                     return { ...prev, total: delta("total", -1) };
                 }
                 return prev;
@@ -1207,11 +1212,16 @@ export const AdminDashboard = () => {
         try {
             setActionLoading("Moving ticket to recycle bin...");
             await deleteTicket(ticketId);
+            setTickets((prev) => {
+                const next = prev.filter((t) => t.id !== ticketId);
+                applyFilters(next, filtersRef.current, activeTabRef.current);
+                return next;
+            });
+            setSelectedTicket((prev) => (prev?.id === ticketId ? null : prev));
             await loadTickets(true);
             if (viewMode === "deletedTickets") {
                 await loadDeletedTickets();
             }
-            setSelectedTicket(null);
         } catch (error) {
             alert(`Error: ${error.message}`);
         } finally {

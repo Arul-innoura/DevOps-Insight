@@ -66,6 +66,7 @@ public class WebSocketEventService {
         map.put("assignedTo", ticket.getAssignedTo());
         map.put("requestedBy", ticket.getRequestedBy());
         map.put("updatedAt", ticket.getUpdatedAt() != null ? ticket.getUpdatedAt().toString() : null);
+        map.put("deleted", ticket.isDeleted());
         return map;
     }
 
