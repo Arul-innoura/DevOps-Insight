@@ -1798,7 +1798,7 @@ export const TicketDetailsModal = ({
     };
 
     return (
-        <div className="modal-overlay" onClick={onClose}>
+        <div className="modal-overlay jdm-modal-overlay" onClick={onClose}>
             <div className="jdm-modal" onClick={e => e.stopPropagation()}>
 
                 {/* ── Header ── */}
@@ -2159,6 +2159,7 @@ export const TicketDetailsModal = ({
                                     rows={3}
                                 />
 
+                                <div className="jdm-note-attach-zone">
                                 {/* File picker */}
                                 <input
                                     ref={noteFileInputRef}
@@ -2184,7 +2185,7 @@ export const TicketDetailsModal = ({
 
                                 {/* Pending / uploaded files list */}
                                 {pendingFiles.length > 0 && (
-                                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                                         {pendingFiles.map((f, idx) => (
                                             <div
                                                 key={idx}
@@ -2227,10 +2228,11 @@ export const TicketDetailsModal = ({
                                         ))}
                                     </div>
                                 )}
+                                </div>
 
                                 <button
-                                    className="jdm-btn-primary"
-                                    style={{ marginTop: 12, alignSelf: 'flex-start' }}
+                                    type="button"
+                                    className="jdm-btn-primary jdm-note-send-btn"
                                     onClick={handleAddNote}
                                     disabled={!note.trim() || isAnyUploading}
                                 >
@@ -2336,7 +2338,7 @@ export const TicketDetailsModal = ({
                 </div>
             </div>
             {showApprovalEditor && (
-                <div className="modal-overlay" onClick={() => setShowApprovalEditor(false)}>
+                <div className="modal-overlay jdm-modal-overlay" onClick={() => setShowApprovalEditor(false)}>
                     <div className="modal-content" style={{ maxWidth: 620 }} onClick={(e) => e.stopPropagation()}>
                         <div className="modal-header">
                             <h2>Request Note</h2>
@@ -2821,7 +2823,7 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             window.setTimeout(() => {
                 onSubmit(ticket);
                 onClose();
-            }, 640);
+            }, 880);
         } catch (err) {
             setError(err.message);
         } finally {

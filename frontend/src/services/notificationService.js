@@ -8,6 +8,8 @@ let audioContext = null;
 let lastPlayedAt = {};
 let soundEnabled = true;
 let volumeLevel = 0.72; // 0-1 scale (default audible in typical offices)
+/** Spoken “Hi, {name}” greeting after dashboard load (Web Speech API). */
+let greetingTtsEnabled = true;
 
 /** Per-event toggles (real-time sounds). Preview / UI tests bypass these. */
 const DEFAULT_SOUND_CATEGORIES = {
@@ -128,6 +130,7 @@ export const loadSoundPreferences = () => {
         const prefs = JSON.parse(localStorage.getItem(SOUND_PREFS_KEY) || '{}');
         soundEnabled = prefs.enabled !== false;
         volumeLevel = typeof prefs.volume === "number" ? prefs.volume : 0.72;
+        greetingTtsEnabled = prefs.greetingTts !== false;
         soundCategories = {
             ...DEFAULT_SOUND_CATEGORIES,
             ...(typeof prefs.categories === "object" && prefs.categories !== null ? prefs.categories : {})
@@ -156,6 +159,7 @@ export const saveSoundPreferences = (prefs) => {
         localStorage.setItem(SOUND_PREFS_KEY, JSON.stringify(updated));
         if (typeof prefs.enabled === "boolean") soundEnabled = prefs.enabled;
         if (typeof prefs.volume === "number") volumeLevel = prefs.volume;
+        if (typeof prefs.greetingTts === "boolean") greetingTtsEnabled = prefs.greetingTts;
     } catch (e) {
         console.warn('[NotificationService] Failed to save preferences:', e);
     }
@@ -181,8 +185,17 @@ export const setVolume = (volume) => {
 export const getSoundSettings = () => ({
     enabled: soundEnabled,
     volume: volumeLevel,
+    greetingTts: greetingTtsEnabled,
     categories: { ...soundCategories }
 });
+
+/** @param {boolean} enabled */
+export const setGreetingTtsEnabled = (enabled) => {
+    saveSoundPreferences({ greetingTts: !!enabled });
+};
+
+export const getGreetingTtsEnabled = () => greetingTtsEnabled;
+
 export const getSoundEnabled = () => soundEnabled;
 export const getVolume = () => volumeLevel;
 

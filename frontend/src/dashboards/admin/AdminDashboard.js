@@ -84,9 +84,8 @@ import {
     playShortNotification, 
     playSuccessNotification,
     setSoundEnabled,
-    getSoundEnabled,
     setVolume,
-    getVolume
+    getSoundSettings
 } from "../../services/notificationService";
 import ProjectWorkflowEditor from "./ProjectWorkflowEditor";
 import ActivityLogsView from "./ActivityLogsView";
@@ -99,6 +98,7 @@ import DashboardProfilePage from "../../components/DashboardProfilePage";
 import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
+import { usePostInitialLoadHiTts } from "../../hooks/usePostInitialLoadHiTts";
 
 const ADMIN_SIDEBAR_NAV_DEFAULTS = { operations: true, configuration: true, account: true };
 
@@ -823,17 +823,17 @@ export const AdminDashboard = () => {
     const [ticketSearch, setTicketSearch] = useState({ query: "", remote: null, loading: false });
     const [ticketDataVersion, setTicketDataVersion] = useState(0);
     const ticketSearchRef = useRef(ticketSearch);
-    const [soundSettings, setSoundSettings] = useState({
-        enabled: getSoundEnabled(),
-        volume: getVolume()
-    });
+    const [soundSettings, setSoundSettings] = useState(getSoundSettings);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("admin", ADMIN_SIDEBAR_NAV_DEFAULTS);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
+    usePostInitialLoadHiTts(isInitialLoading, userName, userEmail, soundSettings.greetingTts !== false);
     const isLoadingRef = useRef(false);
     const filtersRef = useRef(filters);
     const activeTabRef = useRef(activeTab);
     const viewModeRef = useRef(viewMode);
     const suppressDataChangeRefreshUntilRef = useRef(0);
+    /** When a silent refresh was skipped because a load was already in flight, run one after it finishes (avoids stale list overwriting a delete). */
+    const pendingSilentTicketsRefreshRef = useRef(false);
     
     // Real-time connection status
     const { isConnected } = useConnectionStatus();
@@ -871,7 +871,10 @@ export const AdminDashboard = () => {
     };
 
     const loadTickets = useCallback(async (silent = false) => {
-        if (isLoadingRef.current) return;
+        if (isLoadingRef.current) {
+            if (silent) pendingSilentTicketsRefreshRef.current = true;
+            return;
+        }
         isLoadingRef.current = true;
         if (!silent) setIsSyncing(true);
         try {
@@ -905,6 +908,10 @@ export const AdminDashboard = () => {
         } finally {
             isLoadingRef.current = false;
             if (!silent) setIsSyncing(false);
+            if (pendingSilentTicketsRefreshRef.current) {
+                pendingSilentTicketsRefreshRef.current = false;
+                void loadTickets(true);
+            }
         }
     }, []);
 
@@ -1012,14 +1019,14 @@ export const AdminDashboard = () => {
             const assigneePatch = wsPatchHasMeaningfulAssignee(wsPatch);
             setTickets((prev) => {
                 if (isSoftRemove) {
-                    const next = prev.filter((t) => t.id !== effectiveId);
+                    const next = prev.filter((t) => String(t.id) !== String(effectiveId));
                     if (next.length !== prev.length) {
                         applyFilters(next, filtersRef.current, activeTabRef.current);
                     }
                     return next;
                 }
                 if (type === "ticket:created") {
-                    const existingCreateIdx = prev.findIndex((t) => t.id === effectiveId);
+                    const existingCreateIdx = prev.findIndex((t) => String(t.id) === String(effectiveId));
                     if (existingCreateIdx < 0) {
                         const row = mapIncomingTicketRow({ ...payload, ...wsPatch, id: effectiveId });
                         if (!row?.id) return prev;
@@ -1028,7 +1035,7 @@ export const AdminDashboard = () => {
                         return next;
                     }
                 }
-                const idx = prev.findIndex((t) => t.id === effectiveId);
+                const idx = prev.findIndex((t) => String(t.id) === String(effectiveId));
                 if (idx < 0) return prev;
                 const existingUpdatedMs = prev[idx]?.updatedAt ? new Date(prev[idx].updatedAt).getTime() : NaN;
                 const stale =
@@ -1046,14 +1053,14 @@ export const AdminDashboard = () => {
             setDeletedTicketsList((prev) => {
                 if (!Array.isArray(prev) || prev.length === 0) return prev;
                 if (isSoftRemove) {
-                    const existing = prev.some((t) => t.id === effectiveId);
+                    const existing = prev.some((t) => String(t.id) === String(effectiveId));
                     if (existing) return prev;
                     return [{ ...data, ...wsPatch, id: effectiveId }, ...prev];
                 }
-                const idx = prev.findIndex((t) => t.id === effectiveId);
+                const idx = prev.findIndex((t) => String(t.id) === String(effectiveId));
                 if (idx < 0) return prev;
                 if (type === "ticket:created") {
-                    return prev.filter((t) => t.id !== effectiveId);
+                    return prev.filter((t) => String(t.id) !== String(effectiveId));
                 }
                 const next = [...prev];
                 next[idx] = { ...next[idx], ...wsPatch };
@@ -1061,8 +1068,8 @@ export const AdminDashboard = () => {
             });
             setSelectedTicket((prev) => {
                 if (!prev?.id) return prev;
-                if (isSoftRemove && prev.id === effectiveId) return null;
-                if (prev.id !== effectiveId) return prev;
+                if (isSoftRemove && String(prev.id) === String(effectiveId)) return null;
+                if (String(prev.id) !== String(effectiveId)) return prev;
                 const existingUpdatedMs = prev?.updatedAt ? new Date(prev.updatedAt).getTime() : NaN;
                 const staleSel =
                     !Number.isNaN(incomingUpdatedMs) &&
@@ -1231,7 +1238,7 @@ export const AdminDashboard = () => {
         try {
             setActionLoading("Updating ticket status...");
             await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes, meta);
-            await loadTickets();
+            await loadTickets(true);
             if (newStatus === TICKET_STATUS.CLOSED) {
                 launchPaperCelebration();
             }
@@ -1250,7 +1257,7 @@ export const AdminDashboard = () => {
         try {
             setActionLoading("Adding ticket note...");
             await addTicketNote(ticketId, { name: userName, email: userEmail }, notes, attachments);
-            await loadTickets();
+            await loadTickets(true);
             
             if (selectedTicket && selectedTicket.id === ticketId) {
                 const updatedTicket = (await getAllTickets({ force: true })).find(t => t.id === ticketId);
@@ -1275,11 +1282,11 @@ export const AdminDashboard = () => {
             setActionLoading("Moving ticket to recycle bin...");
             await deleteTicket(ticketId);
             setTickets((prev) => {
-                const next = prev.filter((t) => t.id !== ticketId);
+                const next = prev.filter((t) => String(t.id) !== String(ticketId));
                 applyFilters(next, filtersRef.current, activeTabRef.current);
                 return next;
             });
-            setSelectedTicket((prev) => (prev?.id === ticketId ? null : prev));
+            setSelectedTicket((prev) => (prev?.id != null && String(prev.id) === String(ticketId) ? null : prev));
             await loadTickets(true);
             if (viewMode === "deletedTickets") {
                 await loadDeletedTickets();
@@ -1439,7 +1446,7 @@ export const AdminDashboard = () => {
     
 
 
-    if (isInitialLoading) return <LoadingScreen role="admin" />;
+    if (isInitialLoading) return <LoadingScreen role="admin" userName={userName} />;
 
     return (
         <div className="dashboard-layout admin-dashboard">

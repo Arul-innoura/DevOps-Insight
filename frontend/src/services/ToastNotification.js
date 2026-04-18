@@ -3,7 +3,7 @@
  * Inspired by Slack, Microsoft Teams, and Jira notifications
  */
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback } from 'react';
 import { X, CheckCircle, AlertTriangle, XCircle, Info, Bell } from 'lucide-react';
 import { playNotification, NOTIFICATION_TYPES, primeAudioContext } from './notificationService';
 
@@ -16,6 +16,8 @@ export const TOAST_TYPES = {
     DEFAULT: 'default'
 };
 
+const MAX_TOASTS = 8;
+
 // Toast context
 const ToastContext = createContext(null);
 
@@ -24,6 +26,17 @@ const ToastContext = createContext(null);
  */
 export const ToastProvider = ({ children }) => {
     const [toasts, setToasts] = useState([]);
+
+    const removeToast = useCallback((id) => {
+        setToasts(prev => prev.map(toast =>
+            toast.id === id ? { ...toast, exiting: true } : toast
+        ));
+
+        // Actually remove after animation
+        setTimeout(() => {
+            setToasts(prev => prev.filter(toast => toast.id !== id));
+        }, 300);
+    }, []);
 
     const addToast = useCallback(({
         type = TOAST_TYPES.DEFAULT,
@@ -56,9 +69,12 @@ export const ToastProvider = ({ children }) => {
             createdAt: Date.now()
         };
 
-        setToasts(prev => [...prev, toast]);
+        setToasts((prev) => {
+            const next = [...prev, toast];
+            return next.length > MAX_TOASTS ? next.slice(-MAX_TOASTS) : next;
+        });
 
-        // Auto-remove after duration
+        // Auto-remove after duration (0 / negative = sticky until dismissed)
         if (duration > 0) {
             setTimeout(() => {
                 removeToast(id);
@@ -66,18 +82,7 @@ export const ToastProvider = ({ children }) => {
         }
 
         return id;
-    }, []);
-
-    const removeToast = useCallback((id) => {
-        setToasts(prev => prev.map(toast =>
-            toast.id === id ? { ...toast, exiting: true } : toast
-        ));
-
-        // Actually remove after animation
-        setTimeout(() => {
-            setToasts(prev => prev.filter(toast => toast.id !== id));
-        }, 300);
-    }, []);
+    }, [removeToast]);
 
     const clearAll = useCallback(() => {
         setToasts(prev => prev.map(toast => ({ ...toast, exiting: true })));
@@ -127,7 +132,13 @@ const ToastContainer = ({ toasts, onRemove }) => {
     if (toasts.length === 0) return null;
 
     return (
-        <div className="toast-container">
+        <div
+            className="toast-container"
+            role="region"
+            aria-live="polite"
+            aria-relevant="additions text"
+            aria-label="Notifications"
+        >
             {toasts.map(toast => (
                 <Toast key={toast.id} toast={toast} onRemove={onRemove} />
             ))}
@@ -170,7 +181,7 @@ const Toast = ({ toast, onRemove }) => {
                 <X size={16} />
             </button>
             {duration > 0 && (
-                <div className="toast-progress">
+                <div className="toast-progress" aria-hidden="true">
                     <div 
                         className="toast-progress-bar" 
                         style={{ animationDuration: `${duration}ms` }}

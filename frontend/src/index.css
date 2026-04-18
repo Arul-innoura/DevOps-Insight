@@ -772,6 +772,16 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   background: linear-gradient(165deg, #f8fafc 0%, #eef2ff 42%, #f0f9ff 100%);
   position: relative;
   overflow: hidden;
+  /* Native controls follow light styling inside login (pairs with html.login-route-active) */
+  color-scheme: light only;
+}
+
+/* While Login route is mounted — browsers use dark form styling when app theme is dark */
+html.login-route-active {
+  color-scheme: light !important;
+}
+html.login-route-active .login-page {
+  color-scheme: light only;
 }
 
 .login-page-backdrop {
@@ -1032,7 +1042,8 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   border-radius: 4px;
   font-size: 0.9rem;
   box-sizing: border-box;
-  background: #fff;
+  background: #ffffff !important;
+  background-color: #ffffff !important;
   color: #111827;
   font-family: inherit;
 }
@@ -1041,6 +1052,25 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   outline: 2px solid #006096;
   outline-offset: 0;
   border-color: #006096;
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+}
+
+/* Chrome/Safari autofill otherwise paints yellow/blue over login dummy fields */
+.login-page .login-jenkins-input:-webkit-autofill,
+.login-page .login-jenkins-input:-webkit-autofill:hover,
+.login-page .login-jenkins-input:-webkit-autofill:focus,
+.login-page .login-jenkins-input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-text-fill-color: #111827 !important;
+  caret-color: #111827;
+  border: 1px solid #c5ccd4 !important;
+}
+.login-page .login-jenkins-input:-webkit-autofill:focus {
+  border-color: #006096 !important;
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  box-shadow: 0 0 0 1000px #ffffff inset !important;
 }
 
 .login-jenkins-btn {
@@ -1211,6 +1241,36 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   color: #6b7280;
   text-align: center;
   line-height: 1.45;
+}
+
+.login-session-expired-banner {
+  margin: 0 0 1rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  text-align: left;
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+.login-session-expired-dismiss {
+  margin-left: auto;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid rgba(146, 64, 14, 0.35);
+  border-radius: 6px;
+  background: #fff;
+  color: #92400e;
+  cursor: pointer;
+}
+.login-session-expired-dismiss:hover {
+  background: #fef3c7;
 }
 
 .login-top-brand {
@@ -4310,10 +4370,10 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   max-width: 800px;
 }
 
-/* Postcard “posted away” after successful submit */
+/* Postcard “posted away” after successful submit — transform/opacity only (no filter blur = smooth) */
 .create-ticket-modal.create-ticket-modal--postcard-send {
   pointer-events: none;
-  animation: postcardSent 0.64s cubic-bezier(0.33, 1, 0.32, 1) forwards;
+  animation: postcardSent 0.88s cubic-bezier(0.34, 1.02, 0.32, 1) forwards;
   transform-origin: 50% 42%;
   will-change: transform, opacity;
 }
@@ -4322,16 +4382,14 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   0% {
     transform: translate3d(0, 0, 0) rotate(0deg) scale(1);
     opacity: 1;
-    filter: drop-shadow(0 12px 28px rgba(15, 23, 42, 0.12));
   }
-  35% {
-    transform: translate3d(6px, -10px, 0) rotate(-2.5deg) scale(1.02);
+  40% {
+    transform: translate3d(8px, -12px, 0) rotate(-3deg) scale(1.03);
     opacity: 1;
   }
   100% {
-    transform: translate3d(min(18vw, 120px), -38vh, 0) rotate(7deg) scale(0.52);
+    transform: translate3d(min(22vw, 140px), -40vh, 0) rotate(9deg) scale(0.45);
     opacity: 0;
-    filter: blur(1px) drop-shadow(0 4px 12px rgba(15, 23, 42, 0.08));
   }
 }
 
@@ -6284,11 +6342,11 @@ p { line-height: var(--line-height-relaxed); color: var(--text-sub); }
   position: fixed;
   top: 20px;
   right: 20px;
-  z-index: 10000;
+  z-index: 100050;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-width: 400px;
+  max-width: min(400px, calc(100vw - 2.5rem));
   pointer-events: none;
 }
 
@@ -14561,6 +14619,68 @@ select,
 }
 [data-theme="dark"] input::placeholder,
 [data-theme="dark"] textarea::placeholder         { color: #8b9cb5; opacity: 1; }
+
+/* Create ticket / routing: TO · CC · BCC chip fields (container was hard-coded white) */
+[data-theme="dark"] .cc-email-chips {
+  background: #0d1117 !important;
+  border-color: #30363d !important;
+}
+[data-theme="dark"] .cc-email-chips:focus-within {
+  border-color: #38bdf8 !important;
+  box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.18) !important;
+}
+[data-theme="dark"] .cc-email-text-input {
+  color: #e6edf3 !important;
+}
+[data-theme="dark"] .cc-email-text-input::placeholder {
+  color: #8b9cb5 !important;
+  opacity: 1;
+}
+[data-theme="dark"] .cc-email-chip {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #79c0ff;
+}
+[data-theme="dark"] .chip-remove {
+  background: rgba(88, 166, 255, 0.18);
+  color: #79c0ff;
+}
+[data-theme="dark"] .chip-remove:hover {
+  background: #da3633;
+  color: #fff;
+}
+[data-theme="dark"] .cc-email-chip-locked {
+  background: rgba(139, 92, 246, 0.14);
+  border-color: rgba(167, 139, 250, 0.4);
+  color: #c4b5fd;
+}
+[data-theme="dark"] .cc-email-suggestions {
+  background: #161b22 !important;
+  border-color: #30363d !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45) !important;
+}
+[data-theme="dark"] .cc-email-suggestion {
+  color: #e6edf3;
+}
+[data-theme="dark"] .cc-email-suggestion:hover {
+  background: #1c2128 !important;
+  color: #79c0ff !important;
+}
+[data-theme="dark"] .cc-email-suggestion:not(:last-child) {
+  border-bottom-color: #21262d;
+}
+[data-theme="dark"] .cc-email-input-no-add .cc-email-text-input {
+  color: #8b949e !important;
+}
+[data-theme="dark"] .cc-email-field-lock-badge {
+  color: #a78bfa;
+  opacity: 0.55;
+}
+[data-theme="dark"] .cc-email-input-no-add:hover .cc-email-chips-no-add {
+  border-color: rgba(167, 139, 250, 0.45) !important;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.12) !important;
+}
+
 [data-theme="dark"] select,
 [data-theme="dark"] .jdm-select,
 [data-theme="dark"] .filter-group select          {
@@ -15580,6 +15700,21 @@ select,
 
 /* ══ TICKET DETAILS MODAL ══════════════════════════════════════════ */
 .modal-overlay { background: rgba(17, 24, 39, 0.38); backdrop-filter: blur(2px); }
+/*
+ * Full-screen backdrop-filter makes Safari / WebKit on macOS sample the entire page each frame.
+ * Ticket detail overlays use a slightly stronger opaque scrim instead (same UX, far lower GPU cost).
+ */
+.modal-overlay.jdm-modal-overlay {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: rgba(17, 24, 39, 0.55) !important;
+}
+[data-theme="dark"] .modal-overlay.jdm-modal-overlay {
+  background: rgba(0, 0, 0, 0.72) !important;
+}
+[data-theme="devops"] .modal-overlay.jdm-modal-overlay {
+  background: rgba(0, 0, 0, 0.78) !important;
+}
 .jdm-modal {
     background: #ffffff;
     border: 1px solid #e5e7eb;
@@ -17267,6 +17402,7 @@ button.btn-primary {
 /* Floating background orbs */
 .sl-orb {
   position: absolute;
+  z-index: 1;
   border-radius: 50%;
   opacity: 0.18;
   filter: blur(60px);
@@ -17311,89 +17447,81 @@ button.btn-primary {
   color: #0f172a;
 }
 
-/* Stars */
-.sl-stars {
+/* Soft animated mesh behind content (no backdrop-filter — stays fast on Safari) */
+.sl-mesh {
   position: absolute;
-  inset: -40px -60px;
+  inset: 0;
   pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 85% 55% at 15% 25%, rgba(99, 102, 241, 0.14), transparent 55%),
+    radial-gradient(ellipse 70% 50% at 88% 78%, rgba(56, 189, 248, 0.12), transparent 50%),
+    radial-gradient(ellipse 50% 40% at 50% 95%, rgba(167, 139, 250, 0.08), transparent 45%);
+  animation: slMeshDrift 10s ease-in-out infinite alternate;
 }
-.sl-star {
-  position: absolute;
-  border-radius: 50%;
-  background: #fff;
-  opacity: 0;
-}
-.sl-star-1 { width: 3px; height: 3px; animation: slTwinkle 2.4s 0.0s ease-in-out infinite; }
-.sl-star-2 { width: 2px; height: 2px; animation: slTwinkle 1.8s 0.4s ease-in-out infinite; }
-.sl-star-3 { width: 4px; height: 4px; animation: slTwinkle 2.8s 0.8s ease-in-out infinite; }
-.sl-star-4 { width: 2px; height: 2px; animation: slTwinkle 2.1s 1.2s ease-in-out infinite; }
-
-.sl-screen--light .sl-star {
-  background: #64748b;
-}
-.sl-stars .sl-star:nth-child(1)  { top:  8%; left: 12%; }
-.sl-stars .sl-star:nth-child(2)  { top: 22%; left: 85%; }
-.sl-stars .sl-star:nth-child(3)  { top: 60%; left:  5%; }
-.sl-stars .sl-star:nth-child(4)  { top: 75%; left: 90%; }
-.sl-stars .sl-star:nth-child(5)  { top: 15%; left: 45%; }
-.sl-stars .sl-star:nth-child(6)  { top: 82%; left: 35%; }
-.sl-stars .sl-star:nth-child(7)  { top: 40%; left: 92%; }
-.sl-stars .sl-star:nth-child(8)  { top: 50%; left:  8%; }
-.sl-stars .sl-star:nth-child(9)  { top:  5%; left: 70%; }
-.sl-stars .sl-star:nth-child(10) { top: 90%; left: 60%; }
-.sl-stars .sl-star:nth-child(11) { top: 35%; left: 25%; }
-.sl-stars .sl-star:nth-child(12) { top: 65%; left: 75%; }
-@keyframes slTwinkle {
-  0%, 100% { opacity: 0; transform: scale(0.5); }
-  50%       { opacity: 0.85; transform: scale(1.2); }
+@keyframes slMeshDrift {
+  from { opacity: 0.85; transform: scale(1) translate(0, 0); }
+  to   { opacity: 1;   transform: scale(1.03) translate(-12px, 8px); }
 }
 
-/* Rocket scene */
-.sl-rocket-scene {
+/* Orbiting rings + core — CSS only, lightweight */
+.sl-hero {
   position: relative;
-  width: 120px;
-  height: 120px;
-  margin-bottom: 8px;
+  width: 132px;
+  height: 132px;
+  margin: 0 auto 18px;
 }
-.sl-rocket-wrap {
+.sl-hero-rings {
   position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  animation: slRocketFloat 2s ease-in-out infinite alternate;
+  inset: 0;
+  display: grid;
+  place-items: center;
 }
-.sl-rocket {
-  font-size: 3.25rem;
-  display: block;
-  filter: drop-shadow(0 0 18px rgba(96,165,250,0.7));
-  transform: rotate(-45deg);
+.sl-hero-ring {
+  grid-area: 1 / 1;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: rgba(37, 99, 235, 0.55);
+  border-right-color: rgba(99, 102, 241, 0.25);
+  animation: slRingSpin linear infinite;
 }
-
-.sl-screen--light .sl-rocket {
-  filter: drop-shadow(0 4px 12px rgba(37, 99, 235, 0.35));
+.sl-hero-ring--a {
+  width: 124px;
+  height: 124px;
+  animation-duration: 4.2s;
 }
-.sl-exhaust {
-  display: flex;
-  gap: 2px;
-  margin-top: -6px;
-  transform: rotate(-45deg);
+.sl-hero-ring--b {
+  width: 96px;
+  height: 96px;
+  animation-duration: 3.1s;
+  animation-direction: reverse;
+  border-top-color: rgba(14, 165, 233, 0.5);
+  border-right-color: rgba(129, 140, 248, 0.2);
 }
-.sl-flame {
-  font-size: 1rem;
-  animation: slFlame 0.35s ease-in-out infinite alternate;
+.sl-hero-ring--c {
+  width: 68px;
+  height: 68px;
+  animation-duration: 2.2s;
+  border-top-color: rgba(79, 70, 229, 0.45);
+  border-right-color: rgba(56, 189, 248, 0.18);
 }
-.sl-f1 { animation-delay: 0.00s; }
-.sl-f2 { animation-delay: 0.12s; font-size: 0.75rem; }
-.sl-f3 { animation-delay: 0.24s; font-size: 0.6rem; }
-@keyframes slRocketFloat {
-  from { transform: translate(-50%, -50%) translateY(0px);   }
-  to   { transform: translate(-50%, -50%) translateY(-12px); }
+@keyframes slRingSpin {
+  to { transform: rotate(360deg); }
 }
-@keyframes slFlame {
-  from { opacity: 0.5; transform: scale(0.85); }
-  to   { opacity: 1.0; transform: scale(1.15); }
+.sl-hero-core {
+  grid-area: 1 / 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #60a5fa 0%, #6366f1 45%, #38bdf8 100%);
+  box-shadow:
+    0 0 0 6px rgba(99, 102, 241, 0.12),
+    0 8px 24px rgba(37, 99, 235, 0.35);
+  animation: slCorePulse 1.8s ease-in-out infinite;
+}
+@keyframes slCorePulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50%      { transform: scale(1.08); opacity: 0.92; }
 }
 
 /* Brand */
@@ -17402,27 +17530,13 @@ button.btn-primary {
   flex-direction: column;
   align-items: center;
   gap: 6px;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
-.sl-brand--with-eye {
-  flex-direction: row;
-  align-items: center;
-  gap: 12px;
+.sl-brand--wordmark {
+  gap: 10px;
 }
 
-.sl-brand--with-eye .sl-brand-titles {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-}
-
-.sl-brand-eye .shipit-eye-icon__svg {
-  width: 44px;
-  height: auto;
-  max-height: 52px;
-}
 .sl-brand-text {
   font-size: 2.25rem;
   font-weight: 800;
@@ -17441,6 +17555,43 @@ button.btn-primary {
   -webkit-text-fill-color: transparent;
   background-clip: text;
   filter: none;
+}
+
+.sl-brand-text--shimmer {
+  background-size: 200% auto;
+  animation: slShimmer 3.5s ease-in-out infinite;
+}
+.sl-screen--light .sl-brand-text.sl-brand-text--shimmer {
+  background: linear-gradient(
+    100deg,
+    #0f172a 0%,
+    #2563eb 22%,
+    #6366f1 45%,
+    #0ea5e9 68%,
+    #0f172a 100%
+  );
+  background-size: 240% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+@keyframes slShimmer {
+  0%, 100% { background-position: 0% 50%; }
+  50%      { background-position: 100% 50%; }
+}
+
+.sl-greeting {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #334155;
+  margin: 0 0 12px;
+  letter-spacing: 0.01em;
+}
+.sl-greeting-name {
+  background: linear-gradient(90deg, #2563eb, #7c3aed, #0ea5e9);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .sl-brand-badge {
@@ -17473,6 +17624,8 @@ button.btn-primary {
 
 .sl-screen--light .sl-msg {
   color: #64748b;
+  max-width: min(420px, 90vw);
+  line-height: 1.45;
 }
 @keyframes slFadeMsg {
   from { opacity: 0; transform: translateY(4px); }
@@ -17481,7 +17634,7 @@ button.btn-primary {
 
 /* Progress bar */
 .sl-progress-track {
-  width: 180px;
+  width: min(280px, 78vw);
   height: 3px;
   background: rgba(255,255,255,0.15);
   border-radius: 99px;
@@ -20187,4 +20340,90 @@ button.btn-primary {
 
 [data-theme="dark"] .toast-progress-bar {
   background: #58a6ff;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Login route — dummy email/password: always light fields (all themes;
+   loaded last so retro/devops/dark global input rules do not win)
+   ═══════════════════════════════════════════════════════════════ */
+html[data-theme] .login-page input.login-jenkins-input,
+html[data-theme="dark"] .login-page input.login-jenkins-input,
+html[data-theme="light"] .login-page input.login-jenkins-input,
+html[data-theme="retro"] .login-page input.login-jenkins-input,
+html[data-theme="devops"] .login-page input.login-jenkins-input {
+  background-color: #ffffff !important;
+  border: 1px solid #c5ccd4 !important;
+  color: #111827 !important;
+  box-shadow: none !important;
+}
+html[data-theme] .login-page input.login-jenkins-input:hover,
+html[data-theme="dark"] .login-page input.login-jenkins-input:hover,
+html[data-theme="light"] .login-page input.login-jenkins-input:hover,
+html[data-theme="retro"] .login-page input.login-jenkins-input:hover,
+html[data-theme="devops"] .login-page input.login-jenkins-input:hover {
+  border-color: #94a3b8 !important;
+}
+html[data-theme] .login-page input.login-jenkins-input:focus,
+html[data-theme="dark"] .login-page input.login-jenkins-input:focus,
+html[data-theme="light"] .login-page input.login-jenkins-input:focus,
+html[data-theme="retro"] .login-page input.login-jenkins-input:focus,
+html[data-theme="devops"] .login-page input.login-jenkins-input:focus {
+  background-color: #ffffff !important;
+  border-color: #006096 !important;
+  box-shadow: none !important;
+  outline: 2px solid #006096 !important;
+  outline-offset: 0 !important;
+}
+html[data-theme] .login-page input.login-jenkins-input::placeholder,
+html[data-theme="dark"] .login-page input.login-jenkins-input::placeholder,
+html[data-theme="light"] .login-page input.login-jenkins-input::placeholder,
+html[data-theme="retro"] .login-page input.login-jenkins-input::placeholder,
+html[data-theme="devops"] .login-page input.login-jenkins-input::placeholder {
+  color: #6b7280 !important;
+  opacity: 1 !important;
+}
+
+html[data-theme] .login-page input.login-jenkins-input:-webkit-autofill,
+html[data-theme="dark"] .login-page input.login-jenkins-input:-webkit-autofill,
+html[data-theme="light"] .login-page input.login-jenkins-input:-webkit-autofill,
+html[data-theme="retro"] .login-page input.login-jenkins-input:-webkit-autofill,
+html[data-theme="devops"] .login-page input.login-jenkins-input:-webkit-autofill,
+html[data-theme] .login-page input.login-jenkins-input:-webkit-autofill:focus,
+html[data-theme="dark"] .login-page input.login-jenkins-input:-webkit-autofill:focus,
+html[data-theme="light"] .login-page input.login-jenkins-input:-webkit-autofill:focus,
+html[data-theme="retro"] .login-page input.login-jenkins-input:-webkit-autofill:focus,
+html[data-theme="devops"] .login-page input.login-jenkins-input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-text-fill-color: #111827 !important;
+  caret-color: #111827;
+}
+
+/* Final override while /login is open — works even if global dark input rules win */
+html.login-route-active .login-page input.login-jenkins-input,
+html.login-route-active .login-page input.login-jenkins-input:hover,
+html.login-route-active .login-page input.login-jenkins-input:focus {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+  border: 1px solid #c5ccd4 !important;
+  box-shadow: none !important;
+}
+html.login-route-active .login-page input.login-jenkins-input:focus {
+  border-color: #006096 !important;
+  outline: 2px solid #006096 !important;
+  outline-offset: 0 !important;
+}
+
+/* Ticket detail — Add Note: space between attach zone and Send button */
+.jdm-note-attach-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 2px;
+}
+.jdm-note-send-btn {
+  margin-top: 14px;
+  align-self: flex-start;
 }

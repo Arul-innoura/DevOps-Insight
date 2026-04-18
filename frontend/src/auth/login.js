@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 import { useMsal, useIsAuthenticated } from "@azure/msal-react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { loginRequest } from "./authConfig";
 import { ShipItEyeIcon } from "../components/ShipItEyeIcon";
 
@@ -36,6 +36,8 @@ const Login = () => {
     const { instance, inProgress } = useMsal();
     const isAuthenticated = useIsAuthenticated();
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
+    const sessionExpired = searchParams.get("session") === "expired";
 
     useEffect(() => {
         const previousTitle = document.title;
@@ -43,6 +45,12 @@ const Login = () => {
         return () => {
             document.title = previousTitle;
         };
+    }, []);
+
+    /* Dark app theme can paint native inputs black; force light controls while /login is mounted */
+    useEffect(() => {
+        document.documentElement.classList.add("login-route-active");
+        return () => document.documentElement.classList.remove("login-route-active");
     }, []);
 
     // Redirect authenticated users
@@ -138,6 +146,24 @@ const Login = () => {
                             <p className="login-video-split-tagline">
                                 DevOps workspace — use your Microsoft work account to sign in.
                             </p>
+
+                            {sessionExpired && (
+                                <div className="login-session-expired-banner" role="alert">
+                                    Your session expired or your sign-in is no longer valid. Please sign in with Microsoft
+                                    again to continue.
+                                    <button
+                                        type="button"
+                                        className="login-session-expired-dismiss"
+                                        onClick={() => {
+                                            const next = new URLSearchParams(searchParams);
+                                            next.delete("session");
+                                            setSearchParams(next, { replace: true });
+                                        }}
+                                    >
+                                        Dismiss
+                                    </button>
+                                </div>
+                            )}
 
                             <div className="login-jenkins-showcase" aria-hidden="true">
                                 <input

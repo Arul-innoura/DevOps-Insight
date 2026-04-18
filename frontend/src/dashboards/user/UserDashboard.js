@@ -11,6 +11,7 @@ import {
     Wifi,
     WifiOff,
     Bell,
+    Mic,
     Mail,
     Settings,
     TrendingUp,
@@ -46,7 +47,13 @@ import {
 } from "../../services/ticketService";
 import { useRealTimeSync, useConnectionStatus } from "../../services/useRealTimeSync";
 import { useToast, SyncIndicator } from "../../services/ToastNotification";
-import { getSoundSettings, setSoundEnabled, setVolume } from "../../services/notificationService";
+import {
+    getSoundSettings,
+    setSoundEnabled,
+    setVolume,
+    setGreetingTtsEnabled,
+    getGreetingTtsEnabled
+} from "../../services/notificationService";
 import { launchPaperCelebration } from "../../utils/celebrationFx";
 import {
     getMyNotificationPreferences,
@@ -61,6 +68,7 @@ import TicketSearchBar from "../../components/TicketSearchBar";
 import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
+import { usePostInitialLoadHiTts } from "../../hooks/usePostInitialLoadHiTts";
 
 const USER_SIDEBAR_NAV_DEFAULTS = { workspace: true, system: true, account: true };
 
@@ -110,7 +118,9 @@ export const UserDashboard = () => {
     const [emailNotifSaving, setEmailNotifSaving] = useState(false);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("user", USER_SIDEBAR_NAV_DEFAULTS);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
+    usePostInitialLoadHiTts(isInitialLoading, userName, userEmail, soundSettings.greetingTts !== false);
     const suppressDataChangeRefreshUntilRef = useRef(0);
+    const pendingSilentTicketsRefreshRef = useRef(false);
     
     const isLoadingRef = useRef(false);
     const filtersRef = useRef(filters);
@@ -178,7 +188,10 @@ export const UserDashboard = () => {
     };
 
     const loadTickets = useCallback(async (silent = false) => {
-        if (isLoadingRef.current) return;
+        if (isLoadingRef.current) {
+            if (silent) pendingSilentTicketsRefreshRef.current = true;
+            return;
+        }
         isLoadingRef.current = true;
         // Only show syncing on initial load, not on real-time updates
         if (!silent) setIsSyncing(true);
@@ -197,13 +210,17 @@ export const UserDashboard = () => {
             setTicketDataVersion((v) => v + 1);
             setSelectedTicket((prev) => {
                 if (!prev?.id) return prev;
-                const latest = userTickets.find((t) => t.id === prev.id);
+                const latest = userTickets.find((t) => String(t.id) === String(prev.id));
                 return latest || prev;
             });
             setIsInitialLoading(false);
         } finally {
             isLoadingRef.current = false;
             if (!silent) setIsSyncing(false);
+            if (pendingSilentTicketsRefreshRef.current) {
+                pendingSilentTicketsRefreshRef.current = false;
+                void loadTickets(true);
+            }
         }
     }, [userEmail]);
 
@@ -292,14 +309,14 @@ export const UserDashboard = () => {
 
             setTickets((prev) => {
                 if (isSoftRemove) {
-                    const next = prev.filter((t) => t.id !== effectiveId);
+                    const next = prev.filter((t) => String(t.id) !== String(effectiveId));
                     if (next.length !== prev.length) {
                         applyFilters(next, filtersRef.current, activeTabRef.current);
                     }
                     return next;
                 }
                 if (type === "ticket:created") {
-                    const existingCreateIdx = prev.findIndex((t) => t.id === effectiveId);
+                    const existingCreateIdx = prev.findIndex((t) => String(t.id) === String(effectiveId));
                     if (existingCreateIdx < 0) {
                         const row = mapIncomingTicketRow({ ...payload, ...wsPatch, id: effectiveId });
                         if (!row?.id) return prev;
@@ -308,7 +325,7 @@ export const UserDashboard = () => {
                         return next;
                     }
                 }
-                const idx = prev.findIndex((t) => t.id === effectiveId);
+                const idx = prev.findIndex((t) => String(t.id) === String(effectiveId));
                 if (idx < 0) return prev;
                 const existingUpdatedMs = prev[idx]?.updatedAt ? new Date(prev[idx].updatedAt).getTime() : NaN;
                 const stale =
@@ -325,8 +342,8 @@ export const UserDashboard = () => {
             });
             setSelectedTicket((prev) => {
                 if (!prev?.id) return prev;
-                if (isSoftRemove && prev.id === effectiveId) return null;
-                if (prev.id !== effectiveId) return prev;
+                if (isSoftRemove && String(prev.id) === String(effectiveId)) return null;
+                if (String(prev.id) !== String(effectiveId)) return prev;
                 const existingUpdatedMs = prev?.updatedAt ? new Date(prev.updatedAt).getTime() : NaN;
                 const staleSel =
                     !Number.isNaN(incomingUpdatedMs) &&
@@ -445,7 +462,11 @@ export const UserDashboard = () => {
         toast.success('Request Created', 'Your request has been submitted successfully');
         if (createdTicket && typeof createdTicket === "object") {
             setTickets((prev) => {
-                const next = [createdTicket, ...prev];
+                const id = createdTicket.id;
+                const rest = id != null && id !== ""
+                    ? prev.filter((t) => String(t.id) !== String(id))
+                    : prev;
+                const next = [createdTicket, ...rest];
                 applyFilters(next, filtersRef.current, activeTabRef.current);
                 return next;
             });
@@ -468,7 +489,7 @@ export const UserDashboard = () => {
                 { name: userName, email: userEmail },
                 isActive
             );
-            await loadTickets();
+            await loadTickets(true);
             setSelectedTicket(null); // Close the modal
             toast.success('Status Updated', isActive ? 'Ticket activated' : 'Ticket marked inactive');
         } catch (error) {
@@ -482,7 +503,7 @@ export const UserDashboard = () => {
         try {
             setActionLoading("Adding note...");
             await addTicketNote(ticketId, { name: userName, email: userEmail }, notes, attachments);
-            await loadTickets();
+            await loadTickets(true);
             toast.success("Note Added", "Your note has been added to the ticket log.");
         } catch (error) {
             toast.error("Error", error.message || "Could not add note");
@@ -501,7 +522,7 @@ export const UserDashboard = () => {
                         : "Updating ticket..."
             );
             await updateTicketStatus(ticketId, newStatus, { name: userName, email: userEmail }, notes, meta);
-            await loadTickets();
+            await loadTickets(true);
             if (newStatus === TICKET_STATUS.CLOSED) {
                 launchPaperCelebration();
             }
@@ -535,6 +556,11 @@ export const UserDashboard = () => {
         setVolume(newVolume);
         setSoundSettings({ ...soundSettings, volume: newVolume });
     };
+
+    const handleGreetingTtsToggle = () => {
+        setGreetingTtsEnabled(!getGreetingTtsEnabled());
+        setSoundSettings(getSoundSettings());
+    };
     
     // Calculate stats (including inactive count)
     const stats = {
@@ -549,7 +575,7 @@ export const UserDashboard = () => {
         inProgress: tickets.filter(t => t.status === TICKET_STATUS.IN_PROGRESS).length,
         inactive: tickets.filter(t => t.isActive === false).length
     };
-    if (isInitialLoading) return <LoadingScreen role="user" />;
+    if (isInitialLoading) return <LoadingScreen role="user" userName={userName} />;
 
     return (
         <div className="dashboard-layout">
@@ -733,6 +759,28 @@ export const UserDashboard = () => {
                                         <Bell size={16} />
                                     </div>
                                 )}
+                            </div>
+
+                            <div className="sound-settings" style={{ marginTop: "1.25rem" }}>
+                                <div className="sound-settings-header">
+                                    <span className="sound-settings-title">
+                                        <Mic size={18} style={{ marginRight: 8 }} />
+                                        “Hi” greeting (voice)
+                                    </span>
+                                    <button
+                                        type="button"
+                                        className={`sound-toggle ${soundSettings.greetingTts !== false ? "active" : ""}`}
+                                        onClick={handleGreetingTtsToggle}
+                                        aria-pressed={soundSettings.greetingTts !== false}
+                                        aria-label="Toggle spoken sign-in greeting"
+                                    >
+                                        <span className="sound-toggle-knob" />
+                                    </button>
+                                </div>
+                                <p style={{ fontSize: "0.8rem", color: "var(--text-sub)", margin: "0.5rem 0 0" }}>
+                                    When enabled, you hear a short spoken hello after the dashboard loads. Turn off if you
+                                    prefer a silent start.
+                                </p>
                             </div>
 
                             <div className="sound-settings" style={{ marginTop: "1.5rem" }}>

@@ -10,11 +10,13 @@ import reportWebVitals from './reportWebVitals';
 import { EventType } from "@azure/msal-browser";
 import { MsalProvider } from "@azure/msal-react";
 import { msalInstance, initializeMsal } from "./auth/msalInstance";
+import { resetSessionExpiryDispatchFlag } from "./services/sessionExpiry";
 
 // Add event callback to catch all MSAL events for debugging
 msalInstance.addEventCallback((event) => {
     if (event.eventType === EventType.LOGIN_SUCCESS) {
         console.log("✅ Login successful!", event);
+        resetSessionExpiryDispatchFlag();
     }
     if (event.eventType === EventType.LOGIN_FAILURE || 
         event.eventType === EventType.ACQUIRE_TOKEN_FAILURE) {

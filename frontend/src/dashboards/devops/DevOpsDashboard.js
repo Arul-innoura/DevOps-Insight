@@ -85,9 +85,8 @@ import {
     playSuccessNotification,
     playStatusChangeSound,
     setSoundEnabled,
-    getSoundEnabled,
     setVolume,
-    getVolume
+    getSoundSettings
 } from "../../services/notificationService";
 import { launchPaperCelebration } from "../../utils/celebrationFx";
 import AnalyticsDashboard from "../admin/AnalyticsDashboard";
@@ -99,6 +98,7 @@ import TicketSearchBar from "../../components/TicketSearchBar";
 import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
+import { usePostInitialLoadHiTts } from "../../hooks/usePostInitialLoadHiTts";
 
 const TicketCard = TicketComponentsPkg.TicketCard;
 
@@ -310,12 +310,10 @@ export const DevOpsDashboard = () => {
     const [unassignedPage, setUnassignedPage] = useState(1);
     const UNASSIGNED_PAGE_SIZE = 12;
     const ticketSearchRef = useRef(ticketSearch);
-    const [soundSettings, setSoundSettings] = useState({
-        enabled: getSoundEnabled(),
-        volume: getVolume()
-    });
+    const [soundSettings, setSoundSettings] = useState(getSoundSettings);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("devops", DEVOPS_SIDEBAR_NAV_DEFAULTS);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
+    usePostInitialLoadHiTts(isInitialLoading, userName, userEmail, soundSettings.greetingTts !== false);
     const isLoadingRef = useRef(false);
     const activeSectionRef = useRef(activeSection);
     const requestTabRef = useRef(requestTab);
@@ -347,6 +345,7 @@ export const DevOpsDashboard = () => {
         closed: 0
     });
     const suppressDataChangeRefreshUntilRef = useRef(0);
+    const pendingSilentTicketsRefreshRef = useRef(false);
     
     // Keep ref in sync
     useEffect(() => { activeSectionRef.current = activeSection; }, [activeSection]);
@@ -413,10 +412,11 @@ export const DevOpsDashboard = () => {
 
     const upsertTicketLocally = useCallback((updatedTicket) => {
         if (!updatedTicket?.id) return;
+        const updId = String(updatedTicket.id);
         setTickets((prev) => {
-            const exists = prev.some((t) => t.id === updatedTicket.id);
+            const exists = prev.some((t) => String(t.id) === updId);
             const mergeRow = (t) => {
-                if (t.id !== updatedTicket.id) return t;
+                if (String(t.id) !== updId) return t;
                 const merged = { ...t, ...updatedTicket };
                 const incomingBlank =
                     !String(updatedTicket.assignedTo || "").trim() &&
@@ -435,7 +435,7 @@ export const DevOpsDashboard = () => {
             return next;
         });
         setSelectedTicket((prev) => {
-            if (!prev || prev.id !== updatedTicket.id) return prev;
+            if (!prev || String(prev.id) !== updId) return prev;
             const incomingBlank =
                 !String(updatedTicket.assignedTo || "").trim() &&
                 !String(updatedTicket.assignedToEmail || "").trim();
@@ -458,7 +458,10 @@ export const DevOpsDashboard = () => {
     }, []);
 
     const loadTickets = useCallback(async (silent = false) => {
-        if (isLoadingRef.current) return;
+        if (isLoadingRef.current) {
+            if (silent) pendingSilentTicketsRefreshRef.current = true;
+            return;
+        }
         isLoadingRef.current = true;
         // Only show syncing on initial load or manual refresh
         if (!silent) setIsSyncing(true);
@@ -492,7 +495,7 @@ export const DevOpsDashboard = () => {
             }
             setSelectedTicket((prev) => {
                 if (!prev?.id) return prev;
-                const latest = allTickets.find((t) => t.id === prev.id);
+                const latest = allTickets.find((t) => String(t.id) === String(prev.id));
                 return latest || prev;
             });
         
@@ -504,6 +507,10 @@ export const DevOpsDashboard = () => {
             isLoadingRef.current = false;
             setIsInitialLoading(false);
             if (!silent) setIsSyncing(false);
+            if (pendingSilentTicketsRefreshRef.current) {
+                pendingSilentTicketsRefreshRef.current = false;
+                void loadTickets(true);
+            }
         }
     }, [userEmail, recalcSectionCounts, withTimeoutFallback]);
 
@@ -610,7 +617,7 @@ export const DevOpsDashboard = () => {
 
             setTickets((prev) => {
                 if (isSoftRemove) {
-                    const next = prev.filter((t) => t.id !== effectiveId);
+                    const next = prev.filter((t) => String(t.id) !== String(effectiveId));
                     if (next.length !== prev.length) {
                         recalcSectionCounts(next);
                         if (activeSectionRef.current === "requests") {
@@ -620,7 +627,7 @@ export const DevOpsDashboard = () => {
                     return next;
                 }
                 if (type === "ticket:created") {
-                    const existingCreateIdx = prev.findIndex((t) => t.id === effectiveId);
+                    const existingCreateIdx = prev.findIndex((t) => String(t.id) === String(effectiveId));
                     if (existingCreateIdx < 0) {
                         const row = mapIncomingTicketRow({ ...payload, ...wsPatch, id: effectiveId });
                         if (!row?.id) return prev;
@@ -632,7 +639,7 @@ export const DevOpsDashboard = () => {
                         return next;
                     }
                 }
-                const idx = prev.findIndex((t) => t.id === effectiveId);
+                const idx = prev.findIndex((t) => String(t.id) === String(effectiveId));
                 if (idx < 0) return prev;
                 const existingUpdatedMs = prev[idx]?.updatedAt ? new Date(prev[idx].updatedAt).getTime() : NaN;
                 const stale =
@@ -652,8 +659,8 @@ export const DevOpsDashboard = () => {
             });
             setSelectedTicket((prev) => {
                 if (!prev?.id) return prev;
-                if (isSoftRemove && prev.id === effectiveId) return null;
-                if (prev.id !== effectiveId) return prev;
+                if (isSoftRemove && String(prev.id) === String(effectiveId)) return null;
+                if (String(prev.id) !== String(effectiveId)) return prev;
                 const existingUpdatedMs = prev?.updatedAt ? new Date(prev.updatedAt).getTime() : NaN;
                 const staleSel =
                     !Number.isNaN(incomingUpdatedMs) &&
@@ -893,7 +900,7 @@ export const DevOpsDashboard = () => {
     
     const handleAcceptTicket = async (ticketId) => {
         setTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId
+            String(ticket.id) === String(ticketId)
                 ? {
                     ...ticket,
                     status: TICKET_STATUS.ACCEPTED,
@@ -903,7 +910,7 @@ export const DevOpsDashboard = () => {
                 : ticket
         )));
         setFilteredTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId
+            String(ticket.id) === String(ticketId)
                 ? {
                     ...ticket,
                     status: TICKET_STATUS.ACCEPTED,
@@ -925,7 +932,7 @@ export const DevOpsDashboard = () => {
     
     const handleStatusChange = async (ticketId, newStatus, notes, meta = {}) => {
         const patchRow = (ticket) => {
-            if (ticket.id !== ticketId) return ticket;
+            if (String(ticket.id) !== String(ticketId)) return ticket;
             const selfAssign = optimisticSelfAssignOnStatusChange(ticket, newStatus, userName, userEmail, meta);
             return {
                 ...ticket,
@@ -977,10 +984,10 @@ export const DevOpsDashboard = () => {
     
     const handleForwardTicket = async (ticketId, newAssignee, newAssigneeEmail, forwardNote) => {
         setTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId ? { ...ticket, assignedTo: newAssignee } : ticket
+            String(ticket.id) === String(ticketId) ? { ...ticket, assignedTo: newAssignee } : ticket
         )));
         setFilteredTickets((prev) => prev.map((ticket) => (
-            ticket.id === ticketId ? { ...ticket, assignedTo: newAssignee } : ticket
+            String(ticket.id) === String(ticketId) ? { ...ticket, assignedTo: newAssignee } : ticket
         )));
         try {
             setActionLoading("Forwarding ticket...");
@@ -1180,7 +1187,7 @@ export const DevOpsDashboard = () => {
         </div>
     );
 
-    if (isInitialLoading) return <LoadingScreen role="devops" />;
+    if (isInitialLoading) return <LoadingScreen role="devops" userName={userName} />;
 
     return (
         <div className={`dashboard-layout devops-dashboard ${isReadOnly ? 'is-readonly' : ''}`}>

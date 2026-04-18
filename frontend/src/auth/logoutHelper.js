@@ -35,9 +35,22 @@ function clearMsalSessionStorage() {
  * Does not call Microsoft's logout redirect (avoids "pick account to sign out" UI).
  * Note: the user may still have an active Microsoft SSO cookie; the app session is cleared here.
  */
-export async function signOutRedirectToLogin(msalInstance) {
+/**
+ * @param {import("@azure/msal-browser").PublicClientApplication} msalInstance
+ * @param {{ sessionExpired?: boolean }} [opts] - when true, append ?session=expired so the login page can explain
+ */
+export async function signOutRedirectToLogin(msalInstance, opts = {}) {
     clearTokenCache();
-    const target = getPostLogoutLoginUrl();
+    let target = getPostLogoutLoginUrl();
+    if (opts.sessionExpired) {
+        try {
+            const u = new URL(target, window.location.href);
+            u.searchParams.set("session", "expired");
+            target = `${u.pathname}${u.search}${u.hash}`;
+        } catch {
+            target = target.includes("?") ? `${target}&session=expired` : `${target}?session=expired`;
+        }
+    }
 
     try {
         await initializeMsal();
@@ -57,3 +70,4 @@ export async function signOutRedirectToLogin(msalInstance) {
     clearMsalSessionStorage();
     window.location.replace(target);
 }
+

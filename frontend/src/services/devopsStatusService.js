@@ -2,41 +2,10 @@
  * DevOps Status Service — Handles heartbeat and status timeline API calls.
  */
 
-import { resolveApiBaseUrl } from "../config/apiBaseUrl";
-import { getAuthToken as getCachedAuthToken, refreshAuthToken } from "./tokenCacheService";
+import { getAuthToken as getCachedAuthToken } from "./tokenCacheService";
+import { apiRequest, getApiBaseUrl } from "./apiClient";
 
-const API_BASE_URL = resolveApiBaseUrl();
-
-const apiRequest = async (endpoint, options = {}) => {
-    const doRequest = async (token) => {
-        const headers = {
-            "Content-Type": "application/json",
-            ...(options.headers || {})
-        };
-        if (token) headers.Authorization = `Bearer ${token}`;
-        return fetch(`${API_BASE_URL}${endpoint}`, { ...options, headers });
-    };
-
-    let token = await getCachedAuthToken();
-    let response = await doRequest(token);
-
-    // Retry once on 401 with force refresh token
-    if (response.status === 401) {
-        token = await refreshAuthToken();
-        if (token) {
-            response = await doRequest(token);
-        }
-    }
-
-    if (!response.ok) {
-        const contentType = response.headers.get("content-type") || "";
-        const isJson = contentType.toLowerCase().includes("application/json");
-        const errorData = isJson ? await response.json().catch(() => ({})) : {};
-        throw new Error(errorData.message || `API request failed: ${response.status}`);
-    }
-    if (response.status === 204) return null;
-    return response.json();
-};
+const API_BASE_URL = getApiBaseUrl();
 
 /**
  * Send a heartbeat to the backend to prove the user is still active.

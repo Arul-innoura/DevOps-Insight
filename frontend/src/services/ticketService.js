@@ -2,8 +2,7 @@
  * Ticket Service - backend API backed service.
  */
 
-import { resolveApiBaseUrl } from "../config/apiBaseUrl";
-import { getAuthToken, refreshAuthToken } from "./tokenCacheService";
+import { apiRequest, fetchWithAuth } from "./apiClient";
 
 // Request Types
 export const REQUEST_TYPES = {
@@ -547,7 +546,6 @@ export const getDynamicAllowedTransitions = (ticket) => {
     return STATUS_TRANSITIONS[status] || [];
 };
 
-const API_BASE_URL = resolveApiBaseUrl();
 const INACTIVE_STATUS = "INACTIVE";
 const DATA_CHANGE_EVENT = "portal-data-changed";
 const DATA_BROADCAST_NAME = "portal-data-changed";
@@ -804,53 +802,6 @@ const toDisplayAvailability = (apiAvailability) => {
     return map[normalized] || DEVOPS_AVAILABILITY_STATUS.OFFLINE;
 };
 
-// authToken is now handled by tokenCacheService
-
-const apiRequest = async (endpoint, options = {}) => {
-    const doRequest = async (token) => {
-        const headers = {
-            "Content-Type": "application/json",
-            ...(options.headers || {})
-        };
-        if (token) headers.Authorization = `Bearer ${token}`;
-        return fetch(`${API_BASE_URL}${endpoint}`, { ...options, headers });
-    };
-
-    // Use centralized token cache
-    let token = await getAuthToken();
-    let response = await doRequest(token);
-
-    // Retry once on 401 with force refresh token
-    if (response.status === 401) {
-        token = await refreshAuthToken();
-        if (token) {
-            response = await doRequest(token);
-        }
-    }
-    
-    const contentType = response.headers.get("content-type") || "";
-    const isJson = contentType.toLowerCase().includes("application/json");
-
-    const readErrorPayload = async () => {
-        if (isJson) {
-            return response.json().catch(() => ({}));
-        }
-        const text = await response.text().catch(() => "");
-        return { message: text ? `Unexpected response from server: ${text.slice(0, 120)}` : "Unexpected response from server" };
-    };
-
-    if (!response.ok) {
-        const errorData = await readErrorPayload();
-        throw new Error(errorData.message || `API request failed: ${response.status}`);
-    }
-    if (response.status === 204) return null;
-    if (!isJson) {
-        const text = await response.text().catch(() => "");
-        throw new Error(`Expected JSON response but received non-JSON content from ${endpoint}. ${text.slice(0, 120)}`);
-    }
-    return response.json();
-};
-
 const mapTimeline = (timeline = []) =>
     (timeline || []).map((entry) => ({
         ...entry,
@@ -1072,19 +1023,10 @@ export const uploadNoteAttachments = async (ticketId, files) => {
     const formData = new FormData();
     Array.from(files).forEach((file) => formData.append("files", file));
 
-    let token = await getAuthToken();
-    const doUpload = async (t) =>
-        fetch(`${API_BASE_URL}/tickets/${ticketId}/attachments/upload`, {
-            method: "POST",
-            headers: t ? { Authorization: `Bearer ${t}` } : {},
-            body: formData
-        });
-
-    let response = await doUpload(token);
-    if (response.status === 401) {
-        token = await refreshAuthToken();
-        if (token) response = await doUpload(token);
-    }
+    const response = await fetchWithAuth(`/tickets/${ticketId}/attachments/upload`, {
+        method: "POST",
+        body: formData
+    });
 
     if (!response.ok) {
         const msg = await response.text().catch(() => "Upload error");
