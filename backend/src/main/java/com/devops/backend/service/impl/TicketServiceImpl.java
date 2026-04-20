@@ -1543,6 +1543,20 @@ public class TicketServiceImpl implements TicketService {
 
     private TicketResponse mapToResponse(Ticket ticket) {
         WorkflowConfiguration wf = workflowSnapshotService.parse(ticket.getWorkflowSnapshotJson());
+        // Snapshots taken when per-env workflow rows had empty approvalLevels omitted default approvers.
+        // Re-resolve from current project settings so the UI matches admin "Default" + env override rules.
+        if (ticket.getProjectId() != null && ticket.getRequestType() != null
+                && countConfiguredApproverSlots(wf) == 0) {
+            String envKey = ticket.getEnvironmentLabel();
+            if (envKey == null || envKey.isBlank()) {
+                envKey = ticket.getEnvironment() != null ? ticket.getEnvironment().getDisplayName() : null;
+            }
+            WorkflowConfiguration resolved = projectWorkflowService.resolveEffective(
+                    ticket.getProjectId(), ticket.getRequestType(), envKey);
+            if (countConfiguredApproverSlots(resolved) > 0 && resolved.getApprovalLevels() != null) {
+                wf.setApprovalLevels(new ArrayList<>(resolved.getApprovalLevels()));
+            }
+        }
         if (ticket.getProjectId() != null && ticket.getEnvironment() != null) {
             InfrastructureConfig merged = projectWorkflowService.mergeInfrastructureForEnvironment(
                     ticket.getProjectId(), ticket.getEnvironment(), wf.getInfrastructure());

@@ -3,10 +3,12 @@ package com.devops.backend.service.impl;
 import com.devops.backend.model.Environment;
 import com.devops.backend.model.ProjectWorkflowSettings;
 import com.devops.backend.model.RequestType;
+import com.devops.backend.model.workflow.ApprovalLevelConfig;
 import com.devops.backend.model.workflow.EmailRoutingConfig;
 import com.devops.backend.model.workflow.InfrastructureConfig;
 import com.devops.backend.model.workflow.NotificationPreferenceConfig;
 import com.devops.backend.model.workflow.RequestTypeWorkflowOverride;
+import com.devops.backend.model.workflow.WorkflowApprover;
 import com.devops.backend.model.workflow.WorkflowConfiguration;
 import com.devops.backend.repository.ProjectWorkflowSettingsRepository;
 import com.devops.backend.service.ProjectWorkflowService;
@@ -124,7 +126,7 @@ public class ProjectWorkflowServiceImpl implements ProjectWorkflowService {
                         .ccMandatory(inheritWhenEmpty(envRouting.getCcMandatory(), baseRouting.getCcMandatory()))
                         .bccMandatory(inheritWhenEmpty(envRouting.getBccMandatory(), baseRouting.getBccMandatory()))
                         .build())
-                .approvalLevels(env.getApprovalLevels() != null ? env.getApprovalLevels() : new ArrayList<>())
+                .approvalLevels(inheritApprovalLevelsWhenEnvHasNone(env.getApprovalLevels(), base))
                 .managers(env.getManagers() != null ? env.getManagers() : new ArrayList<>())
                 .costApprovalRequired(env.isCostApprovalRequired())
                 .costApprovers(env.getCostApprovers() != null ? env.getCostApprovers() : new ArrayList<>())
@@ -140,6 +142,39 @@ public class ProjectWorkflowServiceImpl implements ProjectWorkflowService {
             return new ArrayList<>(preferred);
         }
         return fallback == null ? new ArrayList<>() : new ArrayList<>(fallback);
+    }
+
+    /**
+     * Per-environment workflow rows are often saved with empty approval levels when only infra/routing
+     * was customized. In that case keep the default (or request-type) approval chain so tickets still
+     * show approvers. When the env config defines at least one approver email, use the env list as-is.
+     */
+    private static List<ApprovalLevelConfig> inheritApprovalLevelsWhenEnvHasNone(
+            List<ApprovalLevelConfig> envLevels, WorkflowConfiguration base) {
+        if (hasAnyApproverEmailInLevels(envLevels)) {
+            return new ArrayList<>(envLevels);
+        }
+        if (base != null && base.getApprovalLevels() != null && !base.getApprovalLevels().isEmpty()) {
+            return new ArrayList<>(base.getApprovalLevels());
+        }
+        return envLevels == null ? new ArrayList<>() : new ArrayList<>(envLevels);
+    }
+
+    private static boolean hasAnyApproverEmailInLevels(List<ApprovalLevelConfig> levels) {
+        if (levels == null || levels.isEmpty()) {
+            return false;
+        }
+        for (ApprovalLevelConfig lvl : levels) {
+            if (lvl == null || lvl.getApprovers() == null) {
+                continue;
+            }
+            for (WorkflowApprover a : lvl.getApprovers()) {
+                if (a != null && a.getEmail() != null && !a.getEmail().isBlank()) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     @Override
