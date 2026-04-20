@@ -9,6 +9,7 @@ import com.devops.backend.model.TimelineEntry;
 import com.devops.backend.model.UserNotificationPreferences;
 import com.devops.backend.model.workflow.NotificationPreferenceConfig;
 import com.devops.backend.repository.UserNotificationPreferencesRepository;
+import com.devops.backend.service.EmailConsumerService;
 import com.devops.backend.service.EmailService;
 import com.devops.backend.service.EventPublisherService;
 import com.devops.backend.service.WorkflowSnapshotService;
@@ -36,6 +37,7 @@ public class EmailServiceImpl implements EmailService {
 
     private final QueueClient queueClient;
     private final ObjectMapper objectMapper;
+    private final EmailConsumerService emailConsumerService;
     private final EventPublisherService eventPublisher;
     private final UserNotificationPreferencesRepository userNotificationPreferencesRepository;
     private final WorkflowSnapshotService workflowSnapshotService;
@@ -48,6 +50,10 @@ public class EmailServiceImpl implements EmailService {
 
     @Value("${app.email.enabled:false}")
     private boolean emailEnabled;
+
+    /** When false, SMTP runs in-process (hotfix if Azure Queue consumer never delivers). */
+    @Value("${app.email.send-via-queue:true}")
+    private boolean sendViaQueue;
 
     // Formal grayscale palette
     private static final String PRIMARY_BLUE = "#111111";
@@ -73,6 +79,12 @@ public class EmailServiceImpl implements EmailService {
         if (!emailEnabled) {
             log.info("Email sending disabled. Would send to: {}, CC: {}, Subject: {}",
                     message.getTo(), message.getCc(), message.getSubject());
+            return;
+        }
+
+        if (!sendViaQueue) {
+            log.info("Email send-via-queue=false; sending via direct SMTP to: {}", message.getTo());
+            emailConsumerService.deliverSynchronously(message);
             return;
         }
 

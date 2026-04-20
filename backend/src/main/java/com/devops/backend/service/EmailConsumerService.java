@@ -16,6 +16,8 @@ import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import org.springframework.util.StringUtils;
 
+import java.util.ArrayList;
+
 /**
  * Azure Storage Queue consumer that polls for email messages and sends them.
  * Supports email threading via Message-ID, References, and In-Reply-To headers.
@@ -39,12 +41,37 @@ public class EmailConsumerService {
     @Scheduled(fixedDelay = 3000)
     public void pollEmailQueue() {
         try {
-            Iterable<QueueMessageItem> messages = queueClient.receiveMessages(10);
-            for (QueueMessageItem item : messages) {
+            ArrayList<QueueMessageItem> batch = new ArrayList<>();
+            for (QueueMessageItem item : queueClient.receiveMessages(10)) {
+                batch.add(item);
+            }
+            if (!batch.isEmpty()) {
+                log.info("Email queue: received {} message(s) from Azure Queue", batch.size());
+            }
+            for (QueueMessageItem item : batch) {
                 processQueueMessage(item);
             }
         } catch (Exception e) {
             log.error("Error polling Azure Storage Queue: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Send immediately via SMTP (same as queue consumer). Use when {@code app.email.send-via-queue=false}
+     * or as a fallback if the Azure Queue worker path is misconfigured in production.
+     */
+    public void deliverSynchronously(EmailMessage message) {
+        if (!emailEnabled) {
+            log.info("Email sending disabled. Skipping direct send to: {}", message.getTo());
+            return;
+        }
+        try {
+            sendEmail(message);
+            log.info("Email sent successfully (direct SMTP) to: {}", message.getTo());
+            eventPublisher.publishEmailEvent("SENT", message);
+        } catch (Exception e) {
+            log.error("Failed to send email (direct SMTP) to {}: {}", message.getTo(), e.getMessage(), e);
+            eventPublisher.publishEmailEvent("FAILED", message);
         }
     }
 
