@@ -59,8 +59,8 @@ app:
     from: ${MAIL_FROM:devopsteam@altermanager.encipherhealth.com}
     devops-to: ${DEVOPS_EMAIL:devopsteam@encipherhealth.com}
     enabled: ${EMAIL_ENABLED:true}
-    # false = send SMTP in the API process (use if Azure Queue messages are never consumed)
-    send-via-queue: ${EMAIL_SEND_VIA_QUEUE:true}
+    # Default direct SMTP so mail works without a working Azure Queue consumer. Set EMAIL_SEND_VIA_QUEUE=true for async queue.
+    send-via-queue: ${EMAIL_SEND_VIA_QUEUE:false}
   frontend:
     url: ${FRONTEND_URL:https://shipit.encipherhealth.com}
   trivy:

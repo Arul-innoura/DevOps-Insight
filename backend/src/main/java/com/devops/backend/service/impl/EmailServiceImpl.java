@@ -51,8 +51,8 @@ public class EmailServiceImpl implements EmailService {
     @Value("${app.email.enabled:false}")
     private boolean emailEnabled;
 
-    /** When false, SMTP runs in-process (hotfix if Azure Queue consumer never delivers). */
-    @Value("${app.email.send-via-queue:true}")
+    /** When false (default), SMTP runs in-process. Set true + working Azure Queue for async delivery. */
+    @Value("${app.email.send-via-queue:false}")
     private boolean sendViaQueue;
 
     // Formal grayscale palette
