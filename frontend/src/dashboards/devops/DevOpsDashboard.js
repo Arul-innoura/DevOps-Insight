@@ -98,8 +98,6 @@ import TicketSearchBar from "../../components/TicketSearchBar";
 import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
-import { usePostInitialLoadHiTts } from "../../hooks/usePostInitialLoadHiTts";
-
 const TicketCard = TicketComponentsPkg.TicketCard;
 
 const DEVOPS_SIDEBAR_NAV_DEFAULTS = { team: true, account: true };
@@ -313,7 +311,6 @@ export const DevOpsDashboard = () => {
     const [soundSettings, setSoundSettings] = useState(getSoundSettings);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("devops", DEVOPS_SIDEBAR_NAV_DEFAULTS);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
-    usePostInitialLoadHiTts(isInitialLoading, userName, userEmail, soundSettings.greetingTts !== false);
     const isLoadingRef = useRef(false);
     const activeSectionRef = useRef(activeSection);
     const requestTabRef = useRef(requestTab);

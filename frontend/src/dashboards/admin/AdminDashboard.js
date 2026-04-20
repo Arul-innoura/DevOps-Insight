@@ -98,8 +98,6 @@ import DashboardProfilePage from "../../components/DashboardProfilePage";
 import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
-import { usePostInitialLoadHiTts } from "../../hooks/usePostInitialLoadHiTts";
-
 const ADMIN_SIDEBAR_NAV_DEFAULTS = { operations: true, configuration: true, account: true };
 
 // Status color mapping for timeline visualization
@@ -826,7 +824,6 @@ export const AdminDashboard = () => {
     const [soundSettings, setSoundSettings] = useState(getSoundSettings);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("admin", ADMIN_SIDEBAR_NAV_DEFAULTS);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
-    usePostInitialLoadHiTts(isInitialLoading, userName, userEmail, soundSettings.greetingTts !== false);
     const isLoadingRef = useRef(false);
     const filtersRef = useRef(filters);
     const activeTabRef = useRef(activeTab);

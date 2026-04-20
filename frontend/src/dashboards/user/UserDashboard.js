@@ -11,7 +11,6 @@ import {
     Wifi,
     WifiOff,
     Bell,
-    Mic,
     Mail,
     Settings,
     TrendingUp,
@@ -50,9 +49,7 @@ import { useToast, SyncIndicator } from "../../services/ToastNotification";
 import {
     getSoundSettings,
     setSoundEnabled,
-    setVolume,
-    setGreetingTtsEnabled,
-    getGreetingTtsEnabled
+    setVolume
 } from "../../services/notificationService";
 import { launchPaperCelebration } from "../../utils/celebrationFx";
 import {
@@ -68,8 +65,6 @@ import TicketSearchBar from "../../components/TicketSearchBar";
 import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
-import { usePostInitialLoadHiTts } from "../../hooks/usePostInitialLoadHiTts";
-
 const USER_SIDEBAR_NAV_DEFAULTS = { workspace: true, system: true, account: true };
 
 export const UserDashboard = () => {
@@ -118,7 +113,6 @@ export const UserDashboard = () => {
     const [emailNotifSaving, setEmailNotifSaving] = useState(false);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("user", USER_SIDEBAR_NAV_DEFAULTS);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
-    usePostInitialLoadHiTts(isInitialLoading, userName, userEmail, soundSettings.greetingTts !== false);
     const suppressDataChangeRefreshUntilRef = useRef(0);
     const pendingSilentTicketsRefreshRef = useRef(false);
     
@@ -557,11 +551,6 @@ export const UserDashboard = () => {
         setSoundSettings({ ...soundSettings, volume: newVolume });
     };
 
-    const handleGreetingTtsToggle = () => {
-        setGreetingTtsEnabled(!getGreetingTtsEnabled());
-        setSoundSettings(getSoundSettings());
-    };
-    
     // Calculate stats (including inactive count)
     const stats = {
         total: tickets.length,
@@ -759,28 +748,6 @@ export const UserDashboard = () => {
                                         <Bell size={16} />
                                     </div>
                                 )}
-                            </div>
-
-                            <div className="sound-settings" style={{ marginTop: "1.25rem" }}>
-                                <div className="sound-settings-header">
-                                    <span className="sound-settings-title">
-                                        <Mic size={18} style={{ marginRight: 8 }} />
-                                        “Hi” greeting (voice)
-                                    </span>
-                                    <button
-                                        type="button"
-                                        className={`sound-toggle ${soundSettings.greetingTts !== false ? "active" : ""}`}
-                                        onClick={handleGreetingTtsToggle}
-                                        aria-pressed={soundSettings.greetingTts !== false}
-                                        aria-label="Toggle spoken sign-in greeting"
-                                    >
-                                        <span className="sound-toggle-knob" />
-                                    </button>
-                                </div>
-                                <p style={{ fontSize: "0.8rem", color: "var(--text-sub)", margin: "0.5rem 0 0" }}>
-                                    When enabled, you hear a short spoken hello after the dashboard loads. Turn off if you
-                                    prefer a silent start.
-                                </p>
                             </div>
 
                             <div className="sound-settings" style={{ marginTop: "1.5rem" }}>

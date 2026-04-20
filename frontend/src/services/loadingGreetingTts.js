@@ -1,5 +1,5 @@
 /**
- * Shared first-name parsing + Web Speech "Hi, {name}" for post–initial-load greeting.
+ * Shared first-name parsing for loading UI. (Spoken greeting removed.)
  */
 
 /** First segment of an email local part: "john.doe" / "john_doe" → "john" for greeting */
@@ -24,53 +24,5 @@ export function firstNameFromDisplay(name) {
     return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
-/** Prefer a soft, friendly English voice when the OS exposes several (names vary by platform). */
-function pickWarmGreetingVoice(voices) {
-    if (!voices?.length) return null;
-    const en = voices.filter((v) => /^en(-|$)/i.test(v.lang || ""));
-    const pool = en.length ? en : voices;
-
-    const score = (v) => {
-        const n = (v.name || "").toLowerCase();
-        let s = 0;
-        if (/female|zira|samantha|karen|moira|aria|jenny|hazel|susan|sarah|victoria|nicole|amy|flo|ivy|joanna|kimberly|linda|lisa|emma|olivia|sophie|google.*female|microsoft.*zira|natural.*english.*female/i.test(n)) {
-            s += 12;
-        }
-        if (v.localService) s += 2;
-        if (/neural|natural|premium|enhanced/i.test(n)) s += 1;
-        if (/male|david\b|mark\b|fred\b|daniel\b|alex\b|james\b|brian\b|thomas\b/i.test(n)) s -= 6;
-        return s;
-    };
-
-    return [...pool].sort((a, b) => score(b) - score(a))[0] ?? null;
-}
-
-/** Speak "Hi, {firstName}" using browser text-to-speech (no network). */
-export function speakHiName(firstName) {
-    if (typeof window === "undefined" || !window.speechSynthesis || !firstName) return;
-
-    const run = () => {
-        try {
-            window.speechSynthesis.cancel();
-            const text = `Hi, ${firstName}`;
-            const u = new SpeechSynthesisUtterance(text);
-            // Slightly brighter + softer than default — reads warmer / more “cute” on most engines
-            u.rate = 0.94;
-            u.pitch = 1.12;
-            u.volume = 0.98;
-            const voices = window.speechSynthesis.getVoices();
-            const voice = pickWarmGreetingVoice(voices);
-            if (voice) u.voice = voice;
-            window.speechSynthesis.speak(u);
-        } catch {
-            /* optional feature */
-        }
-    };
-
-    const voices = window.speechSynthesis.getVoices();
-    if (voices && voices.length > 0) {
-        run();
-    } else {
-        window.speechSynthesis.addEventListener("voiceschanged", run, { once: true });
-    }
-}
+/** @deprecated No-op; spoken greeting removed. */
+export function speakHiName(_firstName) {}
