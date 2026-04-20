@@ -7540,6 +7540,7 @@ html.login-route-active .login-page {
   outline: none;
   font-size: 16px;
   color: var(--jira-text);
+  padding: 2px 0;
 }
 
 .quick-search-input::placeholder {
@@ -8401,6 +8402,7 @@ html.login-route-active .login-page {
   outline: none;
   font-size: 14px;
   color: var(--jira-text, #172b4d);
+  padding: 2px 2px;
 }
 
 .ticket-search-input::placeholder {
@@ -8531,7 +8533,7 @@ html.login-route-active .login-page {
 .ticket-filter-search-input {
   width: 100%;
   min-width: 180px;
-  padding: 8px 10px;
+  padding: 9px 11px;
   border-radius: 8px;
   border: 1px solid var(--jira-border, #dfe1e6);
   font-size: 13px;
@@ -9650,6 +9652,7 @@ html.login-route-active .login-page {
   font-size: 0.9rem;
   background: transparent;
   color: #111827;
+  padding: 2px 0;
 }
 
 .dep-search-bar svg {
@@ -11077,7 +11080,7 @@ html.login-route-active .login-page {
 
 .dep-search-input {
   width: 100%;
-  padding: 0.85rem 2.5rem 0.85rem 42px;
+  padding: 0.88rem 2.5rem 0.88rem 42px;
   border: 2px solid #DFE1E6;
   border-radius: 10px;
   font-size: 1rem;
@@ -18423,7 +18426,7 @@ button.btn-primary {
   border: none !important;
   outline: none !important;
   background: transparent !important;
-  padding: 10px 0 !important;
+  padding: 11px 2px !important;
   font-size: 0.875rem !important;
   box-shadow: none !important;
   color: #1e293b;

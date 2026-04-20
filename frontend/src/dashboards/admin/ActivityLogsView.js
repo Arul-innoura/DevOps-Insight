@@ -139,7 +139,7 @@ const ActivityLogsView = () => {
                         placeholder="Search description / entity / user…"
                         value={searchText}
                         onChange={(e) => setSearchText(e.target.value)}
-                        style={inputStyle({ paddingLeft: 30 })}
+                        style={inputStyle({ padding: "7px 11px 7px 30px" })}
                     />
                 </div>
 
