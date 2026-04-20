@@ -69,11 +69,12 @@ public class EmailConsumerService {
             sendEmail(message);
             log.info("Email sent successfully to: {}", message.getTo());
             eventPublisher.publishEmailEvent("SENT", message);
+            deleteMessage(item);
         } catch (Exception e) {
             log.error("Failed to send email to {}: {}", message.getTo(), e.getMessage(), e);
             eventPublisher.publishEmailEvent("FAILED", message);
-        } finally {
-            deleteMessage(item);
+            // Do not delete: Azure Queue will make the message visible again after the visibility
+            // timeout so SMTP can retry. Previously we deleted here and dropped the mail silently.
         }
     }
 
