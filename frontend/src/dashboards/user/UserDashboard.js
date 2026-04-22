@@ -112,6 +112,7 @@ export const UserDashboard = () => {
     const [emailNotifLoading, setEmailNotifLoading] = useState(false);
     const [emailNotifSaving, setEmailNotifSaving] = useState(false);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("user", USER_SIDEBAR_NAV_DEFAULTS);
+    const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
     const suppressDataChangeRefreshUntilRef = useRef(0);
     const pendingSilentTicketsRefreshRef = useRef(false);
@@ -568,8 +569,9 @@ export const UserDashboard = () => {
 
     return (
         <div className="dashboard-layout">
+            {mobileSidebarOpen && <div className="mobile-sidebar-overlay" onClick={() => setMobileSidebarOpen(false)} />}
             {/* Unified ShipIt Sidebar */}
-            <aside className="shipit-sidebar">
+            <aside className={`shipit-sidebar${mobileSidebarOpen ? ' sb-mobile-open' : ''}`}>
                 {/* Brand */}
                 <div className="sb-brand">
                     <div className="sb-brand-icon sb-brand-icon--eye">
@@ -584,7 +586,7 @@ export const UserDashboard = () => {
                 </div>
 
                 {/* Navigation */}
-                <nav className="sb-nav">
+                <nav className="sb-nav" onClick={(e) => { if (e.target.closest('.sb-item')) setMobileSidebarOpen(false); }}>
                     <div className="sb-group">
                         <NavSectionToggle
                             open={navGroups.workspace}
@@ -670,6 +672,9 @@ export const UserDashboard = () => {
 
                 <header className="content-header">
                     <div className="header-top">
+                        <button className="mobile-menu-btn" onClick={() => setMobileSidebarOpen(o => !o)} aria-label="Toggle menu">
+                            <span /><span /><span />
+                        </button>
                         <div>
                             {/* Breadcrumb */}
                             <div className="breadcrumb">

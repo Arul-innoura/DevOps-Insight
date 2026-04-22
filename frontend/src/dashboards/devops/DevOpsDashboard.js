@@ -310,6 +310,7 @@ export const DevOpsDashboard = () => {
     const ticketSearchRef = useRef(ticketSearch);
     const [soundSettings, setSoundSettings] = useState(getSoundSettings);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("devops", DEVOPS_SIDEBAR_NAV_DEFAULTS);
+    const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
     const isLoadingRef = useRef(false);
     const activeSectionRef = useRef(activeSection);
@@ -1189,8 +1190,9 @@ export const DevOpsDashboard = () => {
     return (
         <div className={`dashboard-layout devops-dashboard ${isReadOnly ? 'is-readonly' : ''}`}>
 
+            {mobileSidebarOpen && <div className="mobile-sidebar-overlay" onClick={() => setMobileSidebarOpen(false)} />}
 
-            <aside className="shipit-sidebar">
+            <aside className={`shipit-sidebar${mobileSidebarOpen ? ' sb-mobile-open' : ''}`}>
                 {/* Brand */}
                 <div className="sb-brand">
                     <div className="sb-brand-icon sb-brand-icon--eye">
@@ -1205,7 +1207,7 @@ export const DevOpsDashboard = () => {
                 </div>
 
                 {/* Navigation */}
-                <nav className="sb-nav">
+                <nav className="sb-nav" onClick={(e) => { if (e.target.closest('.sb-item')) setMobileSidebarOpen(false); }}>
                     <div className="sb-group">
                         <a
                             href="#"
@@ -1352,6 +1354,9 @@ export const DevOpsDashboard = () => {
 
                 <header className="content-header jira-style">
                     <div className="header-top">
+                        <button className="mobile-menu-btn" onClick={() => setMobileSidebarOpen(o => !o)} aria-label="Toggle menu">
+                            <span /><span /><span />
+                        </button>
                         <div className="header-title-section">
                             <div className="breadcrumb">
                                 <span>DevOps Hub</span>
