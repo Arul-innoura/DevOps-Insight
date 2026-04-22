@@ -3164,6 +3164,8 @@ html.login-route-active .login-page {
   color: #111827;
   margin: 6px 0 0;
   line-height: 1.3;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 /* Progress bar wrap */
@@ -3182,6 +3184,7 @@ html.login-route-active .login-page {
 }
 .jdm-main {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   padding: 16px 22px;
   display: flex;
@@ -3222,7 +3225,7 @@ html.login-route-active .login-page {
 /* Fields grid */
 .jdm-fields-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
   gap: 10px;
   margin-bottom: 10px;
 }
@@ -3230,6 +3233,7 @@ html.login-route-active .login-page {
   background: #F4F5F7;
   border-radius: 6px;
   padding: 8px 10px;
+  min-width: 0;
 }
 .jdm-field-label {
   display: flex;
@@ -3247,6 +3251,8 @@ html.login-route-active .login-page {
   color: #111827;
   font-weight: 500;
   word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }
 .jdm-field-value.mono {
   font-family: 'JetBrains Mono', monospace;
@@ -3260,6 +3266,9 @@ html.login-route-active .login-page {
   border-radius: 6px;
   padding: 10px 12px;
   margin-top: 8px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 .jdm-text-block-label {
   font-size: 0.67rem;
@@ -3274,6 +3283,10 @@ html.login-route-active .login-page {
   color: #111827;
   line-height: 1.55;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+  min-width: 0;
 }
 .jdm-code-block {
   font-family: 'JetBrains Mono', monospace;
@@ -3283,8 +3296,11 @@ html.login-route-active .login-page {
   padding: 10px 12px;
   border-radius: 6px;
   overflow-x: auto;
-  white-space: pre;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-width: 100%;
   margin-top: 8px;
+  box-sizing: border-box;
 }
 
 /* Description */
@@ -3294,6 +3310,10 @@ html.login-route-active .login-page {
   line-height: 1.6;
   margin: 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* Action row */
@@ -3537,6 +3557,9 @@ html.login-route-active .login-page {
   font-size: 0.82rem;
   color: #6b7280;
   line-height: 1.5;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
 }
 
 /* Sidebar */
@@ -3554,7 +3577,7 @@ html.login-route-active .login-page {
   letter-spacing: 0.6px;
   margin-bottom: 10px;
 }
-.jdm-sidebar-field { margin-bottom: 10px; }
+.jdm-sidebar-field { margin-bottom: 10px; min-width: 0; }
 .jdm-sidebar-label {
   display: flex;
   align-items: center;
@@ -3566,7 +3589,14 @@ html.login-route-active .login-page {
   font-weight: 600;
   margin-bottom: 4px;
 }
-.jdm-sidebar-value { font-size: 0.78rem; color: #111827; font-weight: 500; }
+.jdm-sidebar-value {
+  font-size: 0.78rem;
+  color: #111827;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}
 
 /* Person row */
 .jdm-person-row { display: flex; align-items: center; gap: 8px; }
@@ -3993,6 +4023,7 @@ html.login-route-active .login-page {
 .timeline-content {
   flex: 1;
   padding-bottom: 0.5rem;
+  min-width: 0;
 }
 
 .timeline-header {
@@ -4027,6 +4058,10 @@ html.login-route-active .login-page {
   display: flex;
   align-items: flex-start;
   gap: 6px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .timeline-entry.is-note .timeline-notes {
@@ -7030,9 +7065,45 @@ html.login-route-active .login-page {
   gap: 10px 16px;
   align-items: start;
 }
-@media (max-width: 520px) {
+@media (max-width: 768px) {
+  .profile-section-wrap {
+    padding: 0 0 1.25rem;
+    border-radius: 10px;
+  }
+  .profile-page {
+    max-width: none;
+    width: 100%;
+    gap: 0.875rem;
+  }
+  .profile-page-navbar {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 12px 14px;
+    gap: 10px;
+  }
+  .profile-page-navbar-main {
+    width: 100%;
+  }
+  .profile-page-navbar-actions {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .profile-page-navbar-actions .sb-logout-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: center;
+  }
+  .profile-page-panel {
+    padding: 1rem 14px !important;
+  }
+  .profile-page-navbar-name {
+    font-size: 0.875rem;
+  }
   .profile-page-dl-row {
     grid-template-columns: 1fr;
+    gap: 4px 0;
   }
 }
 .profile-page-dl-row dt {
@@ -15729,6 +15800,10 @@ select,
     align-items: flex-start;
     gap: 6px;
     margin-top: 4px;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    max-width: 100%;
+    min-width: 0;
 }
 .timeline-empty { font-size: 0.78rem; color: #9ca3af; padding: 0.75rem 0; text-align: center; }
 
@@ -15794,9 +15869,17 @@ select,
     padding: 2px 8px;
     border-radius: 4px;
 }
-.jdm-title { font-size: 0.975rem; font-weight: 600; color: #111827; margin: 5px 0 0; line-height: 1.4; }
+.jdm-title {
+  font-size: 0.975rem;
+  font-weight: 600;
+  color: #111827;
+  margin: 5px 0 0;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .jdm-body { display: flex; flex: 1; overflow: hidden; background: #f9fafb; }
-.jdm-main { flex: 1; overflow-y: auto; padding: 1rem 1.25rem; background: #ffffff; border-right: 1px solid #f3f4f6; }
+.jdm-main { flex: 1; min-width: 0; overflow-y: auto; padding: 1rem 1.25rem; background: #ffffff; border-right: 1px solid #f3f4f6; }
 .jdm-sidebar { width: 230px; min-width: 230px; overflow-y: auto; padding: 1rem; background: #ffffff; flex-shrink: 0; }
 
 /* Section titles: like sb-group-label */
@@ -15813,8 +15896,8 @@ select,
     gap: 5px;
     user-select: none;
 }
-.jdm-fields-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
-.jdm-field { background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 7px; padding: 0.5rem 0.75rem; }
+.jdm-fields-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); gap: 6px; }
+.jdm-field { background: #f9fafb; border: 1px solid #f3f4f6; border-radius: 7px; padding: 0.5rem 0.75rem; min-width: 0; }
 .jdm-field-label {
     font-size: 0.5625rem;
     font-weight: 700;
@@ -15826,9 +15909,25 @@ select,
     align-items: center;
     gap: 4px;
 }
-.jdm-field-value { font-size: 0.8rem; color: #111827; font-weight: 500; line-height: 1.4; }
+.jdm-field-value {
+  font-size: 0.8rem;
+  color: #111827;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}
 .jdm-field-value.mono { font-family: var(--font-mono, 'JetBrains Mono', monospace); font-size: 0.75rem; }
-.jdm-description { font-size: 0.845rem; color: #374151; line-height: 1.65; }
+.jdm-description {
+  font-size: 0.845rem;
+  color: #374151;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+  min-width: 0;
+}
 .jdm-pill { display: inline-block; padding: 2px 9px; border-radius: 4px; font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
 .modal-close {
     background: transparent;
@@ -20665,16 +20764,62 @@ html.login-route-active .login-page input.login-jenkins-input:focus {
     gap: 0.5rem;
   }
 
-  /* ── Mini stats bar ── */
+  /* ── Mini stats bar (User + DevOps queue tabs) — single aligned scroll row ── */
   .mini-stats-bar {
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 6px 8px;
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
   }
 
-  .mini-stat-item {
-    flex: 1 1 calc(50% - 6px);
-    min-width: 80px;
+  .mini-stats-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .mini-stats-bar .mini-stat-sep {
+    display: none;
+  }
+
+  .mini-stats-bar .mini-stat {
+    flex: 0 0 auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 12px;
+    min-height: 40px;
+    border-radius: 8px;
+    box-sizing: border-box;
+  }
+
+  .mini-stats-bar .mini-stat-label {
+    font-size: 0.68rem;
+    max-width: 5.5rem;
+    line-height: 1.15;
+    white-space: normal;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+
+  .mini-stats-bar .mini-stat-value {
+    font-size: 0.875rem;
+    flex-shrink: 0;
+  }
+
+  .mini-stats-bar .devops-avail-strip {
+    flex: 0 0 auto;
+    margin-left: 0 !important;
+    padding-left: 8px;
+    border-left: 1px solid var(--border-color);
+    align-self: stretch;
+    align-items: center;
   }
 
   /* ── Tickets section ── */
@@ -20684,8 +20829,8 @@ html.login-route-active .login-page input.login-jenkins-input:focus {
 
   .tickets-header {
     flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
+    align-items: stretch;
+    gap: 0.65rem;
     padding: 0.6rem 0.75rem;
   }
 
@@ -20694,22 +20839,45 @@ html.login-route-active .login-page input.login-jenkins-input:focus {
     font-size: 0.95rem;
   }
 
-  /* ── Tabs: horizontal scroll ── */
+  .tickets-header .btn-filter {
+    align-self: stretch;
+    justify-content: center;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  /* ── Tabs (Admin etc.): full-width pill strip, horizontally scrollable ── */
   .tickets-tabs {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    align-self: stretch;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     flex-wrap: nowrap;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
-    gap: 0;
-    padding: 0 0.5rem;
+    gap: 6px;
+    padding: 4px 2px 6px;
+    margin: 0;
   }
-  .tickets-tabs::-webkit-scrollbar { display: none; }
+
+  .tickets-tabs::-webkit-scrollbar {
+    display: none;
+  }
 
   .tickets-tabs .tab-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     white-space: nowrap;
     font-size: 0.75rem;
-    padding: 7px 9px;
-    flex-shrink: 0;
+    padding: 8px 12px;
+    min-height: 40px;
+    flex: 0 0 auto;
+    box-sizing: border-box;
   }
 
   .tickets-list {
@@ -20772,16 +20940,18 @@ html.login-route-active .login-page input.login-jenkins-input:focus {
     font-size: 0.62rem;
   }
 
-  /* ── Ticket filters: 2-column grid ── */
+  /* ── Ticket filters: single column, full-width controls (Admin / DevOps / User) ── */
   .ticket-filters {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 0.4rem 0.5rem;
-    padding: 0.6rem 0.75rem;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.65rem;
+    padding: 0.75rem 0.85rem;
   }
 
   .filter-group {
     min-width: 0;
+    width: 100%;
   }
 
   .filter-group label {
@@ -20791,12 +20961,14 @@ html.login-route-active .login-page input.login-jenkins-input:focus {
   .filter-group select,
   .filter-group input {
     width: 100%;
-    font-size: 0.8rem;
-    padding: 0.4rem 0.5rem;
+    min-height: 40px;
+    font-size: 0.875rem;
+    padding: 0.45rem 0.55rem;
+    box-sizing: border-box;
   }
 
   .filter-group--search-wide {
-    grid-column: 1 / -1;
+    width: 100%;
   }
 
   /* ── Ticket search bar ── */
@@ -20888,7 +21060,17 @@ html.login-route-active .login-page input.login-jenkins-input:focus {
   }
 
   .jdm-fields-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .jdm-text-block {
+    padding: 10px 12px;
+    margin-top: 6px;
+  }
+
+  .jdm-text-block-content {
+    font-size: 0.8125rem;
   }
 
   .jdm-action-row {
@@ -21118,7 +21300,8 @@ html.login-route-active .login-page input.login-jenkins-input:focus {
 
   .tickets-tabs .tab-btn {
     font-size: 0.7rem;
-    padding: 6px 8px;
+    padding: 7px 10px;
+    min-height: 38px;
   }
 
   .header-title-section h1,
@@ -21132,10 +21315,6 @@ html.login-route-active .login-page input.login-jenkins-input:focus {
 
   .stat-value {
     font-size: 1.15rem;
-  }
-
-  .mini-stat-item {
-    flex: 1 1 100%;
   }
 
   .quick-btn {
