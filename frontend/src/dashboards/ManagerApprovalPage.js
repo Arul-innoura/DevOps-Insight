@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { 
     CheckCircle, 
@@ -52,6 +52,33 @@ const ManagerApprovalPage = () => {
     );
     const [result, setResult] = useState(null);
     const [error, setError] = useState(null);
+    const soundPlayedRef = useRef(false);
+
+    // Play a synthesized completion chime when result arrives
+    useEffect(() => {
+        if (!result?.success || soundPlayedRef.current) return;
+        soundPlayedRef.current = true;
+        try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)();
+            const approved = result.action === 'approve';
+            const notes = approved
+                ? [[523.25, 0, 0.28], [659.25, 0.13, 0.28], [783.99, 0.26, 0.38]]  // C5 E5 G5
+                : [[440, 0, 0.22], [349.23, 0.18, 0.18]];                            // A4 F4
+            notes.forEach(([freq, delay, vol]) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, ctx.currentTime + delay);
+                gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+                gain.gain.linearRampToValueAtTime(vol * 0.35, ctx.currentTime + delay + 0.025);
+                gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + delay + 0.55);
+                osc.start(ctx.currentTime + delay);
+                osc.stop(ctx.currentTime + delay + 0.6);
+            });
+        } catch { /* audio not available */ }
+    }, [result]);
 
     useEffect(() => {
         const a = searchParams.get('action');
@@ -162,55 +189,94 @@ const ManagerApprovalPage = () => {
                         <p style={{ marginTop: 16, color: '#64748b' }}>Validating approval link...</p>
                     </div>
                 </div>
-                <style>{spinKeyframes}</style>
+                <style>{allKeyframes}</style>
             </div>
         );
     }
 
-    // Success result
+    // Success result — animated checkmark/X
     if (result?.success) {
         const isApproved = result.action === 'approve';
+        const accentColor = isApproved ? '#22c55e' : '#ef4444';
+        const bgColor     = isApproved ? '#f0fdf4' : '#fef2f2';
+        const titleColor  = isApproved ? '#166534' : '#991b1b';
+        // SVG circle circumference ≈ 2π×35 ≈ 219.9
         return (
-            <div style={styles.container}>
+            <div style={styles.container} className="map-container">
                 <div style={styles.card}>
-                    <div style={{ textAlign: 'center', padding: '40px 20px' }}>
-                        {isApproved ? (
-                            <CheckCircle size={64} color="#22c55e" />
-                        ) : (
-                            <XCircle size={64} color="#ef4444" />
-                        )}
-                        <h1 style={{ 
-                            marginTop: 24, 
-                            fontSize: '1.75rem', 
-                            color: isApproved ? '#166534' : '#991b1b' 
-                        }}>
+                    <div style={{ height: 4, background: isApproved
+                        ? 'linear-gradient(90deg,#16a34a,#4ade80)'
+                        : 'linear-gradient(90deg,#dc2626,#f87171)' }} />
+                    <div style={{ textAlign: 'center', padding: '44px 24px 36px', background: bgColor }}>
+                        {/* Animated SVG icon */}
+                        <div className="map-result-icon" style={{ display: 'inline-block' }}>
+                            <svg viewBox="0 0 80 80" width="96" height="96" style={{ overflow: 'visible' }}>
+                                <circle
+                                    cx="40" cy="40" r="35"
+                                    fill="none"
+                                    stroke={accentColor}
+                                    strokeWidth="3.5"
+                                    strokeLinecap="round"
+                                    strokeDasharray="220"
+                                    strokeDashoffset="220"
+                                    className="map-circle-draw"
+                                />
+                                {isApproved ? (
+                                    <polyline
+                                        points="23,42 34,53 57,27"
+                                        fill="none"
+                                        stroke={accentColor}
+                                        strokeWidth="4"
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeDasharray="65"
+                                        strokeDashoffset="65"
+                                        className="map-mark-draw"
+                                    />
+                                ) : (
+                                    <>
+                                        <line x1="26" y1="26" x2="54" y2="54"
+                                            stroke={accentColor} strokeWidth="4" strokeLinecap="round"
+                                            strokeDasharray="42" strokeDashoffset="42"
+                                            className="map-mark-draw" />
+                                        <line x1="54" y1="26" x2="26" y2="54"
+                                            stroke={accentColor} strokeWidth="4" strokeLinecap="round"
+                                            strokeDasharray="42" strokeDashoffset="42"
+                                            className="map-mark-draw2" />
+                                    </>
+                                )}
+                            </svg>
+                        </div>
+
+                        <h1 className="map-result-title" style={{ marginTop: 20, fontSize: '1.75rem', fontWeight: 700, color: titleColor, letterSpacing: '-0.02em' }}>
                             Request {isApproved ? 'Approved' : 'Rejected'}
                         </h1>
-                        <p style={{ marginTop: 12, color: '#64748b', fontSize: '1rem' }}>
+                        <p className="map-result-msg" style={{ marginTop: 10, color: '#475569', fontSize: '1rem', lineHeight: 1.5 }}>
                             {result.message}
                         </p>
-                        <div style={styles.ticketBadge}>
+                        <div className="map-result-badge" style={styles.ticketBadge}>
                             <FileText size={16} />
                             {result.ticketId}
                         </div>
                         {result.newStatus && (
-                            <p style={{ marginTop: 10, color: '#475569', fontSize: '0.9rem' }}>
+                            <p className="map-result-status" style={{ marginTop: 10, color: '#475569', fontSize: '0.9rem' }}>
                                 Current status: <strong>{result.newStatus}</strong>
                             </p>
                         )}
                         {isApproved && result.newStatus === TICKET_STATUS.MANAGER_APPROVAL_PENDING && (
-                            <p style={{ marginTop: 12, color: '#475569', fontSize: '0.9rem' }}>
+                            <p className="map-result-note" style={{ marginTop: 12, color: '#475569', fontSize: '0.9rem' }}>
                                 DevOps will set the ticket to <strong>Manager Approved</strong> when they finalize this step in the portal.
                             </p>
                         )}
-                        <p style={{ marginTop: 24, color: '#94a3b8', fontSize: '0.875rem' }}>
+                        <p className="map-result-close" style={{ marginTop: 24, color: '#94a3b8', fontSize: '0.875rem' }}>
                             A confirmation email has been sent to the requester.
                         </p>
-                        <p style={{ marginTop: 8, color: '#94a3b8', fontSize: '0.875rem' }}>
+                        <p style={{ marginTop: 6, color: '#94a3b8', fontSize: '0.875rem' }}>
                             You can close this window now.
                         </p>
                     </div>
                 </div>
+                <style>{allKeyframes}</style>
             </div>
         );
     }
@@ -269,10 +335,10 @@ const ManagerApprovalPage = () => {
 
     // Main approval form
     return (
-        <div style={styles.container} className="manager-approval-page">
-            <div style={styles.card}>
+        <div style={styles.container} className="manager-approval-page map-container">
+            <div style={styles.card} className="map-card">
                 <div style={styles.cardAccent} aria-hidden />
-                <div style={styles.headerMinimal}>
+                <div style={styles.headerMinimal} className="map-header">
                     <div style={styles.headerIconWrap}>
                         <Shield size={22} color="#0f172a" strokeWidth={1.75} />
                     </div>
@@ -286,7 +352,7 @@ const ManagerApprovalPage = () => {
                     </div>
                 </div>
 
-                <div style={styles.body}>
+                <div style={styles.body} className="map-body">
                     {intentFromLink && selectedAction === intentFromLink && (
                         <div
                             style={{
@@ -330,7 +396,7 @@ const ManagerApprovalPage = () => {
                             </div>
                         ) : null}
                         
-                        <div style={styles.infoGrid}>
+                        <div style={styles.infoGrid} className="map-info-grid">
                             <div style={styles.infoItem}>
                                 <span style={styles.infoLabel}>Ticket ID</span>
                                 <span style={styles.infoBadge}>{tokenInfo.ticketId}</span>
@@ -375,14 +441,14 @@ const ManagerApprovalPage = () => {
                         <h2 style={styles.sectionTitle}>
                             <User size={18} /> Requester
                         </h2>
-                        <div style={styles.requesterCard}>
-                            <div style={styles.requesterAvatar}>
+                        <div style={styles.requesterCard} className="map-requester-card">
+                            <div style={styles.requesterAvatar} className="map-requester-avatar">
                                 {tokenInfo.requesterName?.charAt(0)?.toUpperCase() || 'U'}
                             </div>
-                            <div>
+                            <div style={{ minWidth: 0, flex: 1 }}>
                                 <p style={styles.requesterName}>{tokenInfo.requesterName}</p>
-                                <p style={styles.requesterEmail}>
-                                    <Mail size={14} /> {tokenInfo.requesterEmail}
+                                <p style={{ ...styles.requesterEmail, flexWrap: 'wrap', wordBreak: 'break-all' }}>
+                                    <Mail size={14} style={{ flexShrink: 0 }} /> {tokenInfo.requesterEmail}
                                 </p>
                             </div>
                         </div>
@@ -394,7 +460,7 @@ const ManagerApprovalPage = () => {
                             Choose one outcome. You can change your selection before submitting.
                         </p>
 
-                        <div style={styles.actionRow}>
+                        <div style={styles.actionRow} className="map-action-row">
                             <button
                                 type="button"
                                 style={{
@@ -462,6 +528,7 @@ const ManagerApprovalPage = () => {
 
                         {/* Submit button */}
                         <button
+                            className="map-submit-btn"
                             style={{
                                 ...styles.submitButton,
                                 ...(selectedAction === 'approve' ? styles.submitApprove : 
@@ -492,15 +559,90 @@ const ManagerApprovalPage = () => {
                     <p>Personal approval link — do not forward. Single use after a successful submit.</p>
                 </div>
             </div>
-            <style>{spinKeyframes}</style>
+            <style>{allKeyframes}</style>
         </div>
     );
 };
 
-const spinKeyframes = `
+const allKeyframes = `
 @keyframes spin {
     from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    to   { transform: rotate(360deg); }
+}
+
+/* ── Animated result icon ───────────────────────── */
+.map-circle-draw {
+    animation: map-circle 0.5s cubic-bezier(.4,0,.2,1) forwards;
+}
+.map-mark-draw {
+    animation: map-mark 0.32s ease-out 0.44s forwards;
+}
+.map-mark-draw2 {
+    animation: map-mark 0.28s ease-out 0.52s forwards;
+}
+@keyframes map-circle {
+    from { stroke-dashoffset: 220; }
+    to   { stroke-dashoffset: 0; }
+}
+@keyframes map-mark {
+    from { stroke-dashoffset: 65; }
+    to   { stroke-dashoffset: 0; }
+}
+.map-result-icon {
+    animation: map-pop 0.45s cubic-bezier(.34,1.56,.64,1) forwards;
+}
+@keyframes map-pop {
+    0%   { transform: scale(0.5); opacity: 0; }
+    70%  { transform: scale(1.06); }
+    100% { transform: scale(1);   opacity: 1; }
+}
+.map-result-title  { animation: map-fadeup 0.38s ease-out 0.55s both; }
+.map-result-msg    { animation: map-fadeup 0.38s ease-out 0.65s both; }
+.map-result-badge  { animation: map-fadeup 0.38s ease-out 0.72s both; }
+.map-result-status { animation: map-fadeup 0.38s ease-out 0.78s both; }
+.map-result-note   { animation: map-fadeup 0.38s ease-out 0.82s both; }
+.map-result-close  { animation: map-fadeup 0.38s ease-out 0.88s both; }
+@keyframes map-fadeup {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Mobile layout fixes ────────────────────────── */
+@media (max-width: 480px) {
+    .map-container {
+        padding: 12px !important;
+        align-items: flex-start !important;
+        padding-top: 20px !important;
+    }
+    .map-card { border-radius: 10px !important; }
+    .map-header {
+        padding: 16px 16px 6px !important;
+        gap: 10px !important;
+    }
+    .map-body { padding: 10px 14px 20px !important; }
+    .map-info-grid {
+        grid-template-columns: 1fr !important;
+        gap: 10px !important;
+    }
+    .map-requester-card {
+        align-items: flex-start !important;
+        gap: 10px !important;
+    }
+    .map-requester-avatar {
+        flex-shrink: 0;
+        margin-top: 2px;
+    }
+    .map-action-row {
+        flex-direction: column !important;
+    }
+    .map-action-row button {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+    .map-submit-btn {
+        padding: 14px 16px !important;
+        font-size: 0.9375rem !important;
+    }
 }
 `;
 

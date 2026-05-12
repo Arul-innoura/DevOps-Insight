@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(CI= npx --no-install react-scripts build)",
+      "Bash(./mvnw compile *)"
+    ]
+  }
+}

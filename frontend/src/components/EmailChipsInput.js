@@ -154,59 +154,63 @@ export default function EmailChipsInput({
       title={inputLocked ? lockTitle : undefined}
     >
       <div className={`cc-email-chips ${inputLocked ? "cc-email-chips-no-add" : ""}`}>
-        {/* Locked / mandatory chips — shown first, cannot be removed */}
-        {lockedNormalized.map((email) => (
-          <span
-            key={`locked-${email}`}
-            className="cc-email-chip cc-email-chip-locked"
-            title={email}
-          >
-            <Lock size={10} className="cc-email-chip-lock-icon" aria-hidden />
-            <span className="cc-email-chip-label">{email}</span>
-          </span>
-        ))}
-        {editableEmails.map((email) => (
-          <span key={email} className="cc-email-chip" title={email}>
-            <span className="cc-email-chip-label">{email}</span>
-            <button type="button" onClick={() => removeEmail(email)} className="chip-remove" aria-label={`Remove ${email}`}>
-              <X size={12} />
-            </button>
-          </span>
-        ))}
-        <input
-          type="text"
-          value={inputLocked ? "" : inputValue}
-          readOnly={inputLocked}
-          onChange={(e) => {
-            if (inputLocked) return;
-            setInputValue(e.target.value);
-            setShowSuggestions(e.target.value.trim().length > 0);
-          }}
-          onKeyDown={handleKeyDown}
-          onPaste={handlePaste}
-          onFocus={() => {
-            if (inputLocked) return;
-            setShowSuggestions(inputValue.trim().length > 0);
-          }}
-          onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-          placeholder={
-            inputLocked
-              ? lockedNormalized.length + emails.length === 0
-                ? "Set by workflow — select product & request type"
-                : ""
-              : emails.length === 0
-                ? placeholder
-                : "Add more…"
-          }
-          className="cc-email-text-input"
-          aria-readonly={inputLocked || undefined}
-          tabIndex={inputLocked ? -1 : 0}
-        />
-        {inputLocked && (
-          <span className="cc-email-field-lock-badge" aria-hidden title={lockTitle}>
-            <Lock size={15} strokeWidth={2} />
-          </span>
-        )}
+        <div className="cc-email-chip-row">
+          {/* Locked / mandatory chips — shown first, cannot be removed */}
+          {lockedNormalized.map((email) => (
+            <span
+              key={`locked-${email}`}
+              className="cc-email-chip cc-email-chip-locked"
+              title={email}
+            >
+              <Lock size={10} className="cc-email-chip-lock-icon" aria-hidden />
+              <span className="cc-email-chip-label">{email}</span>
+            </span>
+          ))}
+          {editableEmails.map((email) => (
+            <span key={email} className="cc-email-chip" title={email}>
+              <span className="cc-email-chip-label">{email}</span>
+              <button type="button" onClick={() => removeEmail(email)} className="chip-remove" aria-label={`Remove ${email}`}>
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+        <div className="cc-email-input-row">
+          <input
+            type="text"
+            value={inputLocked ? "" : inputValue}
+            readOnly={inputLocked}
+            onChange={(e) => {
+              if (inputLocked) return;
+              setInputValue(e.target.value);
+              setShowSuggestions(e.target.value.trim().length > 0);
+            }}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            onFocus={() => {
+              if (inputLocked) return;
+              setShowSuggestions(inputValue.trim().length > 0);
+            }}
+            onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+            placeholder={
+              inputLocked
+                ? lockedNormalized.length + emails.length === 0
+                  ? "Set by workflow — select product & request type"
+                  : ""
+                : emails.length === 0
+                  ? placeholder
+                  : "Add more…"
+            }
+            className="cc-email-text-input"
+            aria-readonly={inputLocked || undefined}
+            tabIndex={inputLocked ? -1 : 0}
+          />
+          {inputLocked && (
+            <span className="cc-email-field-lock-badge" aria-hidden title={lockTitle}>
+              <Lock size={15} strokeWidth={2} />
+            </span>
+          )}
+        </div>
       </div>
 
       {showSuggestions && !inputLocked && filteredSuggestions.length > 0 && (

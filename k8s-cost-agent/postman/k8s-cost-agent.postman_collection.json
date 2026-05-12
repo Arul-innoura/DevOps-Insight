@@ -1,0 +1,164 @@
+{
+  "info": {
+    "name": "k8s-cost-agent",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Smoke + read-API tests for the Go-based Kubernetes cost monitoring agent. Set the `baseUrl` and `env` collection variables before running."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8090", "description": "Local: http://localhost:8090. Cluster (port-forward): same. Through ingress: https://your-host" },
+    { "key": "env",     "value": "local-cluster",        "description": "Matches AGENT_ENVIRONMENT_ID on the agent" },
+    { "key": "ns",      "value": "default" }
+  ],
+  "item": [
+    {
+      "name": "Health — liveness",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/healthz", "host": ["{{baseUrl}}"], "path": ["healthz"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "pm.test('reports uptime', () => pm.expect(pm.response.json()).to.have.property('uptime'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health — readiness",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/readyz", "host": ["{{baseUrl}}"], "path": ["readyz"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('eventually 200', () => pm.expect([200, 503]).to.include(pm.response.code));",
+              "if (pm.response.code === 200) pm.test('ready: true', () => pm.expect(pm.response.json().ready).to.eql(true));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cycle summary (latest)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/summary?env={{env}}",
+          "host": ["{{baseUrl}}"], "path": ["v1", "summary"],
+          "query": [{ "key": "env", "value": "{{env}}" }]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200', () => pm.response.to.have.status(200));",
+              "const j = pm.response.json();",
+              "pm.test('has totalCostPerHour', () => pm.expect(j).to.have.property('totalCostPerHour'));",
+              "pm.test('has namespaceCount > 0', () => pm.expect(j.namespaceCount).to.be.above(0));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Latest namespaces (one row each)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/namespaces?env={{env}}",
+          "host": ["{{baseUrl}}"], "path": ["v1", "namespaces"],
+          "query": [{ "key": "env", "value": "{{env}}" }]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200', () => pm.response.to.have.status(200));",
+              "const arr = pm.response.json();",
+              "pm.test('array', () => pm.expect(arr).to.be.an('array'));",
+              "if (arr.length) pm.test('has 100+ metric fields', () => pm.expect(Object.keys(arr[0]).length).to.be.above(80));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Single namespace (latest)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/namespace?env={{env}}&ns={{ns}}",
+          "host": ["{{baseUrl}}"], "path": ["v1", "namespace"],
+          "query": [
+            { "key": "env", "value": "{{env}}" },
+            { "key": "ns",  "value": "{{ns}}"  }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Namespace history (last 24h)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/namespace/history?env={{env}}&ns={{ns}}",
+          "host": ["{{baseUrl}}"], "path": ["v1", "namespace", "history"],
+          "query": [
+            { "key": "env",  "value": "{{env}}" },
+            { "key": "ns",   "value": "{{ns}}"  },
+            { "key": "from", "value": "", "disabled": true, "description": "RFC3339, optional" },
+            { "key": "to",   "value": "", "disabled": true, "description": "RFC3339, optional" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Latest nodes",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/nodes?env={{env}}",
+          "host": ["{{baseUrl}}"], "path": ["v1", "nodes"],
+          "query": [{ "key": "env", "value": "{{env}}" }]
+        }
+      }
+    },
+    {
+      "name": "Service-to-service edges",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{baseUrl}}/v1/edges?env={{env}}",
+          "host": ["{{baseUrl}}"], "path": ["v1", "edges"],
+          "query": [
+            { "key": "env", "value": "{{env}}" },
+            { "key": "ns",  "value": "{{ns}}", "disabled": true, "description": "Filter by source namespace" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Last in-memory cycle (raw)",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/v1/cycle", "host": ["{{baseUrl}}"], "path": ["v1", "cycle"] }
+      }
+    }
+  ]
+}

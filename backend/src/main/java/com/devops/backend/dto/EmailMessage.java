@@ -44,6 +44,10 @@ public class EmailMessage implements Serializable {
         MANAGER_APPROVAL_REQUEST,
         MANAGER_APPROVAL_RESPONSE,
         COST_APPROVAL_REQUEST,
-        COST_APPROVAL_RESPONSE
+        COST_APPROVAL_RESPONSE,
+        /** Automated daily birthday greeting (no ticket context). */
+        BIRTHDAY_WISHES,
+        /** Automated holiday greeting on configured calendar dates (no ticket context). */
+        HOLIDAY_WISHES
     }
 }

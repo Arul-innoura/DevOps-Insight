@@ -1,0 +1,24 @@
+# Non-secret runtime configuration. The Mongo URI lives in a Secret
+# (see secret.example.yaml). All values can be overridden in deployment.yaml.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: k8s-cost-agent
+  namespace: k8s-cost-agent
+data:
+  AGENT_CLUSTER_NAME: "aks-prod"
+  AGENT_ENVIRONMENT_ID: "aks-prod"
+  AGENT_MONGODB_DATABASE: "devops_portal"
+  AGENT_COLL_NAMESPACE: "k8s_namespace_metrics"
+  AGENT_COLL_NODE: "k8s_node_metrics"
+  AGENT_COLL_SERVICE_COMM: "k8s_service_communications"
+  AGENT_COLL_COST_SUMMARY: "k8s_cost_summary"
+  AGENT_COLLECT_INTERVAL: "60s"
+  AGENT_RETENTION_DAYS: "14"
+  AGENT_HTTP_ADDR: ":8090"
+  # Tune these for your Azure agreement / region. Defaults are list price.
+  AGENT_PRICE_CPU_HOUR: "0.0316"
+  AGENT_PRICE_MEM_GB_HOUR: "0.00424"
+  AGENT_PRICE_DISK_GB_HOUR: "0.000205"
+  AGENT_PRICE_EGRESS_GB: "0.087"
+  AGENT_PRICE_LB_HOUR: "0.025"

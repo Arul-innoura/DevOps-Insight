@@ -1,0 +1,40 @@
+# Local test — runs the agent against your kubeconfig + MongoDB Atlas.
+#
+# Step 1: generate an embedded kubeconfig (no Windows paths inside the container):
+#   kubectl config view --minify --flatten | Out-File -Encoding utf8 .\kubeconfig-embedded.yaml
+#
+# Step 2: copy .env.example to .env and fill in your values.
+#
+# Step 3:
+#   docker compose up --build
+#   curl http://localhost:8090/healthz
+#
+# Minikube: kubeconfig often uses https://127.0.0.1:<port>. Inside Docker that
+# is the container loopback, so we default remap to host.docker.internal (Compose
+# substitution below). Linux Docker Engine: extra_hosts wires host-gateway.
+
+services:
+  agent:
+    build: .
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      AGENT_MONGODB_URI:       "${AGENT_MONGODB_URI}"
+      AGENT_MONGODB_DATABASE:  "${AGENT_MONGODB_DATABASE:-devops_portal}"
+      AGENT_CLUSTER_NAME:      "${AGENT_CLUSTER_NAME:-minikube}"
+      AGENT_ENVIRONMENT_ID:    "${AGENT_ENVIRONMENT_ID:-minikube}"
+      AGENT_COLLECT_INTERVAL:  "${AGENT_COLLECT_INTERVAL:-60s}"
+      AGENT_HTTP_ADDR:         ":8090"
+      AGENT_KUBECONFIG:        "/kube/config"
+      # Remap loopback apiserver URL → Docker host (port from kubeconfig). Override in .env if needed.
+      AGENT_KUBE_API_HOST_REMAP: "${AGENT_KUBE_API_HOST_REMAP:-host.docker.internal}"
+      # Optional full override: AGENT_KUBE_API_SERVER, AGENT_KUBE_TLS_SERVER_NAME
+      AGENT_KUBE_API_SERVER:     "${AGENT_KUBE_API_SERVER:-}"
+      AGENT_KUBE_TLS_SERVER_NAME: "${AGENT_KUBE_TLS_SERVER_NAME:-}"
+    volumes:
+      # Flattened kubeconfig with certs embedded as base64 — no Windows paths.
+      # Generate it with:
+      #   kubectl config view --minify --flatten | Out-File -Encoding utf8 .\kubeconfig-embedded.yaml
+      - ./kubeconfig-embedded.yaml:/kube/config:ro
+    ports:
+      - "8090:8090"

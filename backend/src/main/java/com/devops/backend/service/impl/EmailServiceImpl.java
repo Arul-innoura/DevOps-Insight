@@ -1376,6 +1376,103 @@ public class EmailServiceImpl implements EmailService {
                    .replace("'", "&#39;");
     }
 
+    // ─────────────────────────────────────────────────────────────────────
+    // Birthday / Holiday automated greetings
+    // ─────────────────────────────────────────────────────────────────────
+
+    @Override
+    public void sendBirthdayWishes(String recipientEmail, String displayName) {
+        if (recipientEmail == null || recipientEmail.isBlank()) return;
+        String safeName = (displayName == null || displayName.isBlank())
+                ? recipientEmail.split("@")[0]
+                : displayName;
+        try {
+            EmailMessage msg = EmailMessage.builder()
+                    .type(EmailMessage.EmailType.BIRTHDAY_WISHES)
+                    .to(recipientEmail)
+                    .subject("🎂 Happy Birthday, " + safeName + "!")
+                    .htmlBody(buildBirthdayHtml(safeName))
+                    .build();
+            publishToQueue(msg);
+        } catch (Exception e) {
+            log.warn("Failed to send birthday email to {}: {}", recipientEmail, e.getMessage());
+        }
+    }
+
+    @Override
+    public void sendHolidayWishes(String recipientEmail, String displayName, String holidayName) {
+        if (recipientEmail == null || recipientEmail.isBlank()) return;
+        if (holidayName == null || holidayName.isBlank()) holidayName = "the holidays";
+        String safeName = (displayName == null || displayName.isBlank())
+                ? recipientEmail.split("@")[0]
+                : displayName;
+        try {
+            EmailMessage msg = EmailMessage.builder()
+                    .type(EmailMessage.EmailType.HOLIDAY_WISHES)
+                    .to(recipientEmail)
+                    .subject("Wishing you a happy " + holidayName + "!")
+                    .htmlBody(buildHolidayHtml(safeName, holidayName))
+                    .build();
+            publishToQueue(msg);
+        } catch (Exception e) {
+            log.warn("Failed to send holiday email to {}: {}", recipientEmail, e.getMessage());
+        }
+    }
+
+    private String buildBirthdayHtml(String name) {
+        return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"></head>"
+                + "<body style=\"margin:0;padding:0;background:#f4f5f7;font-family:Segoe UI,Arial,sans-serif;color:#111827;\">"
+                + "<div style=\"max-width:560px;margin:36px auto;background:#ffffff;border-radius:14px;overflow:hidden;"
+                + "box-shadow:0 1px 3px rgba(0,0,0,0.06),0 8px 24px rgba(0,0,0,0.08);\">"
+                + "  <div style=\"background:#1d4ed8;padding:34px 32px 26px;color:#ffffff;text-align:left;\">"
+                + "    <div style=\"font-size:38px;line-height:1;margin-bottom:10px;\">🎂</div>"
+                + "    <h1 style=\"margin:0;font-size:24px;font-weight:700;letter-spacing:-0.01em;\">Happy Birthday, " + escapeHtml(name) + "!</h1>"
+                + "    <p style=\"margin:8px 0 0;font-size:14px;color:rgba(255,255,255,0.86);\">From the ShipIt team</p>"
+                + "  </div>"
+                + "  <div style=\"padding:28px 32px;\">"
+                + "    <p style=\"font-size:15px;line-height:1.65;color:#374151;margin:0 0 14px;\">"
+                + "      Wishing you a wonderful day and a year ahead full of success, joy, and smooth deployments."
+                + "    </p>"
+                + "    <p style=\"font-size:14px;line-height:1.6;color:#6b7280;margin:0;\">"
+                + "      We're grateful to have you on the team. Enjoy your special day!"
+                + "    </p>"
+                + "  </div>"
+                + "  <div style=\"padding:14px 32px;background:#f8fafc;border-top:1px solid #e5e7eb;\">"
+                + "    <p style=\"margin:0;font-size:11px;color:#94a3b8;letter-spacing:0.02em;\">"
+                + "      ShipIt DevOps Platform · automated greeting"
+                + "    </p>"
+                + "  </div>"
+                + "</div></body></html>";
+    }
+
+    private String buildHolidayHtml(String name, String holidayName) {
+        return "<!DOCTYPE html><html><head><meta charset=\"UTF-8\"></head>"
+                + "<body style=\"margin:0;padding:0;background:#f4f5f7;font-family:Segoe UI,Arial,sans-serif;color:#111827;\">"
+                + "<div style=\"max-width:560px;margin:36px auto;background:#ffffff;border-radius:14px;overflow:hidden;"
+                + "box-shadow:0 1px 3px rgba(0,0,0,0.06),0 8px 24px rgba(0,0,0,0.08);\">"
+                + "  <div style=\"background:#0f766e;padding:34px 32px 26px;color:#ffffff;\">"
+                + "    <div style=\"font-size:34px;line-height:1;margin-bottom:10px;\">✨</div>"
+                + "    <h1 style=\"margin:0;font-size:24px;font-weight:700;letter-spacing:-0.01em;\">Happy " + escapeHtml(holidayName) + "!</h1>"
+                + "    <p style=\"margin:8px 0 0;font-size:14px;color:rgba(255,255,255,0.86);\">Warm wishes from the ShipIt team</p>"
+                + "  </div>"
+                + "  <div style=\"padding:28px 32px;\">"
+                + "    <p style=\"font-size:15px;line-height:1.65;color:#374151;margin:0 0 14px;\">"
+                + "      Hi " + escapeHtml(name) + ",</p>"
+                + "    <p style=\"font-size:15px;line-height:1.65;color:#374151;margin:0 0 14px;\">"
+                + "      Wishing you a joyful " + escapeHtml(holidayName) + " and a well-deserved break with your loved ones."
+                + "    </p>"
+                + "    <p style=\"font-size:14px;line-height:1.6;color:#6b7280;margin:0;\">"
+                + "      Take some time to recharge — we'll see you back soon."
+                + "    </p>"
+                + "  </div>"
+                + "  <div style=\"padding:14px 32px;background:#f8fafc;border-top:1px solid #e5e7eb;\">"
+                + "    <p style=\"margin:0;font-size:11px;color:#94a3b8;letter-spacing:0.02em;\">"
+                + "      ShipIt DevOps Platform · automated greeting"
+                + "    </p>"
+                + "  </div>"
+                + "</div></body></html>";
+    }
+
     /**
      * Email action types
      */

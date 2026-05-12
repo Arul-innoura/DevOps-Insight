@@ -9,6 +9,7 @@ import com.devops.backend.repository.DevOpsMemberRepository;
 import com.devops.backend.repository.StatusChangeLogRepository;
 import com.devops.backend.service.DevOpsTeamService;
 import com.devops.backend.service.EventPublisherService;
+import com.devops.backend.service.WebSocketEventService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -26,6 +27,7 @@ public class DevOpsTeamServiceImpl implements DevOpsTeamService {
     private final DevOpsMemberRepository memberRepository;
     private final StatusChangeLogRepository statusChangeLogRepository;
     private final EventPublisherService eventPublisher;
+    private final WebSocketEventService webSocketEventService;
 
     @Override
     public List<DevOpsMember> getAllMembers() {
@@ -53,6 +55,7 @@ public class DevOpsTeamServiceImpl implements DevOpsTeamService {
 
         DevOpsMember saved = memberRepository.save(member);
         eventPublisher.publishDevOpsTeamEvent("member-added", saved);
+        webSocketEventService.broadcastDevOpsTeamUpdated(saved);
         return saved;
     }
 
@@ -76,6 +79,7 @@ public class DevOpsTeamServiceImpl implements DevOpsTeamService {
             try {
                 DevOpsMember saved = memberRepository.save(created);
                 eventPublisher.publishDevOpsTeamEvent("member-upserted", saved);
+                webSocketEventService.broadcastDevOpsTeamUpdated(saved);
                 return saved;
             } catch (DuplicateKeyException ex) {
                 existing = findCanonicalMemberByEmail(normalizedEmail);
@@ -92,6 +96,7 @@ public class DevOpsTeamServiceImpl implements DevOpsTeamService {
         existing.setUpdatedBy(resolveActor(actorName, actorEmail));
         DevOpsMember saved = memberRepository.save(existing);
         eventPublisher.publishDevOpsTeamEvent("member-upserted", saved);
+        webSocketEventService.broadcastDevOpsTeamUpdated(saved);
         return saved;
     }
 
@@ -120,6 +125,7 @@ public class DevOpsTeamServiceImpl implements DevOpsTeamService {
         logStatusChange(saved, previousStatus, newStatus, resolveActor(actorName, actorEmail), "manual");
 
         eventPublisher.publishDevOpsTeamEvent("availability-updated", saved);
+        webSocketEventService.broadcastDevOpsAvailabilityChanged(saved);
         return saved;
     }
 

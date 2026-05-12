@@ -89,4 +89,15 @@ public interface EmailService {
      * Generate a unique Message-ID for email threading.
      */
     String generateMessageId(String ticketId);
+
+    /**
+     * Send an automated birthday greeting. Best-effort; failures are logged.
+     */
+    void sendBirthdayWishes(String recipientEmail, String displayName);
+
+    /**
+     * Send an automated holiday greeting.
+     * @param holidayName Display name of the holiday (e.g. "Christmas Day")
+     */
+    void sendHolidayWishes(String recipientEmail, String displayName, String holidayName);
 }

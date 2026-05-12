@@ -1,0 +1,71 @@
+# Read-only ClusterRole — the agent never writes to Kubernetes. Includes
+# the metrics.k8s.io API group and the nodes/proxy subresource needed to
+# scrape /metrics/cadvisor on each kubelet.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-cost-agent
+  namespace: k8s-cost-agent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-cost-agent
+rules:
+  # Core resources
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - nodes
+      - pods
+      - services
+      - endpoints
+      - persistentvolumes
+      - persistentvolumeclaims
+      - configmaps
+      - secrets
+      - serviceaccounts
+      - events
+      - resourcequotas
+      - limitranges
+    verbs: ["get", "list", "watch"]
+
+  # cAdvisor scraping via kubelet proxy
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"]
+
+  # Workload APIs
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch"]
+
+  # Live usage
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-cost-agent
+subjects:
+  - kind: ServiceAccount
+    name: k8s-cost-agent
+    namespace: k8s-cost-agent
+roleRef:
+  kind: ClusterRole
+  name: k8s-cost-agent
+  apiGroup: rbac.authorization.k8s.io

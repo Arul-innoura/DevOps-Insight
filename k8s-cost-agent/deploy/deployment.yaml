@@ -1,0 +1,61 @@
+# One replica is enough — the agent is stateless and writes to Mongo. Two
+# replicas would just duplicate the work without making the data fresher.
+# Resources are sized for a 500-pod / 50-namespace cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k8s-cost-agent
+  namespace: k8s-cost-agent
+  labels:
+    app: k8s-cost-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate    # stateless, but Recreate avoids two writers in flight
+  selector:
+    matchLabels:
+      app: k8s-cost-agent
+  template:
+    metadata:
+      labels:
+        app: k8s-cost-agent
+      annotations:
+        # Bump this to force a rollout when only the configmap/secret changes.
+        config-version: "1"
+    spec:
+      serviceAccountName: k8s-cost-agent
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agent
+          image: k8s-cost-agent:dev   # overridden by `make deploy IMG=...`
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef: { name: k8s-cost-agent }
+            - secretRef:    { name: k8s-cost-agent }
+          ports:
+            - name: http
+              containerPort: 8090
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]

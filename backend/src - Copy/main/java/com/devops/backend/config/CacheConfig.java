@@ -1,0 +1,91 @@
+package com.devops.backend.config;
+
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.cache.annotation.CachingConfigurer;
+import org.springframework.cache.annotation.EnableCaching;
+import org.springframework.cache.interceptor.CacheErrorHandler;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.cache.RedisCacheManager;
+import org.springframework.data.redis.cache.RedisCacheConfiguration;
+import org.springframework.data.redis.cache.RedisCacheWriter;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.RedisSerializationContext;
+
+import java.time.Duration;
+import java.util.Map;
+
+@Configuration
+@EnableCaching
+@Slf4j
+public class CacheConfig implements CachingConfigurer {
+
+    @Bean
+    public RedisCacheConfiguration redisCacheConfiguration() {
+        ObjectMapper mapper = new ObjectMapper();
+        mapper.registerModule(new JavaTimeModule());
+        mapper.activateDefaultTyping(
+                LaissezFaireSubTypeValidator.instance,
+                ObjectMapper.DefaultTyping.NON_FINAL,
+                JsonTypeInfo.As.PROPERTY
+        );
+        GenericJackson2JsonRedisSerializer serializer = new GenericJackson2JsonRedisSerializer(mapper);
+        return RedisCacheConfiguration.defaultCacheConfig()
+                .entryTtl(Duration.ofSeconds(60))
+                .disableCachingNullValues()
+                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(serializer));
+    }
+
+    @Bean
+    public CacheManager cacheManager(
+            RedisConnectionFactory connectionFactory,
+            RedisCacheConfiguration redisCacheConfiguration
+    ) {
+        RedisCacheWriter cacheWriter = RedisCacheWriter.nonLockingRedisCacheWriter(connectionFactory);
+        return RedisCacheManager.builder(cacheWriter)
+                .cacheDefaults(redisCacheConfiguration)
+                .withInitialCacheConfigurations(Map.of(
+                        "tickets-unassigned", redisCacheConfiguration.entryTtl(Duration.ofSeconds(15)),
+                        "tickets-assignee", redisCacheConfiguration.entryTtl(Duration.ofSeconds(15)),
+                        "tickets-active-assignee", redisCacheConfiguration.entryTtl(Duration.ofSeconds(15)),
+                        "tickets-completed-assignee", redisCacheConfiguration.entryTtl(Duration.ofSeconds(15))
+                ))
+                .build();
+    }
+
+    /**
+     * Spring only applies a {@link CacheErrorHandler} when it is exposed via {@link CachingConfigurer#errorHandler()}.
+     * A standalone {@code @Bean} is ignored — this prevents Redis (de)serialization issues from surfacing as HTTP 500.
+     */
+    @Override
+    public CacheErrorHandler errorHandler() {
+        return new CacheErrorHandler() {
+            @Override
+            public void handleCacheGetError(RuntimeException exception, Cache cache, Object key) {
+                log.warn("Cache get failed ({} key={}): {}", cache.getName(), key, exception.toString());
+            }
+
+            @Override
+            public void handleCachePutError(RuntimeException exception, Cache cache, Object key, Object value) {
+                log.warn("Cache put failed ({} key={}): {}", cache.getName(), key, exception.toString());
+            }
+
+            @Override
+            public void handleCacheEvictError(RuntimeException exception, Cache cache, Object key) {
+                log.warn("Cache evict failed ({} key={}): {}", cache.getName(), key, exception.toString());
+            }
+
+            @Override
+            public void handleCacheClearError(RuntimeException exception, Cache cache) {
+                log.warn("Cache clear failed ({}): {}", cache.getName(), exception.toString());
+            }
+        };
+    }
+}

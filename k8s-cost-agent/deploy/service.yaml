@@ -1,0 +1,18 @@
+# ClusterIP only — the existing Spring backend reaches it from inside the
+# cluster. Expose externally via your existing Ingress only if dashboards
+# need to talk to it directly.
+apiVersion: v1
+kind: Service
+metadata:
+  name: k8s-cost-agent
+  namespace: k8s-cost-agent
+  labels:
+    app: k8s-cost-agent
+spec:
+  type: ClusterIP
+  selector:
+    app: k8s-cost-agent
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http

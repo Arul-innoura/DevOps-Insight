@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 
 // Components
@@ -8,6 +8,7 @@ import DevOpsDashboard from './dashboards/devops/DevOpsDashboard';
 import CostEstimateWindowPage from './dashboards/devops/CostEstimateWindowPage';
 import UserDashboard from './dashboards/user/UserDashboard';
 import ManagerApprovalPage from './dashboards/ManagerApprovalPage';
+import LiveBuildView from './dashboards/LiveBuildView';
 import ProtectedRoute from './routes/ProtectedRoute';
 import { RoleRedirect, Unauthorized } from './routes/roleRoutes';
 import NotFoundPage from './pages/NotFoundPage';
@@ -15,6 +16,26 @@ import { ToastProvider } from './services/ToastNotification';
 import { ThemeProvider } from './services/ThemeContext';
 
 function App() {
+  useEffect(() => {
+    if (typeof Notification === 'undefined') return;
+    if (Notification.permission !== 'default') return;
+    // Chrome/Edge require a user gesture; register a one-time listener so the
+    // browser dialog fires on the very first interaction anywhere in the app.
+    const ask = () => {
+      if (Notification.permission === 'default') {
+        Notification.requestPermission().catch(() => {});
+      }
+    };
+    window.addEventListener('click',      ask, { once: true, capture: true });
+    window.addEventListener('keydown',    ask, { once: true, capture: true });
+    window.addEventListener('touchstart', ask, { once: true, capture: true });
+    return () => {
+      window.removeEventListener('click',      ask, { capture: true });
+      window.removeEventListener('keydown',    ask, { capture: true });
+      window.removeEventListener('touchstart', ask, { capture: true });
+    };
+  }, []);
+
   return (
     <ThemeProvider>
       <ToastProvider>
@@ -52,6 +73,14 @@ function App() {
               <Route path="/user" element={
                 <ProtectedRoute requiredRole="User">
                   <UserDashboard />
+                </ProtectedRoute>
+              } />
+
+              {/* Live auto-build view — opened in a new tab from the trigger flow.
+                  Any authenticated role (User / DevOps / Admin) can watch a build. */}
+              <Route path="/build/:executionId" element={
+                <ProtectedRoute>
+                  <LiveBuildView />
                 </ProtectedRoute>
               } />
 

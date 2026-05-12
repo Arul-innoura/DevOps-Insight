@@ -15,11 +15,10 @@ import {
     playAssignmentNotification,
     playApprovalTriggeredSound,
     playRejectionFeedbackSound,
-    playTeamRosterUpdateNotification,
-    playAvailabilityChangeNotification,
     playDataSyncChime,
     primeAudioContext
 } from "./notificationService";
+import { showBrowserNotification, extractTicketLabel } from "./browserNotificationService";
 
 /**
  * Main hook for real-time data synchronization
@@ -28,6 +27,8 @@ import {
 export const useRealTimeSync = ({
     onRefresh,
     onPatchEvent,
+    onNotify = null,
+    currentUserEmail = null,
     playNewTicketSound = false,
     playUpdateSound = true,
     enableWebSocket = true,
@@ -38,6 +39,9 @@ export const useRealTimeSync = ({
     eventTypes = null
 }) => {
     const onRefreshRef = useRef(onRefresh);
+    const onNotifyRef = useRef(onNotify);
+    const onPatchEventRef = useRef(onPatchEvent);
+    const currentUserEmailRef = useRef(currentUserEmail);
     const didInitialLoad = useRef(false);
     const debounceRef = useRef(null);
     const lockRef = useRef(false);
@@ -45,9 +49,12 @@ export const useRealTimeSync = ({
     const lastRefreshAtRef = useRef(0);
     const initialLoadKeyRef = useRef("");
     const [wsBrokenUsePolling, setWsBrokenUsePolling] = useState(false);
-    
-    // Keep ref updated
+
+    // Keep refs updated so handlers always call the latest callbacks
     onRefreshRef.current = onRefresh;
+    onNotifyRef.current = onNotify;
+    onPatchEventRef.current = onPatchEvent;
+    currentUserEmailRef.current = currentUserEmail;
     
     const debouncedRefresh = useCallback(() => {
         if (debounceRef.current) {
@@ -130,48 +137,80 @@ export const useRealTimeSync = ({
             return () => clearInterval(timer);
         }
         
+        // Returns true if the current user is involved in this ticket event.
+        // DevOps/availability events always pass (they're team-wide).
+        const isInvolved = (data) => {
+            const email = currentUserEmailRef.current;
+            if (!email) return true;
+            const lower = email.toLowerCase();
+            const raw = (data?.ticket && typeof data.ticket === 'object') ? data.ticket : data;
+            const assignedEmail = String(raw?.assignedToEmail ?? raw?.assigneeEmail ?? raw?.assignee?.email ?? '').toLowerCase();
+            const requestedEmail = String(raw?.requestedByEmail ?? raw?.createdByEmail ?? raw?.requesterEmail ?? '').toLowerCase();
+            return assignedEmail === lower || requestedEmail === lower;
+        };
+
         // New ticket created — always play the distinctive arrival chime
         const handleNewTicket = (data) => {
-            if (didInitialLoad.current && playNewTicketSound) {
+            if (didInitialLoad.current && playNewTicketSound && isInvolved(data)) {
                 void primeAudioContext();
                 playNewTicketNotification();
+                showBrowserNotification(
+                    'New Ticket Received',
+                    extractTicketLabel(data)
+                );
+                onNotifyRef.current?.(WS_MESSAGE_TYPES.TICKET_CREATED, data);
             }
-            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_CREATED, data);
+            onPatchEventRef.current?.(WS_MESSAGE_TYPES.TICKET_CREATED, data);
             if (refreshOnEvents) {
                 debouncedRefresh();
             }
         };
 
         const handleTicketUpdated = (data) => {
-            if (didInitialLoad.current && playUpdateSound) {
+            if (didInitialLoad.current && playUpdateSound && isInvolved(data)) {
                 void primeAudioContext();
                 playTicketUpdateNotification();
+                showBrowserNotification(
+                    'Ticket Updated',
+                    extractTicketLabel(data)
+                );
+                onNotifyRef.current?.(WS_MESSAGE_TYPES.TICKET_UPDATED, data);
             }
-            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_UPDATED, data);
+            onPatchEventRef.current?.(WS_MESSAGE_TYPES.TICKET_UPDATED, data);
             if (refreshOnEvents) {
                 debouncedRefresh();
             }
         };
 
         const handleTicketAssigned = (data) => {
-            if (didInitialLoad.current && playUpdateSound) {
+            if (didInitialLoad.current && playUpdateSound && isInvolved(data)) {
                 void primeAudioContext();
                 playAssignmentNotification();
+                showBrowserNotification(
+                    'Ticket Assigned',
+                    extractTicketLabel(data)
+                );
+                onNotifyRef.current?.(WS_MESSAGE_TYPES.TICKET_ASSIGNED, data);
             }
-            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_ASSIGNED, data);
+            onPatchEventRef.current?.(WS_MESSAGE_TYPES.TICKET_ASSIGNED, data);
             if (refreshOnEvents) {
                 debouncedRefresh();
             }
         };
 
         const handleTicketDeleted = (data) => {
-            if (didInitialLoad.current && playUpdateSound) {
-                void primeAudioContext();
-                playRejectionFeedbackSound();
-            }
             const id = data?.id ?? data?.ticketId;
             const normalized = id != null && id !== "" ? { ...data, id, ticketId: data?.ticketId ?? id } : data;
-            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_DELETED, normalized);
+            if (didInitialLoad.current && playUpdateSound && isInvolved(data)) {
+                void primeAudioContext();
+                playRejectionFeedbackSound();
+                showBrowserNotification(
+                    'Ticket Removed',
+                    extractTicketLabel(data)
+                );
+                onNotifyRef.current?.(WS_MESSAGE_TYPES.TICKET_DELETED, normalized);
+            }
+            onPatchEventRef.current?.(WS_MESSAGE_TYPES.TICKET_DELETED, normalized);
             if (refreshOnEvents) {
                 debouncedRefresh();
             }
@@ -180,48 +219,57 @@ export const useRealTimeSync = ({
         const handleCacheInvalidation = (hint) => {
             applyCacheInvalidationHint(hint);
         };
-        
+
         // Handler for status change events
         const handleStatusChange = (data) => {
-            console.log('[RealTimeSync] Status changed:', data);
-
-            if (didInitialLoad.current && playUpdateSound) {
+            if (didInitialLoad.current && playUpdateSound && isInvolved(data)) {
                 void primeAudioContext();
                 const status = data?.status;
+                let notifTitle = 'Status Updated';
+                let notifBody = extractTicketLabel(data);
                 if (status === "MANAGER_APPROVAL_PENDING" || status === "COST_APPROVAL_PENDING") {
                     playApprovalTriggeredSound();
+                    notifTitle = 'Approval Required';
+                    notifBody = `${notifBody} — awaiting approval`;
                 } else if (status === "REJECTED") {
                     playRejectionFeedbackSound();
+                    notifTitle = 'Ticket Rejected';
                 } else if (status === "COMPLETED" || status === "CLOSED") {
                     playSuccessNotification();
+                    notifTitle = 'Ticket Completed';
                 } else {
                     playStatusChangeNotification();
+                    notifBody = `${notifBody} — status changed to ${status || 'updated'}`;
                 }
+                showBrowserNotification(notifTitle, notifBody);
+                onNotifyRef.current?.(WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, data);
             }
 
-            onPatchEvent?.(WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, data);
+            onPatchEventRef.current?.(WS_MESSAGE_TYPES.TICKET_STATUS_CHANGED, data);
             if (refreshOnEvents) {
                 debouncedRefresh();
             }
         };
 
         const handleDevOpsMemberEvent = (data) => {
-            if (didInitialLoad.current && playUpdateSound) {
-                void primeAudioContext();
-                playTeamRosterUpdateNotification();
-            }
-            onPatchEvent?.(WS_MESSAGE_TYPES.DEVOPS_UPDATED, data);
+            // EventPublisherService wraps the member under data.member — unwrap it so
+            // the dashboard patch handler can read id/email/availability directly.
+            const memberData = data?.member && typeof data.member === 'object'
+                ? { ...data.member, action: data?.action }
+                : data;
+            onPatchEventRef.current?.(WS_MESSAGE_TYPES.DEVOPS_UPDATED, memberData);
             if (refreshOnEvents) {
                 debouncedRefresh();
             }
         };
 
         const handleAvailabilityEvent = (data) => {
-            if (didInitialLoad.current && playUpdateSound) {
-                void primeAudioContext();
-                playAvailabilityChangeNotification();
-            }
-            onPatchEvent?.(WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, data);
+            // EventPublisherService wraps the member under data.member — unwrap it so
+            // the dashboard patch handler can read id/email/availability directly.
+            const memberData = data?.member && typeof data.member === 'object'
+                ? { ...data.member, action: data?.action }
+                : data;
+            onPatchEventRef.current?.(WS_MESSAGE_TYPES.DEVOPS_AVAILABILITY_CHANGED, memberData);
             if (refreshOnEvents) {
                 debouncedRefresh();
             }
@@ -232,7 +280,7 @@ export const useRealTimeSync = ({
                 void primeAudioContext();
                 playDataSyncChime();
             }
-            onPatchEvent?.(WS_MESSAGE_TYPES.SYNC_REQUIRED, data);
+            onPatchEventRef.current?.(WS_MESSAGE_TYPES.SYNC_REQUIRED, data);
             if (refreshOnEvents) {
                 debouncedRefresh();
             }

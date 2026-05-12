@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8s-cost-agent
+  labels:
+    app.kubernetes.io/name: k8s-cost-agent
+    app.kubernetes.io/component: monitoring

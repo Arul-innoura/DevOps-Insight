@@ -1,8 +1,4 @@
-/**
- * Notification sounds — two files only:
- * - `notif.mp3` — soft chime (routine updates, success, status, assignment, sync, etc.)
- * - `notf1.mp3` — slightly harder chime (new ticket, approval, warnings/errors, celebration, “long” toast)
- */
+/** Notification sounds — single file: `shipt.aac` for all events. */
 
 let audioContext = null;
 let soundEnabled = true;
@@ -22,10 +18,8 @@ const DEFAULT_SOUND_CATEGORIES = {
 };
 let soundCategories = { ...DEFAULT_SOUND_CATEGORIES };
 
-/** Soft chime — `notif.mp3` */
-const SOUND_SOFT = "notif.mp3";
-/** Slightly harder chime — `notf1.mp3` */
-const SOUND_ALERT = "notf1.mp3";
+const SOUND_SOFT = "shipt.aac";
+const SOUND_ALERT = "shipt.aac";
 
 // Sound preferences storage key
 const SOUND_PREFS_KEY = 'devops_sound_preferences';
@@ -69,8 +63,8 @@ export const setSoundCategoryEnabled = (key, enabled) => {
 };
 
 /**
- * Browser audio unlock: many browsers block sound until user interacts once.
- * This resumes the AudioContext on first click/key/touch.
+ * Browser audio unlock + OS notification permission.
+ * Browsers block both sound and push notifications until a user gesture fires.
  */
 const setupAudioUnlock = () => {
     if (typeof window === "undefined") return;
@@ -89,9 +83,10 @@ const setupAudioUnlock = () => {
         } catch {
             /* ignore */
         }
-        window.removeEventListener("click", unlock);
-        window.removeEventListener("keydown", unlock);
-        window.removeEventListener("touchstart", unlock);
+        // Request OS notification permission on first interaction
+        if (typeof Notification !== "undefined" && Notification.permission === "default") {
+            Notification.requestPermission().catch(() => {});
+        }
     };
     window.addEventListener("click", unlock, { once: true });
     window.addEventListener("keydown", unlock, { once: true });
@@ -198,7 +193,7 @@ export function playSoundFile(fileName, { category = null, volumeScale = 1 } = {
 function preloadSoundAssets() {
     if (typeof window === "undefined") return;
     try {
-        [SOUND_SOFT, SOUND_ALERT].forEach((file) => {
+        [SOUND_SOFT].forEach((file) => {
             const a = new Audio(publicAssetUrl(`/sounds/${file}`));
             a.preload = "auto";
             void a.load();
@@ -222,10 +217,48 @@ export const primeAudioContext = () => {
     return ctx.resume().catch(() => {});
 };
 
+/**
+ * Synthesized WhatsApp-style two-note chime — plays instantly via Web Audio API,
+ * no file loading latency, truly real-time.
+ * C6 (1047 Hz) → G5 (784 Hz) with soft bell envelope.
+ */
+export const playSynthChime = () => {
+    const ctx = getAudioContext();
+    if (!ctx || !soundEnabled) return;
+    const vol = volumeLevel * 0.42;
+    ctx.resume().then(() => {
+        const now = ctx.currentTime;
+        // First note — high ding
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
+        osc1.type = 'sine';
+        osc1.frequency.value = 1047; // C6
+        gain1.gain.setValueAtTime(0, now);
+        gain1.gain.linearRampToValueAtTime(vol, now + 0.006);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+        osc1.start(now);
+        osc1.stop(now + 0.55);
+        // Second note — lower dong
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        osc2.type = 'sine';
+        osc2.frequency.value = 784; // G5
+        gain2.gain.setValueAtTime(0, now + 0.14);
+        gain2.gain.linearRampToValueAtTime(vol * 0.75, now + 0.148);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.72);
+        osc2.start(now + 0.14);
+        osc2.stop(now + 0.72);
+    }).catch(() => {});
+};
+
 // ============ Notification sounds (notif.mp3 / notf1.mp3 only) ============
 
 export const playShortNotification = () => {
-    playSoundFile(SOUND_SOFT, { category: "ticketUpdate" });
+    playSoundFile(SOUND_SOFT, { category: "ticketUpdate", volumeScale: 0.95 });
 };
 
 export const playPopNotification = () => {

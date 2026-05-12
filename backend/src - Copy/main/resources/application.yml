@@ -1,0 +1,121 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: shipit-backend
+
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 50MB
+
+  mongodb:
+    uri: ${MONGODB_URI:mongodb+srv://infraUser:3DVK5Rx5MFP2NkKT@ops-cluster.9tb2ted.mongodb.net/}
+    database: ${MONGODB_DATABASE:devops_portal}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+  cache:
+    type: redis
+    redis:
+      cache-null-values: false
+
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://login.microsoftonline.com/cd775fb1-40c4-42dc-8ddf-2ca152bec472/v2.0
+          jwk-set-uri: https://login.microsoftonline.com/cd775fb1-40c4-42dc-8ddf-2ca152bec472/discovery/v2.0/keys
+
+  mail:
+    # Azure Communication Services SMTP relay (default).
+    # Exchange Online alternative: MAIL_HOST=smtp.office365.com  (SMTP AUTH must be enabled per-mailbox in EXO Admin)
+    host: ${MAIL_HOST:smtp.azurecomm.net}
+    port: ${MAIL_PORT:587}
+    username: ${MAIL_USERNAME:devopsteam@altermanager.encipherhealth.com}
+    password: ${MAIL_PASSWORD:2K78Q~0i3xgkD.s8x_xOljoD6Dx~3eGY5aEnvcG8}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          # Trust any SMTP server certificate — required for ACS / O365 STARTTLS handshake
+          ssl:
+            trust: "*"
+          connectiontimeout: 10000
+          timeout: 10000
+          writetimeout: 10000
+
+app:
+  azure:
+    queue:
+      connection-string: ${AZURE_QUEUE_CONNECTION_STRING:DefaultEndpointsProtocol=https;AccountName=inframodules;AccountKey=Lyh/YI0m4KgvLwzPSryFvgxLEWr9kjHTdRTHzlNMRj5eJYRQXfRdldr8p3Huw2LjtGVXQJpsCqb9+AStaGKxjw==;EndpointSuffix=core.windows.net}
+      queue-name: ${AZURE_QUEUE_NAME:shipit-mail-queue}
+    blob:
+      connection-string: ${AZURE_BLOB_CONNECTION_STRING:DefaultEndpointsProtocol=https;AccountName=inframodules;AccountKey=Lyh/YI0m4KgvLwzPSryFvgxLEWr9kjHTdRTHzlNMRj5eJYRQXfRdldr8p3Huw2LjtGVXQJpsCqb9+AStaGKxjw==;EndpointSuffix=core.windows.net}
+      container-name: ${AZURE_BLOB_CONTAINER:shipit-assets}
+  email:
+    from: ${MAIL_FROM:devopsteam@altermanager.encipherhealth.com}
+    devops-to: ${DEVOPS_EMAIL:devopsteam@encipherhealth.com}
+    enabled: ${EMAIL_ENABLED:true}
+    # Default direct SMTP so mail works without a working Azure Queue consumer. Set EMAIL_SEND_VIA_QUEUE=true for async queue.
+    send-via-queue: ${EMAIL_SEND_VIA_QUEUE:false}
+  frontend:
+    url: ${FRONTEND_URL:https://shipit.encipherhealth.com}
+  trivy:
+    path: ${TRIVY_PATH:trivy}
+    timeout: ${TRIVY_TIMEOUT:120}
+  prometheus:
+    # Per-environment Prometheus query endpoints. Live cost engine fans out
+    # across whichever envs are populated. Empty values are skipped silently.
+    enabled: ${PROMETHEUS_ENABLED:true}
+    endpoints:
+      qa:   ${PROMETHEUS_QA_URL:https://qametrics.encipherhealth.com/api/v1/query}
+      dev:  ${PROMETHEUS_DEV_URL:}
+      stage: ${PROMETHEUS_STAGE_URL:}
+      prod: ${PROMETHEUS_PROD_URL:}
+    poll-seconds: ${PROMETHEUS_POLL_SECONDS:30}
+    discovery-minutes: ${PROMETHEUS_DISCOVERY_MINUTES:10}
+    request-timeout-seconds: ${PROMETHEUS_REQUEST_TIMEOUT:15}
+    # Default Azure region used to price discovered SKUs when the node label
+    # doesn't carry a region explicitly.
+    default-region: ${PROMETHEUS_DEFAULT_REGION:eastus}
+    # AKS control plane SLA tier — "free" or "standard". Standard adds ~$73/mo.
+    aks-control-plane-tier: ${PROMETHEUS_AKS_TIER:free}
+    # Fixed-cost inventory extras — anything the live cluster can't be
+    # auto-discovered via Prometheus (DBs, CI servers, Key Vault, etc.).
+    # Can also be added at runtime through the Cloud Services admin UI.
+    fixed-cost-extras:
+      - category: database
+        name: MongoDB Cluster
+        sku: M10-Cluster
+        count: 1
+        monthly-usd: 82.99
+        detail: Atlas managed cluster
+      - category: keyvault
+        name: Azure Key Vault
+        sku: Standard
+        count: 1
+        auto-price: true
+        detail: Secret + key + cert ops are billed per 10k ops; baseline shown
+      - category: storageAccount
+        name: Storage Account
+        sku: StorageV2
+        count: 1
+        monthly-usd: 20.80
+        detail: GPv2, LRS, Hot tier baseline
+
+logging:
+  level:
+    org:
+      springframework:
+        security: INFO
+    com:
+      devops:
+        backend: INFO

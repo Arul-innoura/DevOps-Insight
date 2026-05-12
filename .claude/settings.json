@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const fs = require\\('fs'\\); const src = fs.readFileSync\\('src/dashboards/admin/EnvironmentsManager.js', 'utf8'\\); const lines = src.split\\('\\\\n'\\); const last50 = lines.slice\\(-50\\).join\\('\\\\n'\\); console.log\\(last50\\);\")"
+    ]
+  }
+}

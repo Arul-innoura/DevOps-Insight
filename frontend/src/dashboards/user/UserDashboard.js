@@ -1,9 +1,9 @@
 ﻿import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useMsal } from "@azure/msal-react";
-import { 
-    LogOut, 
-    User, 
-    FileText, 
+import {
+    LogOut,
+    User,
+    FileText,
     UserCircle,
     Plus,
     RefreshCw,
@@ -14,13 +14,12 @@ import {
     Mail,
     Settings,
     TrendingUp,
-    BarChart3,
     Clock,
     CheckCircle,
     AlertCircle,
     XCircle,
+    Server,
 } from "lucide-react";
-import { ShipItEyeIcon } from "../../components/ShipItEyeIcon";
 import { 
     TicketCard, 
     TicketFilters, 
@@ -56,11 +55,14 @@ import {
     getMyNotificationPreferences,
     saveMyNotificationPreferences
 } from "../../services/userNotificationService";
-import AnalyticsDashboard from "../admin/AnalyticsDashboard";
-import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
+import UserInfraPanel from "./UserInfraPanel";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
+import { useAnyEnvLive, useLiveEnvSummary } from "../../services/useAnyEnvLive";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
+import BirthdayHolidayBanner from "../../components/BirthdayHolidayBanner";
+import NotificationPermissionBanner from "../../components/NotificationPermissionBanner";
+import { getMyProfile } from "../../services/profileService";
 import TicketSearchBar from "../../components/TicketSearchBar";
 import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
@@ -98,6 +100,16 @@ export const UserDashboard = () => {
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [activeTab, setActiveTab] = useState('active');
     const [activeSection, setActiveSection] = useState('requests');
+    const [newSeen, setNewSeen] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('user_new_seen') || '{}'); } catch { return {}; }
+    });
+    const markNewSeen = (key) => {
+        setNewSeen(prev => {
+            const next = { ...prev, [key]: true };
+            try { localStorage.setItem('user_new_seen', JSON.stringify(next)); } catch {}
+            return next;
+        });
+    };
     const [devOpsMembers, setDevOpsMembers] = useState([]);
     const [projects, setProjects] = useState([]);
     const [managers, setManagers] = useState([]);
@@ -113,6 +125,7 @@ export const UserDashboard = () => {
     const [emailNotifSaving, setEmailNotifSaving] = useState(false);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("user", USER_SIDEBAR_NAV_DEFAULTS);
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+    const [profilePicUrl, setProfilePicUrl] = useState(null);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
     const suppressDataChangeRefreshUntilRef = useRef(0);
     const pendingSilentTicketsRefreshRef = useRef(false);
@@ -127,6 +140,15 @@ export const UserDashboard = () => {
         ticketSearchRef.current = ticketSearch;
     }, [ticketSearch]);
     useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
+
+    // Load the user's profile once so the sidebar avatar can reflect their photo
+    useEffect(() => {
+        let cancelled = false;
+        getMyProfile()
+            .then((p) => { if (!cancelled) setProfilePicUrl(p?.profilePicUrl || null); })
+            .catch(() => { /* silent — falls back to initials */ });
+        return () => { cancelled = true; };
+    }, []);
 
     const filteredTicketsRef = useRef(filteredTickets);
     filteredTicketsRef.current = filteredTickets;
@@ -217,6 +239,7 @@ export const UserDashboard = () => {
                 void loadTickets(true);
             }
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [userEmail]);
 
     // Real-time updates via WebSocket - silent background refresh
@@ -351,6 +374,21 @@ export const UserDashboard = () => {
             });
             suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;
         },
+        currentUserEmail: userEmail,
+        onNotify: (type, data) => {
+            const raw = (data?.ticket && typeof data.ticket === 'object') ? data.ticket : data;
+            const title = raw?.title || raw?.summary || "Ticket";
+            if (type === "ticket:created") {
+                toast.info('New Ticket', title, { playSound: false });
+            } else if (type === "ticket:assigned") {
+                toast.info('Ticket Assigned', title, { playSound: false });
+            } else if (type === "ticket:status_changed") {
+                const status = raw?.status ? ` — ${raw.status.replace(/_/g, ' ')}` : '';
+                toast.info('Status Changed', `${title}${status}`, { playSound: false });
+            } else {
+                toast.info('Ticket Updated', title, { playSound: false });
+            }
+        },
         playUpdateSound: true,
         refreshOnEvents: false,
         eventTypes: [
@@ -379,7 +417,8 @@ export const UserDashboard = () => {
     }, [loadTickets]);
 
     const { isConnected } = useConnectionStatus();
-    const lastSyncTime = null;
+    const hasLiveEnv = useAnyEnvLive();
+    const liveEnvSummary = useLiveEnvSummary();
     const forceRefresh = () => loadTickets(false);
     
     const applyFilters = (fullTicketList, currentFilters, tab) => {
@@ -451,6 +490,7 @@ export const UserDashboard = () => {
     useEffect(() => {
         if (activeSection !== "requests") return;
         applyFilters(tickets, filtersRef.current, activeTabRef.current);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [ticketSearch, tickets, activeSection, activeTab]);
     
     const handleTicketCreated = (createdTicket) => {
@@ -568,20 +608,19 @@ export const UserDashboard = () => {
     if (isInitialLoading) return <LoadingScreen role="user" userName={userName} />;
 
     return (
-        <div className="dashboard-layout">
+        <div className="dashboard-layout user-dashboard">
             {mobileSidebarOpen && <div className="mobile-sidebar-overlay" onClick={() => setMobileSidebarOpen(false)} />}
             {/* Unified ShipIt Sidebar */}
             <aside className={`shipit-sidebar${mobileSidebarOpen ? ' sb-mobile-open' : ''}`}>
                 {/* Brand */}
                 <div className="sb-brand">
                     <div className="sb-brand-icon sb-brand-icon--eye">
-                        <ShipItEyeIcon className="sb-brand-eye" blink />
+                        <img src="/favicon-eye.svg" alt="ShipIt" className="sb-brand-eye-img" />
                         <span className={`sb-conn-dot ${isConnected ? 'connected' : 'disconnected'}`}
                               title={isConnected ? 'Live connection' : 'Reconnecting...'} />
                     </div>
                     <div className="sb-brand-meta">
                         <span className="sb-app-name">ShipIt</span>
-                        <span className="sb-app-subtitle">Request Portal</span>
                     </div>
                 </div>
 
@@ -595,14 +634,15 @@ export const UserDashboard = () => {
                         />
                         {navGroups.workspace && (
                             <div className="sb-group-items">
-                                <a href="#" className={`sb-item ${activeSection === 'requests' ? 'active' : ''}`}
-                                   onClick={(e) => { e.preventDefault(); setActiveSection('requests'); }}>
+                                <button type="button" className={`sb-item ${activeSection === 'requests' ? 'active' : ''}`}
+                                   onClick={() => setActiveSection('requests')}>
                                     <span className="sb-item-icon"><FileText size={15} /></span>
                                     <span className="sb-item-text">My Requests</span>
                                     {(stats.pending > 0 || stats.active > 0) && (
                                         <span className="sb-badge">{stats.active || stats.pending}</span>
                                     )}
-                                </a>
+                                </button>
+
                             </div>
                         )}
                     </div>
@@ -615,16 +655,18 @@ export const UserDashboard = () => {
                         />
                         {navGroups.system && (
                             <div className="sb-group-items">
-                                <a href="#" className={`sb-item ${activeSection === 'settings' ? 'active' : ''}`}
-                                   onClick={(e) => { e.preventDefault(); setActiveSection('settings'); }}>
+                                <button type="button" className={`sb-item ${activeSection === 'infrastructure' ? 'active' : ''}`}
+                                   onClick={() => { setActiveSection('infrastructure'); markNewSeen('infrastructure'); }}>
+                                    <span className="sb-item-icon"><Server size={15} /></span>
+                                    <span className="sb-item-text">Infrastructure</span>
+                                    {hasLiveEnv && <span className="sb-live-dot" title="A product environment is up" />}
+                                    {!newSeen.infrastructure && <span className="sb-new-badge">New</span>}
+                                </button>
+                                <button type="button" className={`sb-item ${activeSection === 'settings' ? 'active' : ''}`}
+                                   onClick={() => setActiveSection('settings')}>
                                     <span className="sb-item-icon"><Settings size={15} /></span>
                                     <span className="sb-item-text">Preferences</span>
-                                </a>
-                                <a href="#" className={`sb-item ${activeSection === 'monitoring' ? 'active' : ''}`}
-                                   onClick={(e) => { e.preventDefault(); setActiveSection('monitoring'); }}>
-                                    <span className="sb-item-icon"><BarChart3 size={15} /></span>
-                                    <span className="sb-item-text">Analytics</span>
-                                </a>
+                                </button>
                             </div>
                         )}
                     </div>
@@ -637,11 +679,12 @@ export const UserDashboard = () => {
                         />
                         {navGroups.account && (
                             <div className="sb-group-items">
-                                <a href="#" className={`sb-item ${activeSection === 'profile' ? 'active' : ''}`}
-                                   onClick={(e) => { e.preventDefault(); setActiveSection('profile'); }}>
+                                <button type="button" className={`sb-item ${activeSection === 'profile' ? 'active' : ''}`}
+                                   onClick={() => { setActiveSection('profile'); markNewSeen('account'); }}>
                                     <span className="sb-item-icon"><UserCircle size={15} /></span>
                                     <span className="sb-item-text">My Account</span>
-                                </a>
+                                    {!newSeen.account && <span className="sb-new-badge">New</span>}
+                                </button>
                             </div>
                         )}
                     </div>
@@ -650,9 +693,17 @@ export const UserDashboard = () => {
                 {/* Footer */}
                 <div className="sb-footer">
                     <div className="sb-user-row">
-                        <div className="sb-avatar" style={{ background: '#6d28d9' }}>
-                            {(userName || '').split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase() || '?'}
-                        </div>
+                        {profilePicUrl ? (
+                            <img
+                                src={profilePicUrl}
+                                alt={userName || 'Profile'}
+                                className="sb-avatar sb-avatar--img"
+                            />
+                        ) : (
+                            <div className="sb-avatar" style={{ background: '#6d28d9' }}>
+                                {(userName || '?').trim().charAt(0).toUpperCase()}
+                            </div>
+                        )}
                         <div className="sb-user-meta">
                             <span className="sb-user-name">{userName}</span>
                             <span className="sb-user-email">{userEmail}</span>
@@ -669,6 +720,8 @@ export const UserDashboard = () => {
             
             <main className="dashboard-content">
 
+                <BirthdayHolidayBanner userName={userName} />
+                <NotificationPermissionBanner />
 
                 <header className="content-header">
                     <div className="header-top">
@@ -678,15 +731,29 @@ export const UserDashboard = () => {
                         <div>
                             {/* Breadcrumb */}
                             <div className="breadcrumb">
-                                <span className="breadcrumb-item"><a href="#">Home</a></span>
+                                <span className="breadcrumb-item">Home</span>
                                 <span className="breadcrumb-separator">/</span>
-                                <span className="breadcrumb-current">My Requests</span>
+                                <span className="breadcrumb-current">
+                                    {activeSection === 'infrastructure' ? 'Infrastructure'
+                                        : activeSection === 'settings' ? 'Preferences'
+                                        : activeSection === 'profile' ? 'My Account'
+                                        : 'My Requests'}
+                                </span>
                             </div>
                             <h1 style={{ fontSize: '1.75rem', fontWeight: '700', color: 'var(--text-main)', marginTop: '8px' }}>
-                                My Requests
+                                {activeSection === 'infrastructure' ? 'Infrastructure'
+                                    : activeSection === 'settings' ? 'Preferences'
+                                    : activeSection === 'profile' ? 'My Account'
+                                    : 'My Requests'}
                             </h1>
                             <p style={{ color: 'var(--text-sub)', marginTop: '0.5rem', fontSize: '0.9rem' }}>
-                                Create and track your infrastructure and deployment requests
+                                {activeSection === 'infrastructure'
+                                    ? 'Live product status and allocated resource specs'
+                                    : activeSection === 'settings'
+                                    ? 'Manage your notification and display preferences'
+                                    : activeSection === 'profile'
+                                    ? 'Your account details'
+                                    : 'Create and track your infrastructure and deployment requests'}
                             </p>
                         </div>
                         <div className="header-actions">
@@ -717,16 +784,24 @@ export const UserDashboard = () => {
                     )}
                 </header>
                 
-                {activeSection === 'settings' ? (
-                    <div className="tickets-section">
-                        <div className="tickets-header">
-                            <h3>Settings</h3>
+                {activeSection === 'infrastructure' ? (
+                    <UserInfraPanel />
+                ) : activeSection === 'settings' ? (
+                    <div className="tickets-section prefs-section">
+                        <div className="prefs-page-hdr">
+                            <div className="prefs-page-hdr__icon">
+                                <Settings size={17} />
+                            </div>
+                            <div>
+                                <h3 className="prefs-page-hdr__title">Preferences</h3>
+                                <p className="prefs-page-hdr__sub">Manage sounds, email and display settings</p>
+                            </div>
                         </div>
-                        <div className="tickets-list" style={{ padding: '1.5rem' }}>
-                            <div className="sound-settings">
+                        <div className="prefs-page-body">
+                            <div className="sound-settings pref-card">
                                 <div className="sound-settings-header">
                                     <span className="sound-settings-title">
-                                        <Bell size={18} style={{ marginRight: 8 }} />
+                                        <Bell size={17} />
                                         Notification Sounds
                                     </span>
                                     <button 
@@ -755,10 +830,10 @@ export const UserDashboard = () => {
                                 )}
                             </div>
 
-                            <div className="sound-settings" style={{ marginTop: "1.5rem" }}>
+                            <div className="sound-settings pref-card">
                                 <div className="sound-settings-header">
                                     <span className="sound-settings-title">
-                                        <Mail size={18} style={{ marginRight: 8 }} />
+                                        <Mail size={17} />
                                         Email notifications
                                     </span>
                                 </div>
@@ -831,10 +906,10 @@ export const UserDashboard = () => {
                                 )}
                             </div>
 
-                            <div className="sound-settings" style={{ marginTop: '1.5rem' }}>
+                            <div className="sound-settings pref-card">
                                 <div className="sound-settings-header">
                                     <span className="sound-settings-title">
-                                        <Settings size={18} style={{ marginRight: 8 }} />
+                                        <Settings size={17} />
                                         Theme
                                     </span>
                                 </div>
@@ -842,13 +917,6 @@ export const UserDashboard = () => {
                             </div>
                         </div>
                     </div>
-                ) : activeSection === 'monitoring' ? (
-                    <EnvMonitoringDashboard
-                        tickets={tickets}
-                        projects={projects}
-                        devOpsMembers={devOpsMembers}
-                        userRole="user"
-                    />
                 ) : activeSection === 'profile' ? (
                     <div className="tickets-section profile-section-wrap">
                         <DashboardProfilePage
@@ -858,6 +926,7 @@ export const UserDashboard = () => {
                             roleKey="user"
                             onSignOut={handleLogout}
                             avatarColor="#6d28d9"
+                            onProfileUpdated={(p) => setProfilePicUrl(p?.profilePicUrl || null)}
                         />
                     </div>
                 ) : (
@@ -929,6 +998,26 @@ export const UserDashboard = () => {
                 </div>
                 )}
                 </>
+                )}
+
+                {activeSection === 'requests' && liveEnvSummary.hasLive && (
+                    <div className="ud-live-banner" onClick={() => setActiveSection('infrastructure')} role="button" tabIndex={0}
+                        onKeyDown={e => e.key === 'Enter' && setActiveSection('infrastructure')}>
+                        <span className="ud-live-banner-dot" />
+                        <span className="ud-live-banner-text">
+                            {liveEnvSummary.items.map((item, i) => (
+                                <span key={item.product}>
+                                    {i > 0 && <span className="ud-live-sep">·</span>}
+                                    <strong>{item.product}</strong>
+                                    {' '}
+                                    <span className="ud-live-envs">{item.envs.join(', ')}</span>
+                                    {' '}
+                                    <span className="ud-live-status">UP</span>
+                                </span>
+                            ))}
+                        </span>
+                        <span className="ud-live-cta">View Infrastructure →</span>
+                    </div>
                 )}
 
                 {activeSection === 'requests' && (

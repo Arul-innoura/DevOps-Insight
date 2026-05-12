@@ -24,7 +24,7 @@ const NotFoundPage = () => {
                     </h1>
                 </div>
                 <div className="shipt-page-404__content">
-                    <p className="shipt-page-404__brand">Shipt It</p>
+                    <p className="shipt-page-404__brand">ShipIt</p>
                     <h2 id="shipt-404-heading" className="shipt-page-404__title">
                         Looks like you&apos;re lost
                     </h2>

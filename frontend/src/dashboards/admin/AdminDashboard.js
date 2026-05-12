@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { ShipItEyeIcon } from "../../components/ShipItEyeIcon";
 import { useMsal } from "@azure/msal-react";
 import { 
     LogOut, 
@@ -88,13 +87,18 @@ import {
     getSoundSettings
 } from "../../services/notificationService";
 import ProjectWorkflowEditor from "./ProjectWorkflowEditor";
+import CloudServicesManager from "./CloudServicesManager";
+import PrometheusLiveCostPanel from "./PrometheusLiveCostPanel";
 import ActivityLogsView from "./ActivityLogsView";
-import AnalyticsDashboard from "./AnalyticsDashboard";
 import MonitoringPanel from "../MonitoringPanel";
-import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
+import EnvUptimeDashboard from "../EnvUptimeDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
+import { useAnyEnvLive } from "../../services/useAnyEnvLive";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
+import BirthdayHolidayBanner from "../../components/BirthdayHolidayBanner";
+import NotificationPermissionBanner from "../../components/NotificationPermissionBanner";
+import { getMyProfile } from "../../services/profileService";
 import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
@@ -801,6 +805,7 @@ export const AdminDashboard = () => {
     const [activeTab, setActiveTab] = useState('all');
     const [stats, setStats] = useState({});
     const [viewMode, setViewMode] = useState('tickets'); // 'tickets', 'deletedTickets', 'analytics', ...
+    const hasLiveEnv = useAnyEnvLive();
     const [deletedTicketsList, setDeletedTicketsList] = useState([]);
     const [devOpsMembers, setDevOpsMembers] = useState([]);
     const [newMember, setNewMember] = useState({ name: '', email: '' });
@@ -824,6 +829,7 @@ export const AdminDashboard = () => {
     const [soundSettings, setSoundSettings] = useState(getSoundSettings);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("admin", ADMIN_SIDEBAR_NAV_DEFAULTS);
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+    const [profilePicUrl, setProfilePicUrl] = useState(null);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
     const isLoadingRef = useRef(false);
     const filtersRef = useRef(filters);
@@ -840,6 +846,15 @@ export const AdminDashboard = () => {
     useEffect(() => { filtersRef.current = filters; }, [filters]);
     useEffect(() => { activeTabRef.current = activeTab; }, [activeTab]);
     useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+
+    // Load current user's profile pic for the sidebar avatar
+    useEffect(() => {
+        let cancelled = false;
+        getMyProfile()
+            .then((p) => { if (!cancelled) setProfilePicUrl(p?.profilePicUrl || null); })
+            .catch(() => { /* silent — falls back to initials */ });
+        return () => { cancelled = true; };
+    }, []);
     useEffect(() => {
         ticketSearchRef.current = ticketSearch;
     }, [ticketSearch]);
@@ -1100,6 +1115,21 @@ export const AdminDashboard = () => {
                 return prev;
             });
             suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;
+        },
+        currentUserEmail: userEmail,
+        onNotify: (type, data) => {
+            const raw = (data?.ticket && typeof data.ticket === 'object') ? data.ticket : data;
+            const title = raw?.title || raw?.summary || "Ticket";
+            if (type === "ticket:created") {
+                addToast({ type: 'info', title: 'New Ticket', message: title, playSound: false });
+            } else if (type === "ticket:assigned") {
+                addToast({ type: 'info', title: 'Ticket Assigned', message: title, playSound: false });
+            } else if (type === "ticket:status_changed") {
+                const status = raw?.status ? ` — ${raw.status.replace(/_/g, ' ')}` : '';
+                addToast({ type: 'info', title: 'Status Changed', message: `${title}${status}`, playSound: false });
+            } else {
+                addToast({ type: 'info', title: 'Ticket Updated', message: title, playSound: false });
+            }
         },
         playNewTicketSound: true,
         playUpdateSound: true,
@@ -1455,13 +1485,12 @@ export const AdminDashboard = () => {
                 {/* Brand */}
                 <div className="sb-brand">
                     <div className="sb-brand-icon sb-brand-icon--eye">
-                        <ShipItEyeIcon className="sb-brand-eye" blink />
+                        <img src="/favicon-eye.svg" alt="ShipIt" className="sb-brand-eye-img" />
                         <span className={`sb-conn-dot ${isConnected ? 'connected' : 'disconnected'}`}
                               title={isConnected ? 'Live connection' : 'Disconnected'} />
                     </div>
                     <div className="sb-brand-meta">
                         <span className="sb-app-name">ShipIt</span>
-                        <span className="sb-app-subtitle">Admin Console</span>
                     </div>
                 </div>
 
@@ -1486,10 +1515,11 @@ export const AdminDashboard = () => {
                                     <span className="sb-item-icon"><ArchiveRestore size={15} /></span>
                                     <span className="sb-item-text">Deleted tickets</span>
                                 </a>
-                                <a href="#" className={`sb-item ${viewMode === 'analytics' ? 'active' : ''}`}
+                                <a href="#" className={`sb-item ${viewMode === 'analytics' ? 'active' : ''} ${hasLiveEnv ? 'sb-item--monitoring-live' : ''}`}
                                    onClick={(e) => { e.preventDefault(); setViewMode('analytics'); }}>
                                     <span className="sb-item-icon"><BarChart3 size={15} /></span>
                                     <span className="sb-item-text">Analytics</span>
+                                    {hasLiveEnv && <span className="sb-live-dot" title="A product environment is up" />}
                                 </a>
                             </div>
                         )}
@@ -1528,6 +1558,17 @@ export const AdminDashboard = () => {
                                     <span className="sb-item-icon"><Activity size={15} /></span>
                                     <span className="sb-item-text">Activity Logs</span>
                                 </a>
+                                <a href="#" className={`sb-item ${viewMode === 'cloudServices' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('cloudServices'); }}>
+                                    <span className="sb-item-icon"><Layers size={15} /></span>
+                                    <span className="sb-item-text">Cloud Services</span>
+                                </a>
+                                <a href="#" className={`sb-item ${viewMode === 'liveCost' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('liveCost'); }}
+                                   title="Auto-discovered live cost from Prometheus, priced live via Azure Retail">
+                                    <span className="sb-item-icon"><Activity size={15} /></span>
+                                    <span className="sb-item-text">Live Cluster Cost</span>
+                                </a>
                             </div>
                         )}
                     </div>
@@ -1558,9 +1599,17 @@ export const AdminDashboard = () => {
                 {/* Footer */}
                 <div className="sb-footer">
                     <div className="sb-user-row">
-                        <div className="sb-avatar">
-                            {(userName || '').split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase() || '?'}
-                        </div>
+                        {profilePicUrl ? (
+                            <img
+                                src={profilePicUrl}
+                                alt={userName || 'Profile'}
+                                className="sb-avatar sb-avatar--img"
+                            />
+                        ) : (
+                            <div className="sb-avatar">
+                                {(userName || '?').trim().charAt(0).toUpperCase()}
+                            </div>
+                        )}
                         <div className="sb-user-meta">
                             <span className="sb-user-name">{userName}</span>
                             <span className="sb-user-email">{userEmail}</span>
@@ -1576,6 +1625,10 @@ export const AdminDashboard = () => {
             </aside>
             
             <main className="dashboard-content">
+
+                <BirthdayHolidayBanner userName={userName} />
+                <NotificationPermissionBanner />
+
                 <header className="content-header jira-style">
                     <div className="header-top">
                         <button className="mobile-menu-btn" onClick={() => setMobileSidebarOpen(o => !o)} aria-label="Toggle menu">
@@ -1596,6 +1649,8 @@ export const AdminDashboard = () => {
                                     {viewMode === 'statusTimeline' && 'Timeline'}
                                     {viewMode === 'rota' && 'Schedule'}
                                     {viewMode === 'activityLogs' && 'Audit Trail'}
+                                    {viewMode === 'cloudServices' && 'Cloud Services'}
+                                    {viewMode === 'liveCost' && 'Live Cluster Cost'}
                                     {viewMode === 'profile' && 'Account'}
                                     {viewMode === 'settings' && 'Preferences'}
                                 </span>
@@ -1608,6 +1663,7 @@ export const AdminDashboard = () => {
                                 {viewMode === 'team' && 'Engineering Team'}
                                 {viewMode === 'projects' && 'Product Workflow Summary'}
                                 {viewMode === 'managers' && 'Approval Contacts'}
+                                {viewMode === 'cloudServices' && 'Cloud Services'}
                                 {viewMode === 'rota' && 'On-Call Schedule'}
                                 {viewMode === 'statusTimeline' && 'Team Activity Timeline'}
                                 {viewMode === 'activityLogs' && 'Activity Logs / Audit Trail'}
@@ -1656,15 +1712,21 @@ export const AdminDashboard = () => {
 
                 {/* Settings Section */}
                 {viewMode === 'settings' ? (
-                    <div className="tickets-section">
-                        <div className="tickets-header">
-                            <h3>Settings</h3>
+                    <div className="tickets-section prefs-section">
+                        <div className="prefs-page-hdr">
+                            <div className="prefs-page-hdr__icon">
+                                <Settings size={17} />
+                            </div>
+                            <div>
+                                <h3 className="prefs-page-hdr__title">Preferences</h3>
+                                <p className="prefs-page-hdr__sub">Manage sounds, display and notification settings</p>
+                            </div>
                         </div>
-                        <div className="tickets-list" style={{ padding: '1.5rem' }}>
-                            <div className="sound-settings">
+                        <div className="prefs-page-body">
+                            <div className="sound-settings pref-card">
                                 <div className="sound-settings-header">
                                     <span className="sound-settings-title">
-                                        <Bell size={18} style={{ marginRight: 8 }} />
+                                        <Bell size={17} />
                                         Notification Sounds
                                     </span>
                                     <button 
@@ -1692,10 +1754,10 @@ export const AdminDashboard = () => {
                                     </div>
                                 )}
                             </div>
-                            <div className="sound-settings" style={{ marginTop: '1.5rem' }}>
+                            <div className="sound-settings pref-card">
                                 <div className="sound-settings-header">
                                     <span className="sound-settings-title">
-                                        <Settings size={18} style={{ marginRight: 8 }} />
+                                        <Settings size={17} />
                                         Theme
                                     </span>
                                 </div>
@@ -1741,21 +1803,9 @@ export const AdminDashboard = () => {
                 )}
                 
                 {viewMode === 'monitoring' ? (
-                    <EnvMonitoringDashboard
-                        tickets={tickets}
-                        projects={projects}
-                        devOpsMembers={devOpsMembers}
-                        userRole="admin"
-                    />
+                    <EnvUptimeDashboard role="admin" />
                 ) : viewMode === 'analytics' ? (
-                    <AnalyticsDashboard
-                        tickets={tickets}
-                        stats={stats}
-                        devOpsMembers={devOpsMembers}
-                        projects={projects}
-                        showCost={true}
-                        userRole="admin"
-                    />
+                    <EnvUptimeDashboard role="admin" />
                 ) : viewMode === 'team' ? (
                     <TeamManagementView 
                         newMember={newMember}
@@ -1825,6 +1875,10 @@ export const AdminDashboard = () => {
                     />
                 ) : viewMode === 'activityLogs' ? (
                     <ActivityLogsView />
+                ) : viewMode === 'cloudServices' ? (
+                    <CloudServicesManager />
+                ) : viewMode === 'liveCost' ? (
+                    <PrometheusLiveCostPanel />
                 ) : viewMode === 'deletedTickets' ? (
                     <div className="tickets-section">
                         <div className="tickets-header" style={{ justifyContent: "space-between", alignItems: "center" }}>
@@ -1876,6 +1930,7 @@ export const AdminDashboard = () => {
                             roleKey="admin"
                             onSignOut={handleLogout}
                             avatarColor="#1d4ed8"
+                            onProfileUpdated={(p) => setProfilePicUrl(p?.profilePicUrl || null)}
                         />
                     </div>
                 ) : (

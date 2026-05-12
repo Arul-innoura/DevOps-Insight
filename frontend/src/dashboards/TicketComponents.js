@@ -44,7 +44,8 @@ import {
     File,
     Download,
     ZoomIn,
-    Eye
+    Eye,
+    MinusCircle
 } from 'lucide-react';
 import { 
     TICKET_STATUS,
@@ -68,7 +69,11 @@ import {
     NOTE_ATTACHMENT_MAX_MB
 } from '../services/ticketService';
 import { getEffectiveWorkflow } from '../services/projectWorkflowService';
+import { getProfileByEmail } from '../services/profileService';
 import { fetchWorkflowDirectoryContacts } from "../services/workflowDirectoryService";
+import { getAutoBuildStatus } from '../services/autoBuildService';
+import { getByTicket, ensureForTicket } from '../services/codeCutService';
+import BuildCaptchaModal from '../components/BuildCaptchaModal';
 import EmailChipsInput from "../components/EmailChipsInput";
 import { useTheme } from "../services/ThemeContext";
 import { useToast } from "../services/ToastNotification";
@@ -844,13 +849,11 @@ function TicketCardInner({
             onClick={handleCardActivate}
             style={{
                 borderLeftColor: accent.border,
-                borderLeftWidth: 4,
+                borderLeftWidth: 3,
                 backgroundColor: "var(--card-bg, #ffffff)",
-                backgroundImage: shouldHighlightAssignedCard
-                    ? `linear-gradient(135deg, ${hexWithAlpha("#bfdbfe", theme === "light" || theme === "retro" ? 0.55 : 0.35)} 0%, transparent 65%)`
-                    : `linear-gradient(135deg, ${hexWithAlpha(accent.bg, theme === "light" || theme === "retro" ? 0.42 : 0.28)} 0%, transparent 55%)`,
+                backgroundImage: "none",
                 boxShadow: shouldHighlightAssignedCard
-                    ? "0 0 0 1px rgba(37,99,235,0.45), 0 2px 10px rgba(37,99,235,0.12)"
+                    ? "0 0 0 1px var(--accent-color, #1d4ed8), 0 1px 2px rgba(15,23,42,0.04), 0 4px 12px -2px rgba(29,78,216,0.12)"
                     : undefined
             }}
         >
@@ -1477,12 +1480,73 @@ export const TicketDetailsModal = ({
     const [pendingCostApproverEmail, setPendingCostApproverEmail] = useState(null);
     const { theme } = useTheme();
 
+    // ── Code Cut auto-build ──
+    const [autoBuildEnabled, setAutoBuildEnabled] = useState(false);
+    const [codeCutReq, setCodeCutReq] = useState(null);
+    const [showCaptcha, setShowCaptcha] = useState(false);
+    const [triggerBuildLoading, setTriggerBuildLoading] = useState(false);
+
+    // Profile pictures for sidebar — keyed by role
+    const [sidebarPics, setSidebarPics] = useState({});
+    useEffect(() => {
+        const emailMap = {
+            requester: ticket?.requesterEmail,
+            assignee: ticket?.assignedToEmail,
+            manager: ticket?.managerEmail
+        };
+        const toFetch = Object.entries(emailMap).filter(([, e]) => !!e);
+        if (!toFetch.length) return;
+        let cancelled = false;
+        Promise.all(
+            toFetch.map(([key, email]) =>
+                getProfileByEmail(email)
+                    .then(p => [key, p?.profilePicUrl || null])
+                    .catch(() => [key, null])
+            )
+        ).then(results => {
+            if (!cancelled) setSidebarPics(Object.fromEntries(results));
+        });
+        return () => { cancelled = true; };
+    }, [ticket?.requesterEmail, ticket?.assignedToEmail, ticket?.managerEmail]);
+
     useEffect(() => {
         if (ticket?.id) {
             setPendingCostApproverEmail(null);
             setReopenNote("");
         }
     }, [ticket?.id]);
+
+    // Load auto-build config + any existing CodeCutRequest when a Code Cut ticket is opened.
+    // Also re-runs when the timeline length changes so the approval count updates in real-time.
+    const ticketTimelineLen = ticket?.timeline?.length ?? 0;
+    useEffect(() => {
+        if (!ticket?.id || ticket.requestType !== 'Code Cut') {
+            setAutoBuildEnabled(false);
+            setCodeCutReq(null);
+            return;
+        }
+        let cancelled = false;
+        const load = async () => {
+            try {
+                const projectId = ticket.projectId;
+                const env = ticket.environmentLabel || ticket.environment;
+                if (!projectId || !env) return;
+
+                // Check auto-build enabled (lightweight endpoint — works for all roles)
+                const statusMap = await getAutoBuildStatus(projectId).catch(() => null);
+                if (!cancelled) setAutoBuildEnabled(statusMap?.[env] === true);
+
+                // Re-fetch CodeCutRequest so build status is fresh (e.g. BUILDING → COMPLETED)
+                const existing = await getByTicket(ticket.id).catch(() => null);
+                if (!cancelled && existing?.id) setCodeCutReq(existing);
+            } catch {
+                // silent — button simply won't show
+            }
+        };
+        load();
+        return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [ticket?.id, ticket?.requestType, ticket?.projectId, ticket?.environment, ticket?.environmentLabel, ticketTimelineLen]);
 
     const actionFlowItems = useMemo(() => {
         if (!ticket) return [];
@@ -2081,6 +2145,140 @@ export const TicketDetailsModal = ({
                                 </p>
                             </div>
                         )}
+
+                        {/* ── Auto-build: Trigger Build (Code Cut tickets only, visible to all roles) ── */}
+                        {ticket.requestType === 'Code Cut' && autoBuildEnabled && (() => {
+                            // Count distinct MANAGER_APPROVED entries in the timeline.
+                            // timelineStatusKey() normalises display labels like "Manager Approved"
+                            // to the enum key "MANAGER_APPROVED" so the comparison is always correct.
+                            const timelineCount = (ticket.timeline || []).filter(
+                                e => timelineStatusKey(e?.status) === 'MANAGER_APPROVED'
+                            ).length;
+                            // Also respect the live managerApprovalStatus field for immediate
+                            // post-approval updates before a WebSocket refresh arrives.
+                            const currentlyApproved =
+                                String(ticket.managerApprovalStatus || '').toUpperCase() === 'APPROVED';
+                            const approvedCount = currentlyApproved
+                                ? Math.max(timelineCount, 1)
+                                : timelineCount;
+                            const canTrigger  = approvedCount >= 2;
+                            const isBuilding  = codeCutReq?.status === 'BUILDING';
+                            const isDone      = codeCutReq?.status === 'COMPLETED';
+                            const isFailed    = ['FAILED', 'PARTIAL'].includes(codeCutReq?.status);
+                            const isCancelled = codeCutReq?.status === 'CANCELLED';
+                            // Show trigger button when idle, failed, or cancelled (allow re-trigger)
+                            const showTrigger = !isBuilding && !isDone;
+
+                            return (
+                                <div className="jdm-section">
+                                    <div className="jdm-section-title">
+                                        <Rocket size={14} /> Auto-build
+                                    </div>
+
+                                    {/* Status banners */}
+                                    {isBuilding && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12,
+                                            padding: '8px 12px', borderRadius: 8,
+                                            background: '#f5f3ff', border: '1px solid #ddd6fe' }}>
+                                            <Loader2 size={14} className="spin-icon" color="#7c3aed" />
+                                            <span style={{ color: '#7c3aed', fontWeight: 600, fontSize: '0.85rem' }}>Build is running…</span>
+                                            {codeCutReq?.currentBuildExecutionId && (
+                                                <button type="button" className="jdm-btn-ghost"
+                                                    style={{ marginLeft: 'auto', padding: '2px 10px', fontSize: '0.8rem' }}
+                                                    onClick={() => window.open(
+                                                        `${window.location.origin}/build/${codeCutReq.currentBuildExecutionId}`,
+                                                        '_blank', 'noopener,noreferrer')}>
+                                                    View live
+                                                </button>
+                                            )}
+                                        </div>
+                                    )}
+                                    {isDone && (
+                                        <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8,
+                                            background: '#f0fdf4', border: '1px solid #bbf7d0',
+                                            color: '#15803d', fontWeight: 600, fontSize: '0.85rem' }}>
+                                            <CheckCircle size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                                            Build completed successfully.
+                                        </div>
+                                    )}
+                                    {isFailed && (
+                                        <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8,
+                                            background: '#fef2f2', border: '1px solid #fecaca',
+                                            color: '#dc2626', fontWeight: 600, fontSize: '0.85rem' }}>
+                                            <XCircle size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                                            Last build {codeCutReq.status.toLowerCase()} — you can retry.
+                                        </div>
+                                    )}
+                                    {isCancelled && (
+                                        <div style={{ marginBottom: 12, padding: '8px 12px', borderRadius: 8,
+                                            background: '#f8fafc', border: '1px solid #e2e8f0',
+                                            color: '#6b7280', fontWeight: 600, fontSize: '0.85rem' }}>
+                                            <MinusCircle size={14} style={{ verticalAlign: '-2px', marginRight: 6 }} />
+                                            Build was cancelled — you can trigger a new build.
+                                        </div>
+                                    )}
+
+                                    {/* Approval progress indicator */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                                        {[0, 1].map(i => (
+                                            <div key={i} style={{
+                                                display: 'flex', alignItems: 'center', gap: 6,
+                                                padding: '4px 10px', borderRadius: 999, fontSize: '0.78rem', fontWeight: 600,
+                                                background: approvedCount > i ? '#f0fdf4' : '#f8fafc',
+                                                border: `1px solid ${approvedCount > i ? '#bbf7d0' : '#e2e8f0'}`,
+                                                color: approvedCount > i ? '#15803d' : '#94a3b8'
+                                            }}>
+                                                {approvedCount > i
+                                                    ? <CheckCircle size={12} />
+                                                    : <Clock size={12} />}
+                                                Approval {i + 1}
+                                            </div>
+                                        ))}
+                                        <span style={{ color: '#94a3b8', fontSize: '0.78rem' }}>
+                                            {approvedCount}/2 done
+                                        </span>
+                                    </div>
+
+                                    {/* Trigger Build button — visible when idle/failed/cancelled */}
+                                    {showTrigger && (
+                                        <button
+                                            type="button"
+                                            className="jdm-btn-primary"
+                                            disabled={!canTrigger || triggerBuildLoading}
+                                            style={{
+                                                background: canTrigger ? '#7c3aed' : undefined,
+                                                borderColor: canTrigger ? '#7c3aed' : undefined,
+                                                opacity: canTrigger ? 1 : 0.55,
+                                                cursor: canTrigger ? 'pointer' : 'not-allowed'
+                                            }}
+                                            onClick={async () => {
+                                                if (!canTrigger) return;
+                                                setTriggerBuildLoading(true);
+                                                try {
+                                                    const req = await ensureForTicket(ticket.id);
+                                                    setCodeCutReq(req);
+                                                    setShowCaptcha(true);
+                                                } catch (err) {
+                                                    toast.error('Cannot trigger build', err.message || 'Check auto-build config in admin settings');
+                                                } finally {
+                                                    setTriggerBuildLoading(false);
+                                                }
+                                            }}
+                                        >
+                                            <Rocket size={14} style={{ marginRight: 6, verticalAlign: '-2px' }} />
+                                            {triggerBuildLoading ? 'Preparing…' : 'Trigger Build'}
+                                        </button>
+                                    )}
+
+                                    {/* Hint below button */}
+                                    <p className="jdm-hint-text" style={{ marginTop: 8 }}>
+                                        {canTrigger
+                                            ? 'Both approvals confirmed — verify with a captcha to start the Jenkins pipeline.'
+                                            : `Minimum 2 approvals required to trigger the build (${approvedCount}/2 done).`}
+                                    </p>
+                                </div>
+                            );
+                        })()}
                         {effectiveCanManage && ticket.status === TICKET_STATUS.COST_APPROVAL_PENDING && (
                             <div className="jdm-section">
                                 <div className="jdm-section-title"><Clock size={14} /> Cost Approval In Progress</div>
@@ -2257,9 +2455,13 @@ export const TicketDetailsModal = ({
                             <div className="jdm-sidebar-field">
                                 <div className="jdm-sidebar-label"><User size={12} /> Requester</div>
                                 <div className="jdm-person-row">
-                                    <span className="jdm-avatar-sm">{(ticket.requestedBy || 'U').charAt(0).toUpperCase()}</span>
+                                    {sidebarPics.requester
+                                        ? <img src={sidebarPics.requester} alt="" className="jdm-avatar-sm" style={{ objectFit: 'cover' }} />
+                                        : <span className="jdm-avatar-sm">{(ticket.requestedBy || 'U').charAt(0).toUpperCase()}</span>
+                                    }
                                     <div>
                                         <div className="jdm-person-name">{ticket.requestedBy}</div>
+                                        {ticket.requesterEmail && <div className="jdm-person-email">{ticket.requesterEmail}</div>}
                                     </div>
                                 </div>
                             </div>
@@ -2267,8 +2469,14 @@ export const TicketDetailsModal = ({
                                 <div className="jdm-sidebar-field">
                                     <div className="jdm-sidebar-label"><UserCheck size={12} /> Assigned</div>
                                     <div className="jdm-person-row">
-                                        <span className="jdm-avatar-sm assigned">{assigneeDisplayLine.charAt(0).toUpperCase()}</span>
-                                        <div className="jdm-person-name">{assigneeDisplayLine}</div>
+                                        {sidebarPics.assignee
+                                            ? <img src={sidebarPics.assignee} alt="" className="jdm-avatar-sm" style={{ objectFit: 'cover' }} />
+                                            : <span className="jdm-avatar-sm assigned">{assigneeDisplayLine.charAt(0).toUpperCase()}</span>
+                                        }
+                                        <div>
+                                            <div className="jdm-person-name">{assigneeDisplayLine}</div>
+                                            {ticket.assignedToEmail && <div className="jdm-person-email">{ticket.assignedToEmail}</div>}
+                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -2294,7 +2502,16 @@ export const TicketDetailsModal = ({
                             {ticket.managerName && (
                                 <div className="jdm-sidebar-field">
                                     <div className="jdm-sidebar-label"><Building size={12} /> Approver</div>
-                                    <div className="jdm-person-name">{ticket.managerName}</div>
+                                    <div className="jdm-person-row">
+                                        {sidebarPics.manager
+                                            ? <img src={sidebarPics.manager} alt="" className="jdm-avatar-sm" style={{ objectFit: 'cover' }} />
+                                            : <span className="jdm-avatar-sm" style={{ background: '#7c3aed', color: '#fff' }}>{ticket.managerName.charAt(0).toUpperCase()}</span>
+                                        }
+                                        <div>
+                                            <div className="jdm-person-name">{ticket.managerName}</div>
+                                            {ticket.managerEmail && <div className="jdm-person-email">{ticket.managerEmail}</div>}
+                                        </div>
+                                    </div>
                                 </div>
                             )}
                         </div>
@@ -2337,6 +2554,21 @@ export const TicketDetailsModal = ({
                     </div>
                 </div>
             </div>
+            {showCaptcha && codeCutReq?.id && createPortal(
+                <BuildCaptchaModal
+                    codeCutId={codeCutReq.id}
+                    projectName={ticket.productName || ticket.projectId}
+                    onClose={() => setShowCaptcha(false)}
+                    onTriggered={(exec) => {
+                        if (exec?.id) {
+                            setCodeCutReq(prev => prev ? { ...prev, status: 'BUILDING', currentBuildExecutionId: exec.id } : prev);
+                        }
+                        setShowCaptcha(false);
+                    }}
+                />,
+                document.body
+            )}
+
             {showApprovalEditor && (
                 <div className="modal-overlay jdm-modal-overlay" onClick={() => setShowApprovalEditor(false)}>
                     <div className="modal-content" style={{ maxWidth: 620 }} onClick={(e) => e.stopPropagation()}>
@@ -2452,10 +2684,18 @@ const NewEnvironmentForm = ({ formData, onChange }) => (
 const EnvironmentUpForm = ({ formData, onChange }) => (
     <>
         <FormField label="Activation Date" required>
-            <input 
+            <input
                 type="datetime-local"
                 value={formData.activationDate || ''}
                 onChange={e => onChange({ ...formData, activationDate: e.target.value })}
+                required
+            />
+        </FormField>
+        <FormField label="Shutdown Date" required>
+            <input
+                type="datetime-local"
+                value={formData.shutdownDate || ''}
+                onChange={e => onChange({ ...formData, shutdownDate: e.target.value })}
                 required
             />
         </FormField>
@@ -2708,6 +2948,9 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             return;
         }
         let cancelled = false;
+        // Clear stale preview immediately so the auto-fill effect can't fire with old data
+        setWorkflowPreview(null);
+        setWorkflowAutoKey("");
         setWorkflowPreviewLoading(true);
         getEffectiveWorkflow(selectedProjectId, apiEnum, formData.environment)
             .then((cfg) => {
@@ -2780,8 +3023,10 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
             managerEmail: autoManagerEmail || prev.managerEmail,
             managerApprovalRequired: (workflowPreview.approvalLevels || []).length > 0,
             toEmail: routingTo.join(", "),
-            ccEmail: routingCc.join(", "),
-            bccEmail: routingBcc.join(", ")
+            // Only overwrite CC/BCC if the workflow actually has values configured;
+            // otherwise keep whatever the user or a prior fill put there.
+            ccEmail: routingCc.length > 0 ? routingCc.join(", ") : prev.ccEmail,
+            bccEmail: routingBcc.length > 0 ? routingBcc.join(", ") : prev.bccEmail
         }));
         setWorkflowAutoKey(key);
     }, [
@@ -2939,15 +3184,22 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                 
                                 <div className="form-row">
                                     <FormField label="Product" required>
-                                        <select 
+                                        <select
                                             value={formData.productName}
-                                            onChange={(e) =>
+                                            onChange={(e) => {
+                                                setWorkflowPreview(null);
+                                                setWorkflowAutoKey("");
                                                 setFormData((prev) => ({
                                                     ...prev,
                                                     productName: e.target.value,
-                                                    environment: ""
-                                                }))
-                                            }
+                                                    environment: "",
+                                                    toEmail: "",
+                                                    ccEmail: "",
+                                                    bccEmail: "",
+                                                    managerName: "",
+                                                    managerEmail: ""
+                                                }));
+                                            }}
                                             required
                                         >
                                             <option value="">Select Product</option>
@@ -2959,9 +3211,17 @@ export const CreateTicketModal = ({ isOpen, onClose, onSubmit, user, projects, m
                                         </select>
                                     </FormField>
                                     <FormField label="Environment" required>
-                                        <select 
+                                        <select
                                             value={formData.environment}
-                                            onChange={e => setFormData({ ...formData, environment: e.target.value })}
+                                            onChange={e => {
+                                                setWorkflowPreview(null);
+                                                setWorkflowAutoKey("");
+                                                setFormData(prev => ({
+                                                    ...prev,
+                                                    environment: e.target.value,
+                                                    toEmail: ""
+                                                }));
+                                            }}
                                             required
                                             disabled={!formData.productName || availableEnvironments.length === 0}
                                         >

@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { ShipItEyeIcon } from "../../components/ShipItEyeIcon";
 import { useMsal } from "@azure/msal-react";
 import {
     LogOut,
@@ -12,7 +11,6 @@ import {
     PlayCircle,
     Users,
     Ticket,
-    BarChart3,
     UserPlus,
     History,
     RotateCcw,
@@ -20,6 +18,7 @@ import {
     Inbox,
     StickyNote,
     Plus,
+    ArrowLeft,
     ArrowRight,
     X,
     User as UserIcon,
@@ -78,8 +77,10 @@ import {
     subscribeDataChanges
 } from "../../services/ticketService";
 import RotaCalendarModal from "../admin/RotaCalendarModal";
+import PrometheusLiveCostPanel from "../admin/PrometheusLiveCostPanel";
 import { openCostEstimateWindow } from "./openCostEstimateWindow";
 import { useRealTimeSync, useConnectionStatus } from "../../services/useRealTimeSync";
+import { useToast } from "../../services/ToastNotification";
 import { 
     playShortNotification, 
     playSuccessNotification,
@@ -89,11 +90,12 @@ import {
     getSoundSettings
 } from "../../services/notificationService";
 import { launchPaperCelebration } from "../../utils/celebrationFx";
-import AnalyticsDashboard from "../admin/AnalyticsDashboard";
-import EnvMonitoringDashboard from "../EnvMonitoringDashboard";
 import { usePersistedSidebarNav } from "../../services/sidebarNavStorage";
 import { NavSectionToggle } from "../../components/NavSectionToggle";
 import DashboardProfilePage from "../../components/DashboardProfilePage";
+import BirthdayHolidayBanner from "../../components/BirthdayHolidayBanner";
+import NotificationPermissionBanner from "../../components/NotificationPermissionBanner";
+import { getMyProfile } from "../../services/profileService";
 import TicketSearchBar from "../../components/TicketSearchBar";
 import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
@@ -274,6 +276,7 @@ const ForwardTicketModal = ({ ticket, onClose, onForward, currentUser }) => {
 
 export const DevOpsDashboard = () => {
     const { instance, accounts } = useMsal();
+    const { addToast } = useToast();
     const account = accounts[0];
     const userName = account?.name || "DevOps Engineer";
     const userEmail = account?.username || "devops@company.com";
@@ -285,6 +288,16 @@ export const DevOpsDashboard = () => {
     const [showFilters, setShowFilters] = useState(false);
     const [selectedTicket, setSelectedTicket] = useState(null);
     const [activeSection, setActiveSection] = useState('requests');
+    const [newSeen, setNewSeen] = useState(() => {
+        try { return JSON.parse(localStorage.getItem('devops_new_seen') || '{}'); } catch { return {}; }
+    });
+    const markNewSeen = (key) => {
+        setNewSeen(prev => {
+            const next = { ...prev, [key]: true };
+            try { localStorage.setItem('devops_new_seen', JSON.stringify(next)); } catch {}
+            return next;
+        });
+    };
     /** Sub-view inside Request Dashboard (was sidebar: Service Queue + Archive). */
     const [requestTab, setRequestTab] = useState('unassigned');
     const [stats, setStats] = useState({});
@@ -311,6 +324,7 @@ export const DevOpsDashboard = () => {
     const [soundSettings, setSoundSettings] = useState(getSoundSettings);
     const [navGroups, setNavGroups] = usePersistedSidebarNav("devops", DEVOPS_SIDEBAR_NAV_DEFAULTS);
     const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+    const [profilePicUrl, setProfilePicUrl] = useState(null);
     const [isInitialLoading, setIsInitialLoading] = useState(true);
     const isLoadingRef = useRef(false);
     const activeSectionRef = useRef(activeSection);
@@ -348,6 +362,15 @@ export const DevOpsDashboard = () => {
     // Keep ref in sync
     useEffect(() => { activeSectionRef.current = activeSection; }, [activeSection]);
     useEffect(() => { requestTabRef.current = requestTab; }, [requestTab]);
+
+    // Load current user's profile pic for the sidebar avatar
+    useEffect(() => {
+        let cancelled = false;
+        getMyProfile()
+            .then((p) => { if (!cancelled) setProfilePicUrl(p?.profilePicUrl || null); })
+            .catch(() => { /* silent — falls back to initials */ });
+        return () => { cancelled = true; };
+    }, []);
     useEffect(() => {
         ticketSearchRef.current = ticketSearch;
     }, [ticketSearch]);
@@ -670,6 +693,21 @@ export const DevOpsDashboard = () => {
                 return { ...prev, ...wsPatch };
             });
             suppressDataChangeRefreshUntilRef.current = Date.now() + 3000;
+        },
+        currentUserEmail: userEmail,
+        onNotify: (type, data) => {
+            const raw = (data?.ticket && typeof data.ticket === 'object') ? data.ticket : data;
+            const title = raw?.title || raw?.summary || "Ticket";
+            if (type === "ticket:created") {
+                addToast({ type: 'info', title: 'New Ticket', message: title, playSound: false });
+            } else if (type === "ticket:assigned") {
+                addToast({ type: 'info', title: 'Ticket Assigned', message: title, playSound: false });
+            } else if (type === "ticket:status_changed") {
+                const status = raw?.status ? ` — ${raw.status.replace(/_/g, ' ')}` : '';
+                addToast({ type: 'info', title: 'Status Changed', message: `${title}${status}`, playSound: false });
+            } else {
+                addToast({ type: 'info', title: 'Ticket Updated', message: title, playSound: false });
+            }
         },
         playNewTicketSound: true,
         playUpdateSound: true,
@@ -1196,13 +1234,12 @@ export const DevOpsDashboard = () => {
                 {/* Brand */}
                 <div className="sb-brand">
                     <div className="sb-brand-icon sb-brand-icon--eye">
-                        <ShipItEyeIcon className="sb-brand-eye" blink />
+                        <img src="/favicon-eye.svg" alt="ShipIt" className="sb-brand-eye-img" />
                         <span className={`sb-conn-dot ${isConnected ? 'connected' : 'disconnected'}`}
                               title={isConnected ? 'Live connection' : 'Disconnected'} />
                     </div>
                     <div className="sb-brand-meta">
                         <span className="sb-app-name">ShipIt</span>
-                        <span className="sb-app-subtitle">Engineering Console</span>
                     </div>
                 </div>
 
@@ -1237,11 +1274,14 @@ export const DevOpsDashboard = () => {
                                     <span className="sb-item-icon"><RotateCcw size={15} /></span>
                                     <span className="sb-item-text">On-Call Schedule</span>
                                 </a>
-                                <a href="#" className={`sb-item ${activeSection === 'monitoring' ? 'active' : ''}`}
-                                   onClick={(e) => { e.preventDefault(); handleSectionChange('monitoring'); }}>
-                                    <span className="sb-item-icon"><BarChart3 size={15} /></span>
-                                    <span className="sb-item-text">Analytics</span>
+                                <a href="#" className={`sb-item ${activeSection === 'liveCost' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); handleSectionChange('liveCost'); markNewSeen('liveCost'); }}
+                                   title="Auto-discovered live cluster cost from Prometheus (DevOps + Admin)">
+                                    <span className="sb-item-icon"><Activity size={15} /></span>
+                                    <span className="sb-item-text">Live Cluster Cost</span>
+                                    {!newSeen.liveCost && <span className="sb-new-badge">New</span>}
                                 </a>
+
                             </div>
                         )}
                     </div>
@@ -1260,9 +1300,10 @@ export const DevOpsDashboard = () => {
                                     <span className="sb-item-text">Preferences</span>
                                 </a>
                                 <a href="#" className={`sb-item ${activeSection === 'profile' ? 'active' : ''}`}
-                                   onClick={(e) => { e.preventDefault(); handleSectionChange('profile'); }}>
+                                   onClick={(e) => { e.preventDefault(); handleSectionChange('profile'); markNewSeen('account'); }}>
                                     <span className="sb-item-icon"><ProfileIcon size={15} /></span>
                                     <span className="sb-item-text">My Account</span>
+                                    {!newSeen.account && <span className="sb-new-badge">New</span>}
                                 </a>
                             </div>
                         )}
@@ -1308,9 +1349,17 @@ export const DevOpsDashboard = () => {
                     </div>
 
                     <div className="sb-user-row">
-                        <div className="sb-avatar" style={{ background: '#0e7490' }}>
-                            {(userName || '').split(' ').slice(0,2).map(w => w[0]).join('').toUpperCase() || '?'}
-                        </div>
+                        {profilePicUrl ? (
+                            <img
+                                src={profilePicUrl}
+                                alt={userName || 'Profile'}
+                                className="sb-avatar sb-avatar--img"
+                            />
+                        ) : (
+                            <div className="sb-avatar" style={{ background: '#0e7490' }}>
+                                {(userName || '?').trim().charAt(0).toUpperCase()}
+                            </div>
+                        )}
                         <div className="sb-user-meta">
                             <span className="sb-user-name">{userName}</span>
                             <span className="sb-user-email">{userEmail}</span>
@@ -1335,6 +1384,9 @@ export const DevOpsDashboard = () => {
             </aside>
             
             <main className="dashboard-content">
+
+                <BirthdayHolidayBanner userName={userName} />
+                <NotificationPermissionBanner />
 
                 {/* Read-Only Banner */}
                 {isReadOnly && (
@@ -1367,7 +1419,7 @@ export const DevOpsDashboard = () => {
                                     {activeSection === 'requests' && requestTab === 'active' && 'Active'}
                                     {activeSection === 'requests' && requestTab === 'history' && 'Completed'}
                                     {activeSection === 'requests' && requestTab === 'closed' && 'Closed'}
-                                    {activeSection === 'monitoring' && 'Monitoring'}
+                                    {activeSection === 'liveCost' && 'Live Cluster Cost'}
                                     {activeSection === 'profile' && 'Profile'}
                                     {activeSection === 'standup' && 'Standup'}
                                     {activeSection === 'rota' && 'Rota'}
@@ -1380,7 +1432,7 @@ export const DevOpsDashboard = () => {
                                 {activeSection === 'requests' && requestTab === 'active' && 'Active Requests'}
                                 {activeSection === 'requests' && requestTab === 'history' && 'Completed Tickets'}
                                 {activeSection === 'requests' && requestTab === 'closed' && 'Closed Tickets'}
-                                {activeSection === 'monitoring' && 'Environment Monitoring'}
+                                {activeSection === 'liveCost' && 'Live Cluster Cost — auto-discovered from Prometheus'}
                                 {activeSection === 'profile' && 'My Profile'}
                                 {activeSection === 'standup' && 'Daily Standup Notes'}
                                 {activeSection === 'rota' && 'Night Shift Rota'}
@@ -1426,15 +1478,21 @@ export const DevOpsDashboard = () => {
                 </header>
 
                 {activeSection === 'settings' ? (
-                    <div className="tickets-section">
-                        <div className="tickets-header">
-                            <h3>Settings</h3>
+                    <div className="tickets-section prefs-section">
+                        <div className="prefs-page-hdr">
+                            <div className="prefs-page-hdr__icon">
+                                <Settings size={17} />
+                            </div>
+                            <div>
+                                <h3 className="prefs-page-hdr__title">Preferences</h3>
+                                <p className="prefs-page-hdr__sub">Manage sounds, display and notification settings</p>
+                            </div>
                         </div>
-                        <div className="tickets-list" style={{ padding: '1.5rem' }}>
-                            <div className="sound-settings">
+                        <div className="prefs-page-body">
+                            <div className="sound-settings pref-card">
                                 <div className="sound-settings-header">
                                     <span className="sound-settings-title">
-                                        <Bell size={18} style={{ marginRight: 8 }} />
+                                        <Bell size={17} />
                                         Notification Sounds
                                     </span>
                                     <button 
@@ -1462,10 +1520,10 @@ export const DevOpsDashboard = () => {
                                     </div>
                                 )}
                             </div>
-                            <div className="sound-settings" style={{ marginTop: '1.5rem' }}>
+                            <div className="sound-settings pref-card">
                                 <div className="sound-settings-header">
                                     <span className="sound-settings-title">
-                                        <Settings size={18} style={{ marginRight: 8 }} />
+                                        <Settings size={17} />
                                         Theme
                                     </span>
                                 </div>
@@ -1527,12 +1585,8 @@ export const DevOpsDashboard = () => {
                 )}
                  
                 {/* Content Sections */}
-                {activeSection === 'monitoring' ? (
-                    <EnvMonitoringDashboard
-                        tickets={tickets}
-                        devOpsMembers={teamMembers}
-                        userRole="devops"
-                    />
+                {activeSection === 'liveCost' ? (
+                    <PrometheusLiveCostPanel />
                 ) : activeSection === 'profile' ? (
                     <div className="tickets-section profile-section-wrap">
                         <DashboardProfilePage
@@ -1542,85 +1596,165 @@ export const DevOpsDashboard = () => {
                             roleKey="devops"
                             onSignOut={handleLogout}
                             avatarColor="#0e7490"
+                            onProfileUpdated={(p) => setProfilePicUrl(p?.profilePicUrl || null)}
                         />
                     </div>
                 ) : activeSection === 'standup' ? (
-                    <div className="tickets-section">
-                        <div className="tickets-header">
-                            <h3>Standup Sticky Notes</h3>
-                            <button className="btn-primary" onClick={() => setShowStandupForm(!showStandupForm)}>
-                                <Plus size={16} /> {showStandupForm ? 'Cancel' : 'New Standup'}
+                    <div className="tickets-section standup-section">
+                        <div className="tickets-header standup-page-hdr">
+                            <div className="standup-hdr-left">
+                                <div className="standup-hdr-icon-wrap">
+                                    <StickyNote size={18} />
+                                </div>
+                                <div>
+                                    <h3>Standup Sticky Notes</h3>
+                                    <p className="standup-hdr-sub">Daily team sync &amp; updates</p>
+                                </div>
+                            </div>
+                            <button
+                                className={`btn-primary standup-new-btn${showStandupForm ? ' standup-cancel-btn' : ''}`}
+                                onClick={() => setShowStandupForm(!showStandupForm)}
+                            >
+                                {showStandupForm ? <><X size={14} /> Cancel</> : <><Plus size={14} /> New Standup</>}
                             </button>
                         </div>
-                        <div className="tickets-list">
+
+                        <div className="tickets-list standup-list">
                             {showStandupForm && (
-                                <div className="team-member-card">
-                                    <div className="form-row">
-                                        <input type="date" value={standupDate} onChange={(e) => setStandupDate(e.target.value)} />
-                                        <input
-                                            type="text"
-                                            placeholder="Standup summary"
-                                            value={standupSummary}
-                                            onChange={(e) => setStandupSummary(e.target.value)}
-                                        />
+                                <div className="standup-form-card">
+                                    <div className="standup-form-header">
+                                        <StickyNote size={15} />
+                                        <span>New Standup Note</span>
                                     </div>
-                                    <div className="team-members-grid" style={{ marginTop: '10px' }}>
-                                        {teamMembers.map(member => (
-                                            <div key={member.email} className="team-member-card">
-                                                <strong>{member.name}</strong>
-                                                <textarea
-                                                    placeholder="Status update..."
-                                                    rows={3}
-                                                    value={memberUpdates[member.email] || ''}
-                                                    onChange={(e) => setMemberUpdates(prev => ({ ...prev, [member.email]: e.target.value }))}
-                                                />
-                                            </div>
-                                        ))}
+                                    <div className="standup-form-meta">
+                                        <div className="standup-form-field">
+                                            <label>Date</label>
+                                            <input type="date" value={standupDate} onChange={(e) => setStandupDate(e.target.value)} />
+                                        </div>
+                                        <div className="standup-form-field standup-form-summary">
+                                            <label>Summary</label>
+                                            <input
+                                                type="text"
+                                                placeholder="e.g. Sprint 12 Day 3 — blockers resolved"
+                                                value={standupSummary}
+                                                onChange={(e) => setStandupSummary(e.target.value)}
+                                            />
+                                        </div>
                                     </div>
-                                    <div style={{ marginTop: '10px' }}>
-                                        <button className="btn-primary" onClick={handleCreateStandup}>Save Sticky Note</button>
+                                    <div className="standup-form-members-wrap">
+                                        <p className="standup-form-members-title">
+                                            <Users size={13} /> Member Updates
+                                        </p>
+                                        <div className="standup-members-input-grid">
+                                            {teamMembers.map(member => (
+                                                <div key={member.email} className="standup-member-input-card">
+                                                    <div className="smic-header">
+                                                        <div className="smic-avatar">
+                                                            {member.name?.charAt(0)?.toUpperCase() || '?'}
+                                                        </div>
+                                                        <span className="smic-name">{member.name}</span>
+                                                    </div>
+                                                    <textarea
+                                                        className="smic-textarea"
+                                                        placeholder="What did you work on? Any blockers?"
+                                                        rows={3}
+                                                        value={memberUpdates[member.email] || ''}
+                                                        onChange={(e) => setMemberUpdates(prev => ({ ...prev, [member.email]: e.target.value }))}
+                                                    />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="standup-form-actions">
+                                        <button className="btn-primary" onClick={handleCreateStandup}>
+                                            <StickyNote size={14} /> Save Standup Note
+                                        </button>
                                     </div>
                                 </div>
                             )}
 
                             {standupNotes.length === 0 ? (
-                                <div className="empty-state">
-                                    <StickyNote size={48} />
+                                <div className="empty-state standup-empty">
+                                    <StickyNote size={44} />
                                     <h3>No standup notes yet</h3>
-                                    <p>Create a daily standup sticky note using the + button.</p>
+                                    <p>Log your first daily sync using the <strong>New Standup</strong> button.</p>
                                 </div>
                             ) : (
                                 <>
                                     {!selectedStandupNote ? (
                                         <div className="standup-grid">
-                                            {standupNotes.map(note => {
-                                                const dayName = new Date(note.date).toLocaleDateString('en-US', { weekday: 'short' });
+                                            {standupNotes.map((note, i) => {
+                                                const shortDay  = new Date(note.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+                                                const monthDay  = new Date(note.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                                                const yearStr   = new Date(note.date + 'T12:00:00').getFullYear();
+                                                const memberCnt = note.updates?.length || 0;
+                                                const colorIdx  = i % 5;
                                                 return (
                                                     <button
                                                         key={note.id}
-                                                        className="standup-note-mini"
+                                                        className={`standup-note-mini snm-c${colorIdx}`}
                                                         onClick={() => setSelectedStandupNote(note)}
                                                     >
-                                                        <div className="mini-day">{dayName}</div>
-                                                        <div className="mini-date">{note.date}</div>
+                                                        <span className="snm-pin" aria-hidden />
+                                                        <span className="snm-day">{shortDay}</span>
+                                                        <span className="snm-date">{monthDay}</span>
+                                                        <span className="snm-year">{yearStr}</span>
+                                                        {note.summary && (
+                                                            <span className="snm-summary">{note.summary}</span>
+                                                        )}
+                                                        <span className="snm-footer">
+                                                            <Users size={11} />
+                                                            {memberCnt} update{memberCnt !== 1 ? 's' : ''}
+                                                        </span>
                                                     </button>
                                                 );
                                             })}
                                         </div>
                                     ) : (
-                                        <div className="standup-note-card">
-                                            <div className="team-member-head">
-                                                <strong>{selectedStandupNote.date}</strong>
-                                                <button className="btn-secondary" onClick={() => setSelectedStandupNote(null)}>Back</button>
+                                        <div className="standup-detail-card">
+                                            <div className="standup-detail-hdr">
+                                                <div className="standup-detail-date-pill">
+                                                    <span className="sdp-day">
+                                                        {new Date(selectedStandupNote.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' })}
+                                                    </span>
+                                                    <span className="sdp-date">
+                                                        {new Date(selectedStandupNote.date + 'T12:00:00').toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                                                    </span>
+                                                </div>
+                                                <button className="standup-back-btn" onClick={() => setSelectedStandupNote(null)}>
+                                                    <ArrowLeft size={13} /> Back
+                                                </button>
                                             </div>
-                                            <p>{selectedStandupNote.summary || 'Daily standup update'}</p>
-                                            <div className="team-members-grid">
-                                                {selectedStandupNote.updates?.map(update => (
-                                                    <div className="team-member-card" key={`${selectedStandupNote.id}-${update.memberEmail}`}>
-                                                        <strong>{update.memberName}</strong>
-                                                        <p>{update.statusUpdate || 'No update provided'}</p>
-                                                    </div>
-                                                ))}
+                                            {selectedStandupNote.summary && (
+                                                <div className="standup-detail-summary">
+                                                    <StickyNote size={14} />
+                                                    <p>{selectedStandupNote.summary}</p>
+                                                </div>
+                                            )}
+                                            <div className="standup-detail-updates">
+                                                <p className="standup-updates-label">
+                                                    <Users size={13} />
+                                                    Team Updates
+                                                    <span className="standup-updates-count">
+                                                        {selectedStandupNote.updates?.length || 0}
+                                                    </span>
+                                                </p>
+                                                <div className="standup-updates-grid">
+                                                    {selectedStandupNote.updates?.map((update, i) => (
+                                                        <div
+                                                            className={`standup-update-card suc-c${i % 5}`}
+                                                            key={`${selectedStandupNote.id}-${update.memberEmail}`}
+                                                        >
+                                                            <div className={`suc-avatar suc-av${i % 5}`}>
+                                                                {update.memberName?.charAt(0)?.toUpperCase() || '?'}
+                                                            </div>
+                                                            <div className="suc-body">
+                                                                <strong className="suc-name">{update.memberName}</strong>
+                                                                <p className="suc-update">{update.statusUpdate || 'No update provided'}</p>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
                                             </div>
                                         </div>
                                     )}
@@ -1631,18 +1765,26 @@ export const DevOpsDashboard = () => {
                 ) : activeSection === 'rota' ? (
                     <div className="tickets-section rota-page-wrap">
                         <div className="rota-page rota-page--readonly">
-                            <div className="rota-actions-bar">
-                                <div className="rota-actions-bar__left">
-                                    <span className="rota-mode-badge">
-                                        Shift: {String(rotaMeta.rotationMode || "DAILY").toUpperCase() === "WEEKLY" ? "Weekly" : "Daily"}
-                                    </span>
+                            {/* Page-level header card */}
+                            <div className="rota-page-hdr">
+                                <div className="rota-page-hdr__left">
+                                    <div className="rota-page-hdr__icon">
+                                        <Moon size={18} aria-hidden />
+                                    </div>
+                                    <div>
+                                        <h3 className="rota-page-hdr__title">On-Call Schedule</h3>
+                                        <p className="rota-page-hdr__sub">
+                                            {String(rotaMeta.rotationMode || "DAILY").toUpperCase() === "WEEKLY" ? "Weekly" : "Daily"} rotation · next 14 days
+                                        </p>
+                                    </div>
                                 </div>
-                                <div className="rota-actions-bar__btns">
-                                    <button type="button" className="rota-icon-btn" onClick={() => { setRotaCalOpen(true); }}>
-                                        <Calendar size={18} aria-hidden /> Calendar
+                                <div className="rota-page-hdr__actions">
+                                    <button type="button" className="rota-icon-btn rota-icon-btn--primary" onClick={() => { setRotaCalOpen(true); }}>
+                                        <Calendar size={15} aria-hidden /> View Calendar
                                     </button>
                                 </div>
                             </div>
+
                             <RotaCalendarModal
                                 open={rotaCalOpen}
                                 onClose={() => setRotaCalOpen(false)}
@@ -1666,23 +1808,28 @@ export const DevOpsDashboard = () => {
                                 }}
                             />
                             <section className="rota-section rota-section--schedule">
-                                <div className="rota-schedule-head">
-                                    <h3 className="rota-section__title">
-                                        <Moon size={18} aria-hidden /> On-call schedule
-                                    </h3>
-                                    <p>Next 14 nights — same rotation as admin. Open the calendar for a full month view. Contact an admin to change assignments.</p>
-                                </div>
                                 <div className="rota-schedule-grid">
                                     {(rotaSchedule || []).map((day) => {
                                         const names = (day.members || []).map((m) => m.name).filter(Boolean);
                                         const s = String(day.date || '');
                                         const d = s.length <= 10 ? new Date(`${s}T12:00:00`) : new Date(s);
-                                        const short = Number.isNaN(d.getTime()) ? day.date : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+                                        const short = Number.isNaN(d.getTime()) ? day.date : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                                        const yearStr = Number.isNaN(d.getTime()) ? '' : d.getFullYear();
+                                        const isToday = s.slice(0, 10) === new Date().toISOString().slice(0, 10);
                                         return (
-                                            <div className={`rota-day-card${day.isManual ? ' rota-day-card--manual' : ''}`} key={day.date}>
+                                            <div
+                                                className={[
+                                                    'rota-day-card',
+                                                    day.isManual ? 'rota-day-card--manual' : '',
+                                                    isToday ? 'rota-day-card--today' : ''
+                                                ].filter(Boolean).join(' ')}
+                                                key={day.date}
+                                            >
+                                                {isToday && <span className="rota-today-pill">Today</span>}
                                                 <div className="rota-day-card__meta">
                                                     <span className="rota-day-card__dow">{day.dayName || '—'}</span>
                                                     <span className="rota-day-card__date">{short}</span>
+                                                    <span className="rota-day-card__year">{yearStr}</span>
                                                 </div>
                                                 {names.length > 0 ? (
                                                     <div className="rota-chip-row">
