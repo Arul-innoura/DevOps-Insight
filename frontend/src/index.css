@@ -309,7 +309,7 @@
   border-left-color: rgba(148, 163, 184, 0.1);
 }
 
-[data-theme="dark"] input:not(.login-jenkins-input),
+[data-theme="dark"] input:not(.login-jenkins-input):not(.lc-input),
 [data-theme="dark"] select,
 [data-theme="dark"] textarea {
   background: #0a0d14;
@@ -317,7 +317,7 @@
   border-color: rgba(148, 163, 184, 0.18);
 }
 
-[data-theme="dark"] input:not(.login-jenkins-input):focus,
+[data-theme="dark"] input:not(.login-jenkins-input):not(.lc-input):focus,
 [data-theme="dark"] select:focus,
 [data-theme="dark"] textarea:focus {
   border-color: #38bdf8;
@@ -482,7 +482,7 @@
   border-left-color: #eee8d5;
 }
 
-[data-theme="retro"] input:not(.login-jenkins-input),
+[data-theme="retro"] input:not(.login-jenkins-input):not(.lc-input),
 [data-theme="retro"] select,
 [data-theme="retro"] textarea {
   background: #fdf6e3;
@@ -490,7 +490,7 @@
   color: #073642;
 }
 
-[data-theme="retro"] input:not(.login-jenkins-input):focus,
+[data-theme="retro"] input:not(.login-jenkins-input):not(.lc-input):focus,
 [data-theme="retro"] select:focus,
 [data-theme="retro"] textarea:focus {
   border-color: #b58900;
@@ -703,7 +703,7 @@
   border-left-color: #6a6a6a;
 }
 
-[data-theme="devops"] input:not(.login-jenkins-input),
+[data-theme="devops"] input:not(.login-jenkins-input):not(.lc-input),
 [data-theme="devops"] select,
 [data-theme="devops"] textarea {
   background: #3a3a3a;
@@ -711,7 +711,7 @@
   border-color: #6a6a6a;
 }
 
-[data-theme="devops"] input:not(.login-jenkins-input):focus,
+[data-theme="devops"] input:not(.login-jenkins-input):not(.lc-input):focus,
 [data-theme="devops"] select:focus,
 [data-theme="devops"] textarea:focus {
   border-color: #c9a87c;
@@ -16135,7 +16135,7 @@ select,
 [data-theme="dark"] .content-header.jira-style   { background: #161b22; border-color: #21262d; }
 [data-theme="dark"] .content-header h1           { color: #e6edf3; }
 
-[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.login-jenkins-input),
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.login-jenkins-input):not(.lc-input),
 [data-theme="dark"] select,
 [data-theme="dark"] textarea,
 [data-theme="dark"] .form-field input,
@@ -16149,10 +16149,10 @@ select,
   border-color: #30363d !important;
   color: #e6edf3 !important;
 }
-[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.login-jenkins-input):hover,
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.login-jenkins-input):not(.lc-input):hover,
 [data-theme="dark"] select:hover,
 [data-theme="dark"] textarea:hover                { border-color: #6e7681 !important; }
-[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.login-jenkins-input):focus,
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.login-jenkins-input):not(.lc-input):focus,
 [data-theme="dark"] select:focus,
 [data-theme="dark"] textarea:focus                {
   border-color: #38bdf8 !important;
@@ -16432,7 +16432,7 @@ select,
 [data-theme="retro"] .content-header.jira-style  { background: #fefbf1; border-color: #d4c9a0; }
 [data-theme="retro"] .content-header h1          { color: #073642; }
 
-[data-theme="retro"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.login-jenkins-input),
+[data-theme="retro"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.login-jenkins-input):not(.lc-input),
 [data-theme="retro"] select,
 [data-theme="retro"] textarea,
 [data-theme="retro"] .form-field input,
@@ -16443,7 +16443,7 @@ select,
   border-color: #d4c9a0 !important;
   color: #073642 !important;
 }
-[data-theme="retro"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.login-jenkins-input):focus,
+[data-theme="retro"] input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(.login-jenkins-input):not(.lc-input):focus,
 [data-theme="retro"] select:focus,
 [data-theme="retro"] textarea:focus              {
   border-color: #b58900 !important;
@@ -21979,6 +21979,55 @@ html.login-route-active .login-page input.login-jenkins-input:focus {
   outline-offset: 0 !important;
 }
 
+/* Chars login — decorative .lc-input: always light (global dark theme targets all inputs) */
+html.login-route-active .login-page .lc-input,
+html.login-route-active .login-page .lc-input:hover,
+html.login-route-active .login-page .lc-input:focus {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  color: #374151 !important;
+  -webkit-text-fill-color: #374151 !important;
+  caret-color: #374151 !important;
+  color-scheme: light !important;
+  forced-color-adjust: none !important;
+  border: 1px solid #d1d5db !important;
+  box-shadow: none !important;
+}
+html.login-route-active .login-page .lc-input:focus {
+  border-color: #006096 !important;
+  outline: 2px solid #006096 !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
+}
+html.login-route-active .login-page .lc-input::placeholder {
+  color: #9ca3af !important;
+  opacity: 1 !important;
+}
+html.login-route-active .login-page .lc-input:-webkit-autofill,
+html.login-route-active .login-page .lc-input:-webkit-autofill:hover,
+html.login-route-active .login-page .lc-input:-webkit-autofill:focus,
+html.login-route-active .login-page .lc-input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #ffffff inset !important;
+  box-shadow: 0 0 0 1000px #ffffff inset !important;
+  -webkit-text-fill-color: #374151 !important;
+  caret-color: #374151 !important;
+}
+
+/* Chars login — primary + SSO buttons stay on-brand regardless of theme */
+html.login-route-active .login-page .lc-btn-primary {
+  background: #1f2937 !important;
+  color: #ffffff !important;
+  border: none !important;
+}
+html.login-route-active .login-page .lc-btn-primary:hover {
+  background: #111827 !important;
+}
+html.login-route-active .login-page .lc-btn-ms {
+  background: #003e61 !important;
+  color: #ffffff !important;
+  border: none !important;
+}
+
 /* Ticket detail â€” Add Note: space between attach zone and Send button */
 .jdm-note-attach-zone {
   display: flex;
@@ -24095,7 +24144,7 @@ button:not(.unstyled):not([class*='sidebar']):not([class*='nav-']):not(.icon-onl
 /* -----------------------------------------------------------
    7. Forms â€” inputs, textareas, selects
    ----------------------------------------------------------- */
-input:not([type='checkbox']):not([type='radio']):not(.login-jenkins-input),
+input:not([type='checkbox']):not([type='radio']):not(.login-jenkins-input):not(.lc-input),
 textarea,
 select {
   font-family: inherit;
@@ -24125,7 +24174,7 @@ textarea::placeholder {
   color: var(--text-muted);
 }
 
-input:not([type='checkbox']):not([type='radio']):not(.login-jenkins-input):focus,
+input:not([type='checkbox']):not([type='radio']):not(.login-jenkins-input):not(.lc-input):focus,
 textarea:focus,
 select:focus {
   outline: none;
