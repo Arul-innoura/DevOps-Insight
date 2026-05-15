@@ -10,6 +10,7 @@ import com.devops.backend.model.monitoring.PrometheusCostAccumulator;
 import com.devops.backend.repository.ClusterCostTimeseriesRepository;
 import com.devops.backend.repository.ProjectRepository;
 import com.devops.backend.repository.PrometheusCostAccumulatorRepository;
+import com.devops.backend.service.AwsPricingService;
 import com.devops.backend.service.AzurePricingService;
 import com.devops.backend.service.prometheus.PrometheusDiscoveryService.Node;
 import com.devops.backend.service.prometheus.PrometheusDiscoveryService.Pod;
@@ -58,6 +59,7 @@ public class PrometheusCostService {
     private final PrometheusClient client;
     private final PrometheusDiscoveryService discovery;
     private final AzurePricingService azure;
+    private final AwsPricingService awsPricing;
     private final PrometheusCostAccumulatorRepository repo;
     private final ProjectRepository projectRepo;
     private final PrometheusProperties props;
@@ -83,12 +85,106 @@ public class PrometheusCostService {
         return r == null || r.isBlank() ? "eastus" : r;
     }
 
+    /**
+     * AKS Standard-tier control-plane hourly price, fetched live from Azure Retail API.
+     * Falls back to the published $0.10/hr when the API returns no result.
+     */
+    private double aksControlPlaneHourly() {
+        AzurePriceRecord pr = firstPrice(
+                "serviceName eq 'Azure Kubernetes Service' and skuName eq 'Standard' "
+                + "and armRegionName eq 'global' and type eq 'Consumption'");
+        if (pr == null) {
+            pr = firstPrice(
+                "serviceName eq 'Azure Kubernetes Service' and type eq 'Consumption'");
+        }
+        return (pr != null && pr.getRetailPrice() != null && pr.getRetailPrice() > 0)
+                ? safe(pr.getRetailPrice()) : 0.10;
+    }
+
+    /**
+     * Azure outbound data-transfer rate per GB (Zone 1), fetched live from Azure Retail API.
+     * Falls back to the published $0.087/GB when the API returns no result.
+     */
+    private double azureEgressRatePerGb() {
+        // Azure Bandwidth: Zone 1 outbound (North America / Europe)
+        AzurePriceRecord pr = firstPrice(
+                "serviceName eq 'Bandwidth' and skuName eq 'Zone 1' "
+                + "and contains(productName, 'Outbound') and type eq 'Consumption'");
+        if (pr == null) {
+            pr = firstPrice("serviceName eq 'Bandwidth' and contains(productName, 'Zone 1') "
+                    + "and type eq 'Consumption'");
+        }
+        if (pr != null && pr.getRetailPrice() != null && pr.getRetailPrice() > 0) {
+            String uom = pr.getUnitOfMeasure() == null ? "" : pr.getUnitOfMeasure().toLowerCase();
+            // Azure Bandwidth rows are per-GB; confirm unit is GB not something else
+            if (uom.contains("gb") || uom.contains("byte") || uom.isBlank()) {
+                return safe(pr.getRetailPrice());
+            }
+        }
+        return 0.087; // published Zone 1 fallback
+    }
+
+    /** True when the env is configured to use AWS pricing instead of Azure. */
+    private boolean isAwsEnv(String env) {
+        if (env == null) return false;
+        String provider = props.getCloudProviders().getOrDefault(env.toLowerCase(), "azure");
+        return "aws".equalsIgnoreCase(provider);
+    }
+
+    private String defaultAwsRegion() { return "us-east-1"; }
+
     /** Envs the engine knows about (have a configured Prometheus endpoint). */
     public Set<String> availableEnvs() {
         return client.availableEnvs();
     }
 
-    /** Build a live snapshot AND persist cumulative cost ticks. */
+    // ── Topology cache: populated by Phase 1, consumed by Phase 2 ──────────
+    private final Map<String, Topology> cachedTopologies = new ConcurrentHashMap<>();
+
+    /**
+     * Phase 1 — fetch topology from Prometheus and cache it.
+     * Called by the scheduler 30 s before Phase 2.
+     */
+    public void primeTopology(String env) {
+        if (!client.hasEnv(env)) return;
+        try {
+            Topology t = discovery.discover(env);
+            if (t.reachable()) {
+                cachedTopologies.put(env, t);
+                log.debug("Phase-1 topology cached env={} nodes={} pods={}", env, t.getNodes().size(), t.getPods().size());
+            } else {
+                log.warn("Phase-1 Prometheus unreachable for env={}", env);
+            }
+        } catch (Exception e) {
+            log.warn("Phase-1 topology fetch failed env={}: {}", env, e.getMessage());
+        }
+    }
+
+    /**
+     * Phase 2 — compute prices from the cached topology and persist to DB.
+     * Called by the scheduler 30 s after Phase 1.
+     * Falls back to a fresh Prometheus scrape if no cached topology exists yet.
+     */
+    public PrometheusLiveCostSnapshot computeAndPersist(String env) {
+        Instant now = Instant.now();
+        if (!client.hasEnv(env)) {
+            return lastKnownGoodOrEmpty(env, now, "no Prometheus endpoint configured for env=" + env);
+        }
+        Topology t = cachedTopologies.get(env);
+        if (t == null) {
+            log.warn("Phase-2: no cached topology for env={}, falling back to live scrape", env);
+            t = discovery.discover(env);
+        }
+        if (!t.reachable()) {
+            return lastKnownGoodOrEmpty(env, now, "Prometheus unreachable — showing last persisted values");
+        }
+        return computeFromTopology(env, t, now);
+    }
+
+    /**
+     * Single-call tick used by the reconcile endpoint.
+     * Fetches topology and computes in one shot (no phase split).
+     */
     public PrometheusLiveCostSnapshot tick(String env) {
         Instant now = Instant.now();
         if (!client.hasEnv(env)) {
@@ -102,12 +198,17 @@ public class PrometheusCostService {
             return lastKnownGoodOrEmpty(env, now, "Prometheus returned no metrics this tick — showing last persisted values");
         }
 
+        return computeFromTopology(env, t, now);
+    }
+
+    /** Core cost engine — price the topology and persist results. */
+    private PrometheusLiveCostSnapshot computeFromTopology(String env, Topology t, Instant now) {
         List<String> warnings = new ArrayList<>();
 
-        // ----- Live VM SKU pricing -----
-        // Preserve original casing — Azure {@code armSkuName} matching is case-sensitive.
-        // Build per-node priced detail and a SKU → hourly index keyed by ORIGINAL SKU string.
-        SkuPricing sku = priceNodes(t, warnings);
+        boolean awsEnv = isAwsEnv(env);
+
+        // ----- Live VM pricing (Azure or AWS) -----
+        SkuPricing sku = priceNodes(env, t, warnings);
         Map<String, NodePrice> nodePrices = sku.nodePrices;
         double clusterNodeHourly = nodePrices.values().stream()
             .mapToDouble(np -> np.getHourly() + np.getOsDiskHourly()).sum();
@@ -180,10 +281,35 @@ public class PrometheusCostService {
             podsByWorkload.computeIfAbsent(p.getNamespace() + "/" + wl, k -> new ArrayList<>()).add(p);
         }
 
-        // ----- Cloud services discovered (ACR / LB / Storage / Key Vault hint) -----
+        // ----- Cloud services discovered (ACR/ECR · LB · Storage) -----
         List<CloudServiceCost> cloudServices = new ArrayList<>();
-        // Container Registry — one row per discovered ACR host. Standard tier price.
-        for (String acrHost : t.getAcrHosts()) {
+
+        if (awsEnv) {
+            // ── AWS: ECR container registry ────────────────────────────────────────
+            // ECR bills per GB-month of stored data. Actual storage is not observable from
+            // Prometheus, so we use a conservative 5 GB-per-registry-host estimate.
+            // The per-GB rate is fetched live from the AWS Pricing API.
+            double ecrRatePerGbMonth = awsPricing.ecrStoragePerGbMonth(defaultAwsRegion());
+            double ecrEstimatedGbPerRegistry = 5.0;
+            for (String ecrHost : t.getEcrHosts()) {
+                double monthly = ecrRatePerGbMonth * ecrEstimatedGbPerRegistry;
+                double hourly  = monthly / HOURS_PER_MONTH;
+                cloudServices.add(CloudServiceCost.builder()
+                        .key("ecr-" + ecrHost)
+                        .name("Container Registry (ECR) — " + ecrHost)
+                        .category("registry")
+                        .azureSkuName("ECR Standard")
+                        .azureUnitPriceUsd(ecrRatePerGbMonth)
+                        .unitOfMeasure("1 GB/Month")
+                        .quantity(ecrEstimatedGbPerRegistry)
+                        .hourlyRateUsd(hourly)
+                        .monthlyEstUsd(monthly)
+                        .evidence(Map.of("registryHost", ecrHost))
+                        .build());
+            }
+        } else {
+            // ── Azure: ACR container registry ─────────────────────────────────────
+            for (String acrHost : t.getAcrHosts()) {
             AzurePriceRecord pr = firstPrice(
                     "serviceName eq 'Container Registry' and skuName eq 'Standard' and type eq 'Consumption'");
             double daily = pr == null ? 0.1667 : safe(pr.getRetailPrice()); // ACR Standard ~$5/mo = $0.1667/day
@@ -203,37 +329,56 @@ public class PrometheusCostService {
                     .monthlyEstUsd(hourly * HOURS_PER_MONTH)
                     .evidence(Map.of("registryHost", acrHost))
                     .build());
-        }
-        // Load Balancers — record per-unit price so we can attribute to ns
+            } // end ACR for-loop
+        } // end else (Azure registry)
+
+        // ----- Load Balancers — record per-unit price so we can attribute to ns -----
         double lbHourlyPerUnit = 0d;
         AzurePriceRecord lbPr = null;
         if (t.getLoadBalancerCount() > 0) {
-            lbPr = firstPrice(
-                    "serviceName eq 'Load Balancer' and skuName eq 'Standard Overage' and armRegionName eq '" + defaultRegion() + "' and type eq 'Consumption'");
-            if (lbPr == null) {
-                lbPr = firstPrice("serviceName eq 'Load Balancer' and armRegionName eq '" + defaultRegion() + "' and type eq 'Consumption'");
+            if (awsEnv) {
+                // AWS ALB/NLB: base hourly charge per LB. LCU cost is not observable from Prometheus.
+                lbHourlyPerUnit = awsPricing.albHourlyPerLb(defaultAwsRegion());
+                double hourly = lbHourlyPerUnit * t.getLoadBalancerCount();
+                cloudServices.add(CloudServiceCost.builder()
+                        .key("lb")
+                        .name("Load Balancer × " + t.getLoadBalancerCount())
+                        .category("network")
+                        .azureSkuName("AWS ALB/NLB")
+                        .azureUnitPriceUsd(lbHourlyPerUnit)
+                        .unitOfMeasure("1 Hour")
+                        .quantity((double) t.getLoadBalancerCount())
+                        .hourlyRateUsd(hourly)
+                        .monthlyEstUsd(hourly * HOURS_PER_MONTH)
+                        .evidence(Map.of("loadBalancers", String.valueOf(t.getLoadBalancerCount())))
+                        .build());
+            } else {
+                lbPr = firstPrice(
+                        "serviceName eq 'Load Balancer' and skuName eq 'Standard Overage' and armRegionName eq '" + defaultRegion() + "' and type eq 'Consumption'");
+                if (lbPr == null) {
+                    lbPr = firstPrice("serviceName eq 'Load Balancer' and armRegionName eq '" + defaultRegion() + "' and type eq 'Consumption'");
+                }
+                double unitPrice = lbPr == null ? 0.025 : safe(lbPr.getRetailPrice());
+                String unit = lbPr == null ? "1 Hour" : lbPr.getUnitOfMeasure();
+                lbHourlyPerUnit = unitToHourly(unitPrice, unit);
+                double hourly = lbHourlyPerUnit * t.getLoadBalancerCount();
+                cloudServices.add(CloudServiceCost.builder()
+                        .key("lb")
+                        .name("Load Balancer × " + t.getLoadBalancerCount())
+                        .category("network")
+                        .azureMeterId(lbPr == null ? null : lbPr.getMeterId())
+                        .azureSkuName(lbPr == null ? "Standard" : lbPr.getSkuName())
+                        .azureUnitPriceUsd(unitPrice)
+                        .unitOfMeasure(unit)
+                        .quantity((double) t.getLoadBalancerCount())
+                        .hourlyRateUsd(hourly)
+                        .monthlyEstUsd(hourly * HOURS_PER_MONTH)
+                        .evidence(Map.of("loadBalancers", String.valueOf(t.getLoadBalancerCount())))
+                        .build());
             }
-            double unitPrice = lbPr == null ? 0.025 : safe(lbPr.getRetailPrice());
-            String unit = lbPr == null ? "1 Hour" : lbPr.getUnitOfMeasure();
-            lbHourlyPerUnit = unitToHourly(unitPrice, unit);
-            double hourly = lbHourlyPerUnit * t.getLoadBalancerCount();
-            cloudServices.add(CloudServiceCost.builder()
-                    .key("lb")
-                    .name("Load Balancer × " + t.getLoadBalancerCount())
-                    .category("network")
-                    .azureMeterId(lbPr == null ? null : lbPr.getMeterId())
-                    .azureSkuName(lbPr == null ? "Standard" : lbPr.getSkuName())
-                    .azureUnitPriceUsd(unitPrice)
-                    .unitOfMeasure(unit)
-                    .quantity((double) t.getLoadBalancerCount())
-                    .hourlyRateUsd(hourly)
-                    .monthlyEstUsd(hourly * HOURS_PER_MONTH)
-                    .evidence(Map.of("loadBalancers", String.valueOf(t.getLoadBalancerCount())))
-                    .build());
         }
-        // Storage — price each PVC live, attribute to its owning namespace,
-        // and roll up to a per-storage-class line in the cloud-services table
-        // so admins still see "you have 240 GB of Premium SSD".
+
+        // ----- Storage — price each PVC, attribute to its owning namespace -----
         Map<String, Double> classToGb = new HashMap<>();
         Map<String, Double> classToHourly = new HashMap<>();
         Map<String, AzurePriceRecord> classToPrice = new HashMap<>();
@@ -243,21 +388,31 @@ public class PrometheusCostService {
             double gb = p.getRequestBytes() / (1024d * 1024d * 1024d);
             if (gb <= 0) continue;
 
-            AzurePriceRecord pr = classToPrice.computeIfAbsent(sc, k -> {
-                String azureSkuName = mapStorageClassToAzureSku(k);
-                AzurePriceRecord found = firstPrice(
-                        "serviceName eq 'Storage' and contains(productName, '" + azureSkuName + "') and armRegionName eq '"
-                                + defaultRegion() + "' and type eq 'Consumption'");
-                return found;
-            });
-            String azureSkuName = pr == null ? mapStorageClassToAzureSku(sc) : pr.getSkuName();
-            int pvcGbInt = (int) Math.ceil(gb);
-            boolean pvcPremium = azureSkuName.toLowerCase().contains("premium");
-            boolean pvcStdSsd  = azureSkuName.toLowerCase().contains("standard ssd");
-            double pvcMonthly = managedDiskTierMonthly(pvcGbInt, pvcPremium, pvcStdSsd, defaultRegion());
-            double perGbMonth = gb > 0 ? pvcMonthly / gb : 0d; // for display only
+            double pvcMonthly;
+            String skuName;
+            String meterId = null;
+            if (awsEnv) {
+                // AWS EBS pricing based on storage class name
+                double gbPerMonth = awsPricing.ebsGbMonthly(sc);
+                pvcMonthly = gbPerMonth * gb;
+                skuName = mapStorageClassToAwsSku(sc);
+            } else {
+                AzurePriceRecord pr = classToPrice.computeIfAbsent(sc, k -> {
+                    String azureSkuName = mapStorageClassToAzureSku(k);
+                    AzurePriceRecord found = firstPrice(
+                            "serviceName eq 'Storage' and contains(productName, '" + azureSkuName + "') and armRegionName eq '"
+                                    + defaultRegion() + "' and type eq 'Consumption'");
+                    return found;
+                });
+                String azureSkuName = pr == null ? mapStorageClassToAzureSku(sc) : pr.getSkuName();
+                int pvcGbInt = (int) Math.ceil(gb);
+                boolean pvcPremium = azureSkuName.toLowerCase().contains("premium");
+                boolean pvcStdSsd  = azureSkuName.toLowerCase().contains("standard ssd");
+                pvcMonthly = managedDiskTierMonthly(pvcGbInt, pvcPremium, pvcStdSsd, defaultRegion());
+                skuName = azureSkuName;
+                meterId = pr == null ? null : pr.getMeterId();
+            }
             double pvcHourly = pvcMonthly / HOURS_PER_MONTH;
-
             classToGb.merge(sc, gb, Double::sum);
             classToHourly.merge(sc, pvcHourly, Double::sum);
 
@@ -268,8 +423,8 @@ public class PrometheusCostService {
                             .sizeGb(gb)
                             .monthlyUsd(pvcMonthly)
                             .hourlyUsd(pvcHourly)
-                            .azureSkuName(azureSkuName)
-                            .azureMeterId(pr == null ? null : pr.getMeterId())
+                            .azureSkuName(skuName)
+                            .azureMeterId(meterId)
                             .build());
         }
         // Roll up each storage-class total into the cloud-services list
@@ -277,18 +432,27 @@ public class PrometheusCostService {
             String sc = e.getKey();
             double gb = e.getValue();
             double hourly = classToHourly.getOrDefault(sc, 0d);
-            AzurePriceRecord pr = classToPrice.get(sc);
-            String azureSkuName = pr == null ? mapStorageClassToAzureSku(sc) : pr.getSkuName();
-            double perGbMonth = pr == null ? defaultStoragePrice(sc) : safe(pr.getRetailPrice());
+            String skuDisplayName;
+            double perGbMonth;
+            String meterid = null;
+            if (awsEnv) {
+                skuDisplayName = mapStorageClassToAwsSku(sc);
+                perGbMonth = awsPricing.ebsGbMonthly(sc);
+            } else {
+                AzurePriceRecord pr = classToPrice.get(sc);
+                skuDisplayName = pr == null ? mapStorageClassToAzureSku(sc) : pr.getSkuName();
+                perGbMonth = pr == null ? defaultStoragePrice(sc) : safe(pr.getRetailPrice());
+                meterid = pr == null ? null : pr.getMeterId();
+            }
 
             cloudServices.add(CloudServiceCost.builder()
                     .key("storage-" + sc)
                     .name("Storage · " + sc + " · " + String.format("%.1f", gb) + " GB")
                     .category("storage")
-                    .azureMeterId(pr == null ? null : pr.getMeterId())
-                    .azureSkuName(azureSkuName)
+                    .azureMeterId(meterid)
+                    .azureSkuName(skuDisplayName)
                     .azureUnitPriceUsd(perGbMonth)
-                    .unitOfMeasure(pr == null ? "1 GB/Month" : pr.getUnitOfMeasure())
+                    .unitOfMeasure("1 GB/Month")
                     .quantity(gb)
                     .hourlyRateUsd(hourly)
                     .monthlyEstUsd(hourly * HOURS_PER_MONTH)
@@ -316,10 +480,12 @@ public class PrometheusCostService {
         //
         // Guarantee: sum(ns.userPoolHourly) == userPoolHourly  (normalised weights)
 
-        // AKS control plane surcharge — only Standard tier has a fee (~$0.10/hr).
-        // Free tier: $0 (just the node VMs). Added to totalHourly as cluster-level overhead
-        // split equally across all namespaces (same rationale as system pool).
-        double controlPlaneHourly = "standard".equalsIgnoreCase(props.getAksControlPlaneTier()) ? 0.10 : 0d;
+        // EKS: live-priced cluster fee. AKS: free tier = $0, standard tier = live Azure price.
+        double controlPlaneHourly = awsEnv
+                ? awsPricing.eksClusterHourly(defaultAwsRegion())
+                : ("standard".equalsIgnoreCase(props.getAksControlPlaneTier())
+                        ? aksControlPlaneHourly()
+                        : 0d);
 
         // Step 1: namespace union
         Set<String> nsUnion = new TreeSet<>(t.namespaces());
@@ -354,20 +520,21 @@ public class PrometheusCostService {
                 ? (int) runningWorkloadCount
                 : (allWorkloadCount > 0 ? (int) allWorkloadCount : nsCount);
 
-        // Pre-pass: sum effective CPU/mem per user-pool node (denominator for proportional share).
-        // OpenCost spec: effective resource = max(request, usage).
-        //   If a pod bursts above its request, it pays for what it actually consumed.
-        //   If a pod under-uses its reservation, it still pays for what it reserved.
-        // Example: node $1/hr, pod A eff=2 cores, pod B eff=6 cores → A pays $0.25, B pays $0.75 (total $1 ✓)
-        Map<String, double[]> nodeReqTotals = new HashMap<>(); // [totalEffCpu, totalEffMemBytes]
+        // Pre-pass: sum requested CPU/mem per user-pool node (denominator for proportional cost share).
+        // Cost attribution model: REQUEST-BASED.
+        //   Pods are charged for the capacity they RESERVE, not what they actually consume.
+        //   Kubernetes schedules pods based on requests; the node holds that capacity regardless of usage.
+        //   Example: node $1/hr, pod A requests 0.5c, pod B requests 1.5c → A pays $0.25, B pays $0.75 (total $1 ✓)
+        //   Usage is still collected and shown for efficiency reporting but does NOT affect cost.
+        Map<String, double[]> nodeReqTotals = new HashMap<>(); // [totalReqCpu, totalReqMemBytes]
         for (Pod p : t.getPods().values()) {
             if (p.getNode() == null) continue;
             Node pn = t.getNodes().get(p.getNode());
             if (pn == null || isSystemPool(pn)) continue;
             double[] tot = nodeReqTotals.computeIfAbsent(p.getNode(), k -> new double[]{0d, 0d});
-            // effective = max(request, usage) then clamp to floor
-            tot[0] += Math.max(Math.max(p.getCpuRequestCores(), p.getCpuCores()), CPU_REQUEST_FLOOR);
-            tot[1] += Math.max(Math.max(p.getMemoryRequestBytes(), p.getMemoryBytes()), MEM_REQUEST_FLOOR);
+            // Charge for reserved (requested) capacity only — floor ensures unset requests get a minimal share
+            tot[0] += Math.max(p.getCpuRequestCores(), CPU_REQUEST_FLOOR);
+            tot[1] += Math.max(p.getMemoryRequestBytes(), MEM_REQUEST_FLOOR);
         }
 
         // Step 2: per-pod per-node attribution.
@@ -383,9 +550,10 @@ public class PrometheusCostService {
         Map<String, Double> nsMemHourlyMap = new LinkedHashMap<>();
 
         for (Pod p : t.getPods().values()) {
-            // OpenCost: effective resource = max(request, usage) — charge for reservation OR actual, whichever is larger
-            double cr = Math.max(Math.max(p.getCpuRequestCores(), p.getCpuCores()), CPU_REQUEST_FLOOR);
-            double mr = Math.max(Math.max(p.getMemoryRequestBytes(), p.getMemoryBytes()), MEM_REQUEST_FLOOR);
+            // Request-based attribution: cost = what the pod reserved on the node, not what it consumed.
+            // Actual usage (getCpuCores, getMemoryBytes) is tracked separately for efficiency reporting only.
+            double cr = Math.max(p.getCpuRequestCores(), CPU_REQUEST_FLOOR);
+            double mr = Math.max(p.getMemoryRequestBytes(), MEM_REQUEST_FLOOR);
             nsCpuReqAgg.merge(p.getNamespace(), cr, Double::sum);
             nsMemReqAgg.merge(p.getNamespace(), mr, Double::sum);
 
@@ -477,7 +645,11 @@ public class PrometheusCostService {
         double egressRawGbPerMonth = (egressBytesPerSec * 60d * 60d * HOURS_PER_MONTH) / 1e9;
         double egressGbPerMonth = egressRawGbPerMonth * props.getEgressInternetFraction();
         double egressBillableGb = Math.max(0d, egressGbPerMonth - 100d);
-        double egressMonthly = egressBillableGb * 0.087;
+        // Egress rate: fetched live from the respective cloud's pricing API.
+        double egressRatePerGb = awsEnv
+                ? awsPricing.egressRatePerGb(defaultAwsRegion())
+                : azureEgressRatePerGb();
+        double egressMonthly = egressBillableGb * egressRatePerGb;
         double egressHourlyTotal = egressMonthly / HOURS_PER_MONTH;
         double egressSharePerWorkloadNs = effectiveSystemShareCount > 0 ? egressHourlyTotal / effectiveSystemShareCount : 0d;
 
@@ -598,18 +770,21 @@ public class PrometheusCostService {
                                 nsMemAgg / (1024d * 1024d * 1024d), nsMemFrac * 100d, memHourly)));
             }
             for (NamespaceStorage s : nsStorage) {
+                String storageProvider = awsEnv ? "EBS" : "Azure managed disk";
                 serviceLines.add(line("storage", "Storage · " + s.getStorageClass() + " (" + s.getPvcName() + ")",
                         s.getSizeGb(), "GB", safe(s.getHourlyUsd()),
-                        String.format("%.1f GB actual → %s (Azure managed disk tier) · Azure retail $%.2f/mo = $%.5f/hr",
+                        String.format("%.1f GB · %s (%s) · $%.2f/mo = $%.5f/hr",
                                 s.getSizeGb(),
-                                s.getAzureSkuName() != null ? s.getAzureSkuName() : "Managed Disk",
+                                s.getAzureSkuName() != null ? s.getAzureSkuName() : storageProvider,
+                                storageProvider,
                                 safe(s.getMonthlyUsd()), safe(s.getHourlyUsd()))));
             }
             if (nsLbCount > 0 && lbHourlyPerUnitFinal > 0) {
+                String lbProvider = awsEnv ? "AWS ALB/NLB" : "Azure LB Standard";
                 serviceLines.add(line("network", "Load Balancer × " + nsLbCount,
                         (double) nsLbCount, "LB", networkHourly,
-                        String.format("Azure LB Standard $%.5f/hr each (Azure Retail %s) · %d × $%.5f = $%.5f/hr",
-                                lbHourlyPerUnitFinal, defaultRegion(), nsLbCount, lbHourlyPerUnitFinal, networkHourly)));
+                        String.format("%s $%.5f/hr each · %d × $%.5f = $%.5f/hr",
+                                lbProvider, lbHourlyPerUnitFinal, nsLbCount, lbHourlyPerUnitFinal, networkHourly)));
             }
             if (nsIngressCount > 0) {
                 serviceLines.add(line("network", "Ingress rules × " + nsIngressCount,
@@ -617,18 +792,19 @@ public class PrometheusCostService {
                         "No direct charge — traffic handled by cluster ingress controller (not billed per-rule)"));
             }
             if (registryShare > 0) {
+                String registryProvider = awsEnv ? "ECR" : "ACR Standard";
                 serviceLines.add(line("registry", "Container Registry (split to workload ns)",
                         (double) effectiveSystemShareCount, "ns", registryShare,
-                        String.format("ACR Standard $%.2f/mo total = $%.5f/hr ÷ %d workload ns = $%.5f/hr each",
-                                registryTotalHourly * HOURS_PER_MONTH, registryTotalHourly, effectiveSystemShareCount, registryShare)));
+                        String.format("%s $%.2f/mo total = $%.5f/hr ÷ %d workload ns = $%.5f/hr each",
+                                registryProvider, registryTotalHourly * HOURS_PER_MONTH, registryTotalHourly, effectiveSystemShareCount, registryShare)));
             }
             if (egressShare > 0) {
                 serviceLines.add(line("network", "Outbound egress (estimated, split to workload ns)",
                         (double) effectiveSystemShareCount, "ns", egressShare,
-                        String.format("%.0f GB/mo NIC × %.0f%% internet = %.0f GB/mo − 100 GB free = %.0f GB × $0.087 = $%.2f/mo ÷ %d workload ns = $%.5f/hr",
+                        String.format("%.0f GB/mo NIC × %.0f%% internet = %.0f GB/mo − 100 GB free = %.0f GB × $%.3f = $%.2f/mo ÷ %d workload ns = $%.5f/hr",
                                 egressRawGbPerMonth, props.getEgressInternetFraction() * 100d,
                                 egressGbPerMonth, Math.max(0d, egressGbPerMonth - 100d),
-                                egressMonthly, effectiveSystemShareCount, egressShare)));
+                                egressRatePerGb, egressMonthly, effectiveSystemShareCount, egressShare)));
             }
 
             Project proj = nameToProject.get(normaliseNs(ns));
@@ -709,14 +885,16 @@ public class PrometheusCostService {
         List<ComponentLine> componentBreakdown = new ArrayList<>();
         int pvcCount = t.getPvcs().size();
 
-        // AKS Control plane — always shown (even when $0 on free tier)
+        // Control plane — always shown
         componentBreakdown.add(componentLine(
                 "control-plane",
-                "AKS Control Plane",
+                awsEnv ? "EKS Control Plane" : "AKS Control Plane",
                 controlPlaneHourly, totalHourly,
-                "standard".equalsIgnoreCase(props.getAksControlPlaneTier())
-                    ? "Standard tier · Uptime SLA · $0.10/hr"
-                    : "Free tier · no SLA · $0.00/hr"));
+                awsEnv
+                    ? "EKS managed control plane · $0.10/hr per cluster"
+                    : ("standard".equalsIgnoreCase(props.getAksControlPlaneTier())
+                        ? "Standard tier · Uptime SLA · $0.10/hr"
+                        : "Free tier · no SLA · $0.00/hr")));
 
         // System node pool VMs — always shown with count (shows 0 if undetected)
         componentBreakdown.add(componentLine(
@@ -778,7 +956,9 @@ public class PrometheusCostService {
                 "Persistent storage · " + pvcCount + " PVC" + (pvcCount == 1 ? "" : "s"),
                 sumStorage, totalHourly,
                 pvcCount + " PVC" + (pvcCount == 1 ? "" : "s")
-                    + " · per-PVC live Azure managed-disk tier pricing (P4/P6/P10…)"));
+                    + (awsEnv
+                        ? " · per-PVC live AWS EBS pricing (gp2/gp3/io1)"
+                        : " · per-PVC live Azure managed-disk tier pricing (P4/P6/P10…)")));
 
         // Network (Load Balancers)
         if (sumNetwork > 0) componentBreakdown.add(componentLine(
@@ -786,23 +966,25 @@ public class PrometheusCostService {
                 "Network · " + t.getLoadBalancerCount() + " Load Balancer" + (t.getLoadBalancerCount() == 1 ? "" : "s"),
                 sumNetwork, totalHourly,
                 t.getLoadBalancerCount() + " LB" + (t.getLoadBalancerCount() == 1 ? "" : "s")
-                    + " · Azure Standard LB · per-namespace attribution"));
+                    + (awsEnv ? " · AWS ALB/NLB · per-namespace attribution" : " · Azure Standard LB · per-namespace attribution")));
 
         // Container Registry
+        int registryHostCount = awsEnv ? t.getEcrHosts().size() : t.getAcrHosts().size();
+        String registryLabel  = awsEnv ? "ECR" : "ACR";
         if (sumRegistry > 0) componentBreakdown.add(componentLine(
                 "registry",
-                "Container Registry · " + t.getAcrHosts().size() + " ACR",
+                "Container Registry · " + registryHostCount + " " + registryLabel,
                 sumRegistry, totalHourly,
-                "ACR Standard · split equally across " + nsCount + " namespace" + (nsCount == 1 ? "" : "s")));
+                registryLabel + " · split equally across " + nsCount + " namespace" + (nsCount == 1 ? "" : "s")));
 
         // Egress — estimate only, with fraction clearly shown
         if (sumEgress > 0) componentBreakdown.add(componentLine(
                 "egress",
                 "Outbound egress (estimated)",
                 sumEgress, totalHourly,
-                String.format("%.0f GB/mo physical NIC × %.0f%% internet = %.0f GB/mo − 100 GB free = %.0f GB × $0.087 = $%.2f/mo",
+                String.format("%.0f GB/mo physical NIC × %.0f%% internet = %.0f GB/mo − 100 GB free = %.0f GB × $%.3f = $%.2f/mo",
                         egressRawGbPerMonth, props.getEgressInternetFraction() * 100d,
-                        egressGbPerMonth, Math.max(0d, egressGbPerMonth - 100d), egressMonthly)));
+                        egressGbPerMonth, Math.max(0d, egressGbPerMonth - 100d), egressRatePerGb, egressMonthly)));
 
         ClusterTotals cluster = ClusterTotals.builder()
                 .nodeCount(t.getNodes().size())
@@ -940,7 +1122,7 @@ public class PrometheusCostService {
         List<PrometheusLiveCostSnapshot.ProductCost> products = buildProductView(env, namespaceCosts, podsByNs);
 
         // ----- Fixed / inventory view -----
-        InventoryView inventory = buildInventory(t, nodePrices, classToGb, classToHourly, classToPrice, lbHourlyPerUnitFinal, cloudServices);
+        InventoryView inventory = buildInventory(awsEnv, t, nodePrices, classToGb, classToHourly, classToPrice, lbHourlyPerUnitFinal, cloudServices);
 
         // ===== Reconciliation: 7 accounting invariants computed every tick =====
         // If all pass, the cost engine is 100% internally consistent — every dollar
@@ -1043,6 +1225,10 @@ public class PrometheusCostService {
                             .memoryUsedGb(nc.getMemoryGb())
                             .memoryRequestGb(nc.getMemoryRequestGb())
                             .podCount(nc.getPodCount())
+                            .computeHourlyUsd(nc.getComputeHourlyUsd())
+                            .memoryHourlyUsd(nc.getMemoryHourlyUsd())
+                            .storageHourlyUsd(nc.getStorageHourlyUsd())
+                            .networkHourlyUsd(nc.getNetworkHourlyUsd())
                             .build());
                 }
             }
@@ -1080,13 +1266,89 @@ public class PrometheusCostService {
     }
 
     /**
-     * Returns the most-recent cached snapshot without triggering a new Prometheus
-     * scrape. Called by the HTTP layer so the scheduler is the sole tick source.
-     * Falls back to {@link #lastKnownGoodOrEmpty(String)} when no cached result exists.
+     * Returns the most-recent snapshot: in-memory cache first, then latest
+     * MongoDB timeseries point (survives backend restarts), then empty fallback.
      */
     public PrometheusLiveCostSnapshot getLatestSnapshot(String env) {
         PrometheusLiveCostSnapshot cached = lastGoodSnapshot.get(env);
-        return cached != null ? cached : lastKnownGoodOrEmpty(env, Instant.now(), "no tick completed yet for env=" + env);
+        if (cached != null) return cached;
+
+        // Backend just restarted — reconstruct from the latest persisted DB record
+        // so the UI never shows zeros while waiting for the first tick.
+        try {
+            var opt = timeseriesRepo.findTopByEnvOrderByCapturedAtDesc(env);
+            if (opt.isPresent()) {
+                PrometheusLiveCostSnapshot fromDb = reconstructFromTimeseries(env, opt.get());
+                lastGoodSnapshot.put(env, fromDb); // warm the cache for subsequent calls
+                log.info("Bootstrapped live snapshot for env={} from last DB record at {}", env, opt.get().getCapturedAt());
+                return fromDb;
+            }
+        } catch (Exception e) {
+            log.warn("Could not reconstruct snapshot from DB for env={}: {}", env, e.getMessage());
+        }
+        return lastKnownGoodOrEmpty(env, Instant.now(), "no tick completed yet for env=" + env);
+    }
+
+    /**
+     * Reconstructs a partial {@link PrometheusLiveCostSnapshot} from the latest
+     * persisted {@link ClusterCostTimeseriesPoint}. The result has cluster totals
+     * and per-namespace cost lines (with CPU/memory/component breakdown) but no
+     * microservice detail or cloud-service list — enough for the UI overview,
+     * KPI cards, and namespace table without re-scraping Prometheus.
+     */
+    private PrometheusLiveCostSnapshot reconstructFromTimeseries(String env, ClusterCostTimeseriesPoint pt) {
+        List<NamespaceCost> nsCosts = new ArrayList<>();
+        if (pt.getNamespaces() != null) {
+            for (ClusterCostTimeseriesPoint.NamespaceLine nl : pt.getNamespaces()) {
+                double hourly   = nl.getHourlyUsd()        != null ? nl.getHourlyUsd()        : 0d;
+                double smoothed = nl.getSmoothedHourlyUsd() != null ? nl.getSmoothedHourlyUsd() : hourly;
+                nsCosts.add(NamespaceCost.builder()
+                        .namespace(nl.getNamespace())
+                        .matchedProjectName(nl.getMatchedProjectName())
+                        .hourlyRateUsd(hourly)
+                        .smoothedHourlyUsd(smoothed)
+                        .dailyEstUsd(smoothed * HOURS_PER_DAY)
+                        .monthlyEstUsd(smoothed * HOURS_PER_MONTH)
+                        .monthToDateUsd(null)   // not stored in compact timeseries record
+                        .cpuCores(nl.getCpuUsedCores())
+                        .cpuRequestCores(nl.getCpuRequestCores())
+                        .memoryGb(nl.getMemoryUsedGb())
+                        .memoryRequestGb(nl.getMemoryRequestGb())
+                        .podCount(nl.getPodCount())
+                        .computeHourlyUsd(nl.getComputeHourlyUsd())
+                        .memoryHourlyUsd(nl.getMemoryHourlyUsd())
+                        .storageHourlyUsd(nl.getStorageHourlyUsd())
+                        .networkHourlyUsd(nl.getNetworkHourlyUsd())
+                        .microservices(List.of())   // not stored in compact timeseries
+                        .storage(List.of())
+                        .serviceLines(List.of())
+                        .build());
+            }
+        }
+
+        Double totalSmoothed = pt.getSmoothedHourlyUsd() != null ? pt.getSmoothedHourlyUsd() : pt.getTotalHourlyUsd();
+        ClusterTotals cluster = ClusterTotals.builder()
+                .totalCpuCores(pt.getTotalCpuCores())
+                .usedCpuCores(pt.getUsedCpuCores())
+                .totalMemoryGb(pt.getTotalMemoryGb())
+                .usedMemoryGb(pt.getUsedMemoryGb())
+                .build();
+
+        return PrometheusLiveCostSnapshot.builder()
+                .env(env)
+                .capturedAt(pt.getCapturedAt())
+                .prometheusReachable(false)   // sourced from DB, Prometheus not queried
+                .totalHourlyUsd(pt.getTotalHourlyUsd())
+                .smoothedHourlyUsd(totalSmoothed)
+                .dailyEstUsd(totalSmoothed != null ? totalSmoothed * HOURS_PER_DAY  : null)
+                .monthlyEstUsd(totalSmoothed != null ? totalSmoothed * HOURS_PER_MONTH : null)
+                .monthToDateUsd(pt.getMonthToDateUsd())
+                .cumulativeUsd(pt.getCumulativeUsd())
+                .cluster(cluster)
+                .namespaces(nsCosts)
+                .cloudServices(List.of())
+                .nodes(List.of())
+                .build();
     }
 
     /**
@@ -1097,6 +1359,7 @@ public class PrometheusCostService {
      * estimated egress), Key-Vault, Storage Account.
      */
     private InventoryView buildInventory(
+            boolean awsEnv,
             Topology t,
             Map<String, NodePrice> nodePrices,
             Map<String, Double> classToGb,
@@ -1114,29 +1377,42 @@ public class PrometheusCostService {
         List<InventoryLine> k8sItems = new ArrayList<>();
         double k8sHourly = 0d;
 
-        // Control plane (AKS uptime SLA tier)
-        String tier = props.getAksControlPlaneTier();
-        if ("standard".equalsIgnoreCase(tier)) {
-            // AKS Uptime SLA — published list price ~$0.10/hour per cluster
-            double cpHourly = 0.10;
+        // Control plane
+        if (awsEnv) {
+            double cpHourly = awsPricing.eksClusterHourly(defaultAwsRegion());
             k8sItems.add(InventoryLine.builder()
                     .name("Control plane")
-                    .sku("AKS Standard (Uptime SLA)")
+                    .sku("EKS Managed")
                     .count(1).unit("cluster")
                     .unitDailyUsd(cpHourly * HOURS_PER_DAY)
                     .dailyUsd(cpHourly * HOURS_PER_DAY)
                     .monthlyUsd(cpHourly * HOURS_PER_MONTH)
-                    .detail("$0.10/hr per AKS cluster on Standard tier")
+                    .detail(String.format("$%.4f/hr per EKS cluster · live AWS pricing", cpHourly))
                     .build());
             k8sHourly += cpHourly;
         } else {
-            k8sItems.add(InventoryLine.builder()
-                    .name("Control plane")
-                    .sku("AKS Free")
-                    .count(1).unit("cluster")
-                    .unitDailyUsd(0d).dailyUsd(0d).monthlyUsd(0d)
-                    .detail("AKS Free tier — control plane is free, no SLA")
-                    .build());
+            String tier = props.getAksControlPlaneTier();
+            if ("standard".equalsIgnoreCase(tier)) {
+                double cpHourly = aksControlPlaneHourly();
+                k8sItems.add(InventoryLine.builder()
+                        .name("Control plane")
+                        .sku("AKS Standard (Uptime SLA)")
+                        .count(1).unit("cluster")
+                        .unitDailyUsd(cpHourly * HOURS_PER_DAY)
+                        .dailyUsd(cpHourly * HOURS_PER_DAY)
+                        .monthlyUsd(cpHourly * HOURS_PER_MONTH)
+                        .detail(String.format("$%.4f/hr per AKS cluster on Standard tier · live Azure retail price", cpHourly))
+                        .build());
+                k8sHourly += cpHourly;
+            } else {
+                k8sItems.add(InventoryLine.builder()
+                        .name("Control plane")
+                        .sku("AKS Free")
+                        .count(1).unit("cluster")
+                        .unitDailyUsd(0d).dailyUsd(0d).monthlyUsd(0d)
+                        .detail("AKS Free tier — control plane is free, no SLA")
+                        .build());
+            }
         }
 
         // Group nodes by (poolLabel, sku, isSpot) so we mirror the user's table
@@ -1175,30 +1451,33 @@ public class PrometheusCostService {
                             + (first.isSpot() ? " · Spot pricing" : ""))
                     .build());
         }
-        // OS disks — one row per node (grouped by tier+type for brevity)
-        Map<String, int[]> osDiskBuckets = new LinkedHashMap<>(); // key=tierSku, value={count, sizeGb}
-        Map<String, Double> osDiskBucketHourly = new LinkedHashMap<>();
-        for (Node n : t.getNodes().values()) {
-            NodePrice np = nodePrices.get(n.getName());
-            if (np == null || np.osDiskHourly <= 0) continue;
-            String key = (np.osDiskTierSku == null ? "E10" : np.osDiskTierSku) + " LRS";
-            osDiskBuckets.merge(key, new int[]{1, np.osDiskSizeGb > 0 ? np.osDiskSizeGb : 128}, (a, b) -> new int[]{a[0]+1, a[1]});
-            osDiskBucketHourly.merge(key, np.osDiskHourly, Double::sum);
-        }
-        for (var e : osDiskBuckets.entrySet()) {
-            int cnt = e.getValue()[0];
-            int sz  = e.getValue()[1];
-            double rowHourly = osDiskBucketHourly.getOrDefault(e.getKey(), 0d);
-            k8sHourly += rowHourly;
-            k8sItems.add(InventoryLine.builder()
-                    .name("OS Disk · " + e.getKey())
-                    .sku(e.getKey())
-                    .count(cnt).unit("disk")
-                    .unitDailyUsd((rowHourly / cnt) * HOURS_PER_DAY)
-                    .dailyUsd(rowHourly * HOURS_PER_DAY)
-                    .monthlyUsd(rowHourly * HOURS_PER_MONTH)
-                    .detail(sz + " GB managed disk per node · Azure billed per tier")
-                    .build());
+        // OS disks — Azure only (AKS managed disks billed per tier).
+        // EKS EC2 nodes have EBS root volumes but those are included in the on-demand price shown above.
+        if (!awsEnv) {
+            Map<String, int[]> osDiskBuckets = new LinkedHashMap<>(); // key=tierSku, value={count, sizeGb}
+            Map<String, Double> osDiskBucketHourly = new LinkedHashMap<>();
+            for (Node n : t.getNodes().values()) {
+                NodePrice np = nodePrices.get(n.getName());
+                if (np == null || np.osDiskHourly <= 0) continue;
+                String key = (np.osDiskTierSku == null ? "E10" : np.osDiskTierSku) + " LRS";
+                osDiskBuckets.merge(key, new int[]{1, np.osDiskSizeGb > 0 ? np.osDiskSizeGb : 128}, (a, b) -> new int[]{a[0]+1, a[1]});
+                osDiskBucketHourly.merge(key, np.osDiskHourly, Double::sum);
+            }
+            for (var e : osDiskBuckets.entrySet()) {
+                int cnt = e.getValue()[0];
+                int sz  = e.getValue()[1];
+                double rowHourly = osDiskBucketHourly.getOrDefault(e.getKey(), 0d);
+                k8sHourly += rowHourly;
+                k8sItems.add(InventoryLine.builder()
+                        .name("OS Disk · " + e.getKey())
+                        .sku(e.getKey())
+                        .count(cnt).unit("disk")
+                        .unitDailyUsd((rowHourly / cnt) * HOURS_PER_DAY)
+                        .dailyUsd(rowHourly * HOURS_PER_DAY)
+                        .monthlyUsd(rowHourly * HOURS_PER_MONTH)
+                        .detail(sz + " GB managed disk per node · Azure billed per tier")
+                        .build());
+            }
         }
 
         groups.add(InventoryGroup.builder()
@@ -1218,14 +1497,18 @@ public class PrometheusCostService {
             if (!"registry".equals(cs.getCategory())) continue;
             double rowHourly = safe(cs.getHourlyRateUsd());
             registryHourly += rowHourly;
+            String registryName = awsEnv ? "ECR" : "ACR";
+            String registryDetail = awsEnv
+                    ? "AWS Elastic Container Registry · ~$0.10/GB-month stored"
+                    : "Azure Container Registry · live retail price";
             registryItems.add(InventoryLine.builder()
-                    .name("ACR")
+                    .name(registryName)
                     .sku(cs.getAzureSkuName())
                     .count(1).unit("registry")
                     .unitDailyUsd(rowHourly * HOURS_PER_DAY)
                     .dailyUsd(rowHourly * HOURS_PER_DAY)
                     .monthlyUsd(rowHourly * HOURS_PER_MONTH)
-                    .detail("Azure Container Registry · live retail price")
+                    .detail(registryDetail)
                     .build());
         }
         if (!registryItems.isEmpty()) {
@@ -1248,18 +1531,25 @@ public class PrometheusCostService {
             double gb = e.getValue();
             double rowHourly = classToHourly.getOrDefault(sc, 0d);
             storageHourly += rowHourly;
-            AzurePriceRecord pr = classToPrice.get(sc);
-            String azureSku = pr == null ? mapStorageClassToAzureSku(sc) : pr.getSkuName();
-            double perGbMonth = pr == null ? defaultStoragePrice(sc) : safe(pr.getRetailPrice());
+            String skuDisplay;
+            double perGbMonth;
+            if (awsEnv) {
+                skuDisplay = mapStorageClassToAwsSku(sc);
+                perGbMonth = awsPricing.ebsGbMonthly(sc);
+            } else {
+                AzurePriceRecord pr = classToPrice.get(sc);
+                skuDisplay = pr == null ? mapStorageClassToAzureSku(sc) : pr.getSkuName();
+                perGbMonth = pr == null ? defaultStoragePrice(sc) : safe(pr.getRetailPrice());
+            }
             storageItems.add(InventoryLine.builder()
                     .name("Persistent Volume · " + sc)
-                    .sku(azureSku)
+                    .sku(skuDisplay)
                     .count((int) Math.round(gb))
                     .unit("GB")
                     .unitDailyUsd((perGbMonth / HOURS_PER_MONTH) * HOURS_PER_DAY)
                     .dailyUsd(rowHourly * HOURS_PER_DAY)
                     .monthlyUsd(rowHourly * HOURS_PER_MONTH)
-                    .detail("Azure " + azureSku + " · " + String.format("$%.4f/GB-month", perGbMonth))
+                    .detail((awsEnv ? "AWS " : "Azure ") + skuDisplay + " · " + String.format("$%.4f/GB-month", perGbMonth))
                     .build());
         }
         if (!storageItems.isEmpty()) {
@@ -1278,8 +1568,8 @@ public class PrometheusCostService {
         List<InventoryLine> networkItems = new ArrayList<>();
         double networkHourly = 0d;
 
-        // Public IP — Standard SKU, ~$0.005/hr per address
-        if (t.getPublicIpCount() > 0) {
+        // Public IP — Azure only (AWS EIPs are priced differently and not directly observable from Prometheus)
+        if (!awsEnv && t.getPublicIpCount() > 0) {
             AzurePriceRecord pr = firstPrice(
                     "serviceName eq 'Virtual Network' and contains(productName, 'IP Address') and skuName eq 'Standard' and armRegionName eq '" + defaultRegion() + "' and type eq 'Consumption'");
             double perHour = pr == null ? 0.005 : safe(pr.getRetailPrice());
@@ -1301,23 +1591,29 @@ public class PrometheusCostService {
         if (t.getLoadBalancerCount() > 0 && lbHourlyPerUnit > 0) {
             double rowHourly = lbHourlyPerUnit * t.getLoadBalancerCount();
             networkHourly += rowHourly;
+            String lbSku    = awsEnv ? "ALB/NLB" : "Standard";
+            String lbDetail = awsEnv
+                    ? String.format("AWS Application/Network Load Balancer · $%.4f/hr base per LB · live AWS pricing", lbHourlyPerUnit)
+                    : "Azure Load Balancer Standard · per LB rule";
             networkItems.add(InventoryLine.builder()
-                    .name("LB")
-                    .sku("Standard")
+                    .name(awsEnv ? "AWS LB" : "LB")
+                    .sku(lbSku)
                     .count(t.getLoadBalancerCount()).unit("LB")
                     .unitDailyUsd(lbHourlyPerUnit * HOURS_PER_DAY)
                     .dailyUsd(rowHourly * HOURS_PER_DAY)
                     .monthlyUsd(rowHourly * HOURS_PER_MONTH)
-                    .detail("Azure Load Balancer Standard · per LB rule")
+                    .detail(lbDetail)
                     .build());
         }
-        // Estimated egress bandwidth (outbound to internet) — Azure first 100 GB
-        // free, then ~$0.087/GB. Calculated from Prom egress rate.
+        // Estimated egress bandwidth: live-priced from cloud pricing API.
         if (t.getNetworkTransmitBytesPerSec() > 0) {
             double bytesPerMonth = t.getNetworkTransmitBytesPerSec() * 60d * 60d * HOURS_PER_MONTH;
             double gbPerMonth = bytesPerMonth / 1e9;
             double billableGb = Math.max(0d, gbPerMonth - 100d);
-            double monthly = billableGb * 0.087;
+            double egressRate = awsEnv
+                    ? awsPricing.egressRatePerGb(defaultAwsRegion())
+                    : azureEgressRatePerGb();
+            double monthly = billableGb * egressRate;
             double hourly = monthly / HOURS_PER_MONTH;
             if (monthly > 0.01) {
                 networkHourly += hourly;
@@ -1325,10 +1621,11 @@ public class PrometheusCostService {
                         .name("Egress data transfer")
                         .sku("Outbound (Internet)")
                         .count((int) Math.round(gbPerMonth)).unit("GB/mo")
-                        .unitDailyUsd((0.087 / HOURS_PER_MONTH) * HOURS_PER_DAY)
+                        .unitDailyUsd((egressRate / HOURS_PER_MONTH) * HOURS_PER_DAY)
                         .dailyUsd(hourly * HOURS_PER_DAY)
                         .monthlyUsd(monthly)
-                        .detail(String.format("~%.0f GB/month at current rate · first 100 GB free · $0.087/GB after", gbPerMonth))
+                        .detail(String.format("~%.0f GB/month at current rate · first 100 GB free · $%.3f/GB after",
+                                gbPerMonth, egressRate))
                         .build());
             }
         }
@@ -1692,36 +1989,66 @@ public class PrometheusCostService {
     }
 
     /**
-     * Live-price every node from Azure Retail. Tries (in order):
-     * <ol>
-     *   <li>Exact {@code armSkuName} match in the node's region (preserving case).</li>
-     *   <li>Same SKU in the {@code defaultRegion} as a backstop.</li>
-     *   <li>Fuzzy match by node CPU cores + RAM (cheapest Linux VM with matching specs).</li>
-     * </ol>
-     * Each step is recorded so the UI can show pricing provenance.
+     * Live-price every node. Routes to AWS pricing for AWS envs, Azure for all others.
      */
-    private SkuPricing priceNodes(Topology t, List<String> warnings) {
+    private SkuPricing priceNodes(String env, Topology t, List<String> warnings) {
         SkuPricing out = new SkuPricing();
-        // Cache lookups by (sku, region) so we don't query Azure once per node
+        boolean aws = isAwsEnv(env);
         Map<String, NodePrice> cache = new HashMap<>();
         for (Node n : t.getNodes().values()) {
-            String sku = n.getVmSize();
-            String region = (n.getRegion() == null || n.getRegion().isBlank()) ? defaultRegion() : n.getRegion();
+            String sku    = n.getVmSize();
+            String region = (n.getRegion() == null || n.getRegion().isBlank())
+                    ? (aws ? defaultAwsRegion() : defaultRegion())
+                    : n.getRegion();
             if (sku == null || sku.isBlank()) {
-                warnings.add("node " + n.getName() + " has no vmSize label — using fuzzy match by capacity");
+                warnings.add("node " + n.getName() + " has no vmSize/instance-type label");
             } else {
                 out.observedSkus.add(sku);
             }
-
-            String cacheKey = (sku == null ? "" : sku) + "|" + region + "|" + (long) n.getCpuCores() + "|" + (long) (n.getMemoryBytes() / (1024d * 1024d * 1024d)) + "|" + n.isSpot();
+            String cacheKey = (sku == null ? "" : sku) + "|" + region + "|"
+                    + (long) n.getCpuCores() + "|"
+                    + (long) (n.getMemoryBytes() / (1024d * 1024d * 1024d))
+                    + "|" + n.isSpot();
             NodePrice np = cache.get(cacheKey);
             if (np == null) {
-                np = priceOneNode(n, sku, region, out, warnings);
+                np = aws
+                        ? priceOneNodeAws(n, sku, region, out, warnings)
+                        : priceOneNode(n, sku, region, out, warnings);
                 cache.put(cacheKey, np);
             }
             out.nodePrices.put(n.getName(), np);
         }
         return out;
+    }
+
+    /**
+     * AWS EC2 pricing for one node. Uses {@link AwsPricingService} (live API + fallback table).
+     * Spot instances are approximated at 30% of on-demand when a direct spot lookup is not yet implemented.
+     */
+    private NodePrice priceOneNodeAws(Node n, String instanceType, String region,
+                                      SkuPricing out, List<String> warnings) {
+        if (instanceType == null || instanceType.isBlank()) {
+            warnings.add("AWS node " + n.getName() + " has no instance-type label — priced at $0");
+            return new NodePrice(null, region, 0d, "none");
+        }
+        double onDemand = awsPricing.lookupOnDemandPrice(instanceType, region);
+        if (onDemand <= 0) {
+            out.unmatchedSkus.add(instanceType);
+            warnings.add("No AWS price found for " + instanceType + " in " + region + " — node priced at $0");
+            return new NodePrice(instanceType, region, 0d, "none");
+        }
+        // Spot: approximate at 30% of on-demand (typical AWS spot discount)
+        double price = n.isSpot() ? onDemand * 0.30 : onDemand;
+        String match = n.isSpot() ? "aws-spot-approx" : "aws-exact";
+        return new NodePrice(instanceType, region, price, match);
+    }
+
+    /**
+     * @deprecated Use {@link #priceNodes(String, Topology, List)} instead.
+     * Kept to satisfy internal calls in the Azure-only path below.
+     */
+    private SkuPricing priceNodes(Topology t, List<String> warnings) {
+        return priceNodes("", t, warnings);
     }
 
     /**
@@ -2026,6 +2353,20 @@ public class PrometheusCostService {
 
         NodePrice(String vmSize, String region, AzurePriceRecord rec, String match) {
             this(vmSize, region, rec, match, 0d, 0, null);
+        }
+
+        /** AWS constructor — no AzurePriceRecord needed. */
+        NodePrice(String vmSize, String region, double hourlyUsd, String match) {
+            this.vmSize       = vmSize;
+            this.region       = region;
+            this.hourly       = hourlyUsd;
+            this.osDiskHourly = 0d;
+            this.osDiskSizeGb = 0;
+            this.osDiskTierSku = null;
+            this.meterId      = null;
+            this.skuName      = vmSize;
+            this.productName  = "AWS EC2 " + vmSize;
+            this.match        = match;
         }
 
         NodePrice(String vmSize, String region, AzurePriceRecord rec, String match,
@@ -2399,6 +2740,18 @@ public class PrometheusCostService {
                 .dailyUsd(hourly * HOURS_PER_DAY)
                 .monthlyUsd(hourly * HOURS_PER_MONTH)
                 .build();
+    }
+
+    /** Map a k8s storageclass name to its AWS EBS SKU display name. */
+    private static String mapStorageClassToAwsSku(String sc) {
+        if (sc == null) return "EBS gp2";
+        String lc = sc.toLowerCase(Locale.ROOT);
+        if (lc.contains("io2")) return "EBS io2";
+        if (lc.contains("io1")) return "EBS io1";
+        if (lc.contains("gp3")) return "EBS gp3";
+        if (lc.contains("sc1")) return "EBS sc1 (Cold HDD)";
+        if (lc.contains("st1")) return "EBS st1 (Throughput HDD)";
+        return "EBS gp2";
     }
 
     /** Map a k8s storageclass name to its Azure managed-disk SKU. */

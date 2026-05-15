@@ -1,46 +1,49 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
     GitBranch, Server, Plus, Trash2, RefreshCw, CheckCircle2, XCircle,
-    AlertTriangle, Eye, EyeOff, Save, Zap, Layers, ShieldCheck
+    AlertTriangle, Eye, EyeOff, Save, Zap, Layers, ShieldCheck, UserCheck
 } from "lucide-react";
 import {
-    getAutoBuildSettings, saveJenkinsConnection, testJenkinsConnection,
+    getAutoBuildSettings, testJenkinsConnection,
     saveEnvAutoBuildConfig, deleteEnvAutoBuildConfig,
     DEFAULT_ENV_AUTO_BUILD_CONFIG
 } from "../../services/autoBuildService";
+import { fetchWorkflowDirectoryContacts } from "../../services/workflowDirectoryService";
+import WorkflowPersonSuggest from "../../components/WorkflowPersonSuggest";
 
 /**
  * Project Config → Auto Build tab.
  *
- * Lets the admin configure:
- *   1. Jenkins connection (URL, user, API token) per project.
- *   2. Per-environment auto-build defaults (branch / agent / clusters / etc.)
- *      and the per-microservice job mapping with dependency ordering.
- *
- * `projectServices` is the list already configured in the Services tab — used
- * here as the pool of microservices that can be wired to Jenkins jobs.
+ * Each environment has its own Jenkins connection + build configuration.
+ * Environment selector is at the top; all settings are scoped to the active env.
  */
 export default function AutoBuildSection({ projectId, environments, projectServices }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
-    const [savingJenkins, setSavingJenkins] = useState(false);
     const [savingEnv, setSavingEnv] = useState(null);
-    const [testing, setTesting] = useState(false);
-    const [testResult, setTestResult] = useState(null);
-    const [showToken, setShowToken] = useState(false);
 
-    const [jenkins, setJenkins] = useState({
-        jenkinsUrl: "", jenkinsUser: "", jenkinsApiToken: "",
-        crumbPath: "", verified: null
-    });
+    // Per-env Jenkins test state
+    const [testingEnv, setTestingEnv] = useState(null);
+    const [testResults, setTestResults] = useState({});
+    const [showToken, setShowToken] = useState({});
+
     const [envConfigs, setEnvConfigs] = useState({});
     const [activeEnv, setActiveEnv] = useState(environments?.[0] || "");
+    const [contacts, setContacts] = useState([]);
 
     useEffect(() => {
         if (!activeEnv && environments?.length) setActiveEnv(environments[0]);
     }, [environments, activeEnv]);
 
-    const envsKey = (environments || []).join("\u0001");
+    useEffect(() => {
+        let cancelled = false;
+        fetchWorkflowDirectoryContacts({})
+            .then((rows) => { if (!cancelled) setContacts(Array.isArray(rows) ? rows : []); })
+            .catch(() => { if (!cancelled) setContacts([]); });
+        return () => { cancelled = true; };
+    }, []);
+
+    const envsKey = (environments || []).join("");
 
     const refresh = useCallback(async () => {
         if (!projectId) return;
@@ -48,62 +51,57 @@ export default function AutoBuildSection({ projectId, environments, projectServi
         setError(null);
         try {
             const data = await getAutoBuildSettings(projectId);
-            setJenkins({
-                jenkinsUrl: data?.jenkinsConnection?.jenkinsUrl || "",
-                jenkinsUser: data?.jenkinsConnection?.jenkinsUser || "",
-                jenkinsApiToken: data?.jenkinsConnection?.jenkinsApiToken || "",
-                crumbPath: data?.jenkinsConnection?.crumbPath || "",
-                verified: data?.jenkinsConnection?.verified ?? null
-            });
             const map = data?.autoBuildConfig || {};
             const filled = {};
-            const envs = envsKey ? envsKey.split("\u0001") : [];
-            envs.forEach((env) => {
-                filled[env] = map[env]
+            const propEnvs = envsKey ? envsKey.split("") : [];
+            // Union of envs from prop + any saved envs in the backend — saved
+            // values must always render, even if the parent's environments prop
+            // hasn't loaded yet on first mount.
+            const allEnvs = Array.from(new Set([...propEnvs, ...Object.keys(map)]));
+            allEnvs.forEach((env) => {
+                const saved = map[env]
                     ? { ...DEFAULT_ENV_AUTO_BUILD_CONFIG, ...map[env] }
                     : { ...DEFAULT_ENV_AUTO_BUILD_CONFIG };
+                saved.jenkinsConnection = {
+                    ...DEFAULT_ENV_AUTO_BUILD_CONFIG.jenkinsConnection,
+                    ...(map[env]?.jenkinsConnection || {})
+                };
+                saved.approvers = Array.isArray(map[env]?.approvers) ? map[env].approvers : [];
+                filled[env] = saved;
             });
-            setEnvConfigs(filled);
+            setEnvConfigs((prev) => ({ ...prev, ...filled }));
+            if (!activeEnv && allEnvs.length) {
+                setActiveEnv(allEnvs[0]);
+            }
         } catch (e) {
             setError(e.message || "Failed to load auto-build config");
         } finally {
             setLoading(false);
         }
-    }, [projectId, envsKey]);
+    }, [projectId, envsKey, activeEnv]);
 
     useEffect(() => { refresh(); }, [refresh]);
 
-    const onSaveJenkins = async () => {
-        setSavingJenkins(true);
-        setError(null);
-        try {
-            const saved = await saveJenkinsConnection(projectId, jenkins);
-            setJenkins((prev) => ({ ...prev, ...saved, jenkinsApiToken: prev.jenkinsApiToken }));
-        } catch (e) {
-            setError(e.message || "Failed to save Jenkins connection");
-        } finally {
-            setSavingJenkins(false);
-        }
-    };
-
-    const onTestJenkins = async () => {
-        setTesting(true);
-        setTestResult(null);
-        try {
-            const r = await testJenkinsConnection(projectId, jenkins);
-            setTestResult(r);
-        } catch (e) {
-            setTestResult({ ok: false, message: e.message || "Test failed" });
-        } finally {
-            setTesting(false);
-        }
-    };
+    /* ── env config helpers ─────────────────────────────────────── */
 
     const updateEnv = (env, patch) => {
         setEnvConfigs((prev) => ({
             ...prev,
             [env]: { ...(prev[env] || DEFAULT_ENV_AUTO_BUILD_CONFIG), ...patch }
         }));
+    };
+
+    const updateJenkins = (env, patch) => {
+        setEnvConfigs((prev) => {
+            const cfg = prev[env] || DEFAULT_ENV_AUTO_BUILD_CONFIG;
+            return {
+                ...prev,
+                [env]: {
+                    ...cfg,
+                    jenkinsConnection: { ...(cfg.jenkinsConnection || DEFAULT_ENV_AUTO_BUILD_CONFIG.jenkinsConnection), ...patch }
+                }
+            };
+        });
     };
 
     const updateService = (env, serviceId, patch) => {
@@ -141,6 +139,43 @@ export default function AutoBuildSection({ projectId, environments, projectServi
         });
     };
 
+    const addApprover = (env) => {
+        setEnvConfigs((prev) => {
+            const cfg = prev[env] || DEFAULT_ENV_AUTO_BUILD_CONFIG;
+            return { ...prev, [env]: { ...cfg, approvers: [...(cfg.approvers || []), { name: "", email: "" }] } };
+        });
+    };
+
+    const updateApprover = (env, idx, patch) => {
+        setEnvConfigs((prev) => {
+            const cfg = prev[env] || DEFAULT_ENV_AUTO_BUILD_CONFIG;
+            const approvers = (cfg.approvers || []).map((a, i) => i === idx ? { ...a, ...patch } : a);
+            return { ...prev, [env]: { ...cfg, approvers } };
+        });
+    };
+
+    const removeApprover = (env, idx) => {
+        setEnvConfigs((prev) => {
+            const cfg = prev[env] || DEFAULT_ENV_AUTO_BUILD_CONFIG;
+            const approvers = (cfg.approvers || []).filter((_, i) => i !== idx);
+            return { ...prev, [env]: { ...cfg, approvers } };
+        });
+    };
+
+    const onTestJenkins = async (env) => {
+        const conn = envConfigs[env]?.jenkinsConnection || {};
+        setTestingEnv(env);
+        setTestResults((prev) => ({ ...prev, [env]: null }));
+        try {
+            const r = await testJenkinsConnection(projectId, conn, env);
+            setTestResults((prev) => ({ ...prev, [env]: r }));
+        } catch (e) {
+            setTestResults((prev) => ({ ...prev, [env]: { ok: false, message: e.message || "Test failed" } }));
+        } finally {
+            setTestingEnv(null);
+        }
+    };
+
     const onSaveEnv = async (env) => {
         setSavingEnv(env);
         setError(null);
@@ -169,6 +204,9 @@ export default function AutoBuildSection({ projectId, environments, projectServi
 
     const env = activeEnv;
     const cfg = envConfigs[env] || DEFAULT_ENV_AUTO_BUILD_CONFIG;
+    const jc = cfg.jenkinsConnection || DEFAULT_ENV_AUTO_BUILD_CONFIG.jenkinsConnection;
+    const tokenVisible = !!showToken[env];
+    const testResult = testResults[env] || null;
 
     const orphanProjectServices = useMemo(() => {
         const have = new Set((cfg.services || []).map((s) => s.id));
@@ -195,111 +233,39 @@ export default function AutoBuildSection({ projectId, environments, projectServi
                 }}><AlertTriangle size={14} /> {error}</div>
             )}
 
+            {/* ── Environment selector ─────────────────────────────────────── */}
             <h3 style={{ display: "flex", alignItems: "center", gap: 6, margin: "10px 0 8px" }}>
-                <Server size={16} /> Jenkins Connection
-            </h3>
-            <p style={{ fontSize: 12, color: "#64748b", marginTop: 0 }}>
-                Project-level credentials used to trigger parameterized builds. The API token is encrypted at rest
-                and never returned to the browser after save.
-            </p>
-
-            <div className="ab-jenkins-grid">
-                <label style={fieldLabel}>
-                    Jenkins URL
-                    <input
-                        value={jenkins.jenkinsUrl}
-                        onChange={(e) => setJenkins({ ...jenkins, jenkinsUrl: e.target.value })}
-                        placeholder="https://jenkins.example.com"
-                        style={fieldInput}
-                    />
-                </label>
-                <label style={fieldLabel}>
-                    Jenkins user
-                    <input
-                        value={jenkins.jenkinsUser}
-                        onChange={(e) => setJenkins({ ...jenkins, jenkinsUser: e.target.value })}
-                        placeholder="ci-bot"
-                        style={fieldInput}
-                    />
-                </label>
-                <label style={fieldLabel}>
-                    Jenkins API token
-                    <span style={{ position: "relative", display: "block" }}>
-                        <input
-                            type={showToken ? "text" : "password"}
-                            value={jenkins.jenkinsApiToken}
-                            onChange={(e) => setJenkins({ ...jenkins, jenkinsApiToken: e.target.value })}
-                            placeholder="••••••••"
-                            style={{ ...fieldInput, paddingRight: 36 }}
-                        />
-                        <button type="button"
-                            onClick={() => setShowToken(!showToken)}
-                            style={{ position: "absolute", right: 6, top: 8, background: "none", border: "none", cursor: "pointer", color: "#64748b" }}
-                            title={showToken ? "Hide" : "Show"}
-                        >{showToken ? <EyeOff size={14} /> : <Eye size={14} />}</button>
-                    </span>
-                </label>
-                <label style={fieldLabel}>
-                    Crumb path (optional)
-                    <input
-                        value={jenkins.crumbPath}
-                        onChange={(e) => setJenkins({ ...jenkins, crumbPath: e.target.value })}
-                        placeholder="/crumbIssuer/api/json"
-                        style={fieldInput}
-                    />
-                </label>
-            </div>
-
-            <div className="cc-actions" style={{ marginTop: 12, alignItems: "center" }}>
-                <button type="button" className="cc-btn cc-btn-primary" onClick={onSaveJenkins} disabled={savingJenkins}>
-                    <Save size={13} /> {savingJenkins ? "Saving…" : "Save connection"}
-                </button>
-                <button type="button" className="cc-btn cc-btn-secondary" onClick={onTestJenkins} disabled={testing}>
-                    <RefreshCw size={13} className={testing ? "lb-spin" : ""} /> Test connection
-                </button>
-                {testResult && (
-                    <span style={{
-                        display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12,
-                        color: testResult.ok ? "#10b981" : "#ef4444"
-                    }}>
-                        {testResult.ok ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
-                        {testResult.ok
-                            ? `Connected${testResult.version ? ` · Jenkins ${testResult.version}` : ""}`
-                            : (testResult.message || "Failed")}
-                    </span>
-                )}
-                {jenkins.verified && !testResult && (
-                    <span style={{ fontSize: 12, color: "#10b981", display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        <CheckCircle2 size={13} /> Verified
-                    </span>
-                )}
-            </div>
-
-            {/* ── Per-environment cards ───────────────────────────────────── */}
-            <h3 style={{ display: "flex", alignItems: "center", gap: 6, margin: "26px 0 8px" }}>
-                <Zap size={16} /> Auto Build per Environment
+                <Zap size={16} /> Auto Build — Select Environment
             </h3>
 
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-                {(environments || []).map((e) => {
-                    const enabled = envConfigs[e]?.enabled;
-                    return (
-                        <button
-                            key={e}
-                            type="button"
-                            className={`cc-btn ${activeEnv === e ? "cc-btn-primary" : "cc-btn-secondary"}`}
-                            onClick={() => setActiveEnv(e)}
-                        >
-                            {e}
-                            {enabled && <CheckCircle2 size={12} style={{ marginLeft: 4, color: "#fff" }} />}
-                        </button>
-                    );
-                })}
-                {(environments || []).length === 0 && (
-                    <span style={{ color: "#64748b", fontSize: 13 }}>
-                        No environments yet — add one in the General tab.
-                    </span>
-                )}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
+                {(() => {
+                    // Show tabs for the union of prop envs + any envs already saved
+                    // so admins can see (and edit) configs even before the parent
+                    // finishes loading the environments list.
+                    const tabEnvs = Array.from(new Set([...(environments || []), ...Object.keys(envConfigs)]));
+                    if (tabEnvs.length === 0) {
+                        return (
+                            <span style={{ color: "#64748b", fontSize: 13 }}>
+                                No environments yet — add one in the General tab.
+                            </span>
+                        );
+                    }
+                    return tabEnvs.map((e) => {
+                        const enabled = envConfigs[e]?.enabled;
+                        return (
+                            <button
+                                key={e}
+                                type="button"
+                                className={`cc-btn ${activeEnv === e ? "cc-btn-primary" : "cc-btn-secondary"}`}
+                                onClick={() => setActiveEnv(e)}
+                            >
+                                {e}
+                                {enabled && <CheckCircle2 size={12} style={{ marginLeft: 4 }} />}
+                            </button>
+                        );
+                    });
+                })()}
             </div>
 
             {env && (
@@ -318,8 +284,85 @@ export default function AutoBuildSection({ projectId, environments, projectServi
                         </label>
                     </div>
 
-                    {/* Use Parameters master toggle */}
-                    <div style={{ margin: "10px 0 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                    {/* ── Jenkins Connection (per env) ──────────────────────── */}
+                    <h4 style={{ display: "flex", alignItems: "center", gap: 6, margin: "16px 0 4px" }}>
+                        <Server size={14} /> Jenkins Connection
+                    </h4>
+                    <p style={{ fontSize: 12, color: "#64748b", marginTop: 0 }}>
+                        Credentials used to trigger builds for <strong>{env}</strong>. The API token is encrypted at rest and never returned to the browser after save.
+                    </p>
+
+                    <div className="ab-jenkins-grid">
+                        <label style={fieldLabel}>
+                            Jenkins URL
+                            <input
+                                value={jc.jenkinsUrl || ""}
+                                onChange={(e) => updateJenkins(env, { jenkinsUrl: e.target.value })}
+                                placeholder="https://jenkins.example.com"
+                                style={fieldInput}
+                            />
+                        </label>
+                        <label style={fieldLabel}>
+                            Jenkins user
+                            <input
+                                value={jc.jenkinsUser || ""}
+                                onChange={(e) => updateJenkins(env, { jenkinsUser: e.target.value })}
+                                placeholder="ci-bot"
+                                style={fieldInput}
+                            />
+                        </label>
+                        <label style={fieldLabel}>
+                            Jenkins API token
+                            <span style={{ position: "relative", display: "block" }}>
+                                <input
+                                    type={tokenVisible ? "text" : "password"}
+                                    value={jc.jenkinsApiToken || ""}
+                                    onChange={(e) => updateJenkins(env, { jenkinsApiToken: e.target.value })}
+                                    placeholder="••••••••"
+                                    style={{ ...fieldInput, paddingRight: 36 }}
+                                />
+                                <button type="button"
+                                    onClick={() => setShowToken((prev) => ({ ...prev, [env]: !prev[env] }))}
+                                    style={{ position: "absolute", right: 6, top: 8, background: "none", border: "none", cursor: "pointer", color: "#64748b" }}
+                                    title={tokenVisible ? "Hide" : "Show"}
+                                >{tokenVisible ? <EyeOff size={14} /> : <Eye size={14} />}</button>
+                            </span>
+                        </label>
+                        <label style={fieldLabel}>
+                            Crumb path (optional)
+                            <input
+                                value={jc.crumbPath || ""}
+                                onChange={(e) => updateJenkins(env, { crumbPath: e.target.value })}
+                                placeholder="/crumbIssuer/api/json"
+                                style={fieldInput}
+                            />
+                        </label>
+                    </div>
+
+                    <div className="cc-actions" style={{ marginTop: 10, marginBottom: 18, alignItems: "center" }}>
+                        <button type="button" className="cc-btn cc-btn-secondary" onClick={() => onTestJenkins(env)} disabled={testingEnv === env}>
+                            <RefreshCw size={13} className={testingEnv === env ? "lb-spin" : ""} /> Test connection
+                        </button>
+                        {testResult && (
+                            <span style={{
+                                display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12,
+                                color: testResult.ok ? "#10b981" : "#ef4444"
+                            }}>
+                                {testResult.ok ? <CheckCircle2 size={13} /> : <XCircle size={13} />}
+                                {testResult.ok
+                                    ? `Connected${testResult.version ? ` · Jenkins ${testResult.version}` : ""}`
+                                    : (testResult.message || "Failed")}
+                            </span>
+                        )}
+                        {jc.verified && !testResult && (
+                            <span style={{ fontSize: 12, color: "#10b981", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                                <CheckCircle2 size={13} /> Verified
+                            </span>
+                        )}
+                    </div>
+
+                    {/* ── Use Parameters toggle ────────────────────────────── */}
+                    <div style={{ margin: "0 0 14px", display: "flex", alignItems: "center", gap: 10 }}>
                         <label className="ab-toggle" style={{ margin: 0 }}>
                             <input
                                 type="checkbox"
@@ -421,6 +464,7 @@ export default function AutoBuildSection({ projectId, environments, projectServi
                         </label>
                     </div>
 
+                    {/* ── Microservice build plan ──────────────────────────── */}
                     <h4 style={{ marginTop: 16, display: "flex", alignItems: "center", gap: 6 }}>
                         <GitBranch size={14} /> Microservice build plan
                     </h4>
@@ -444,7 +488,6 @@ export default function AutoBuildSection({ projectId, environments, projectServi
                                 onChange={(e) => updateService(env, s.id, { jobName: e.target.value })}
                                 style={fieldInput}
                             />
-                            {/* Parameters toggle */}
                             <label
                                 title={s.parametrized !== false
                                     ? "Sending build parameters — click to disable"
@@ -502,7 +545,56 @@ export default function AutoBuildSection({ projectId, environments, projectServi
                         </div>
                     )}
 
-                    <div className="cc-actions" style={{ marginTop: 16 }}>
+                    {/* ── Approvals ────────────────────────────────────────── */}
+                    <div style={{ marginTop: 20 }}>
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                            <h4 style={{ margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                                <UserCheck size={14} /> Approvals
+                            </h4>
+                            <button
+                                type="button"
+                                className="cc-btn cc-btn-secondary"
+                                onClick={() => addApprover(env)}
+                                style={{ fontSize: 12, padding: "4px 10px" }}
+                            >
+                                <Plus size={12} /> Add Approver
+                            </button>
+                        </div>
+                        <p style={{ fontSize: 12, color: "#64748b", marginTop: 0, marginBottom: 8 }}>
+                            Approvers who must sign off before a build is triggered for <strong>{env}</strong>. Add one or more.
+                        </p>
+                        {(cfg.approvers || []).length === 0 ? (
+                            <div style={{ fontSize: 13, color: "#94a3b8", padding: "8px 12px", background: "rgba(148,163,184,0.1)", borderRadius: 7 }}>
+                                No approvers set — builds will trigger without approval.
+                            </div>
+                        ) : (
+                            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                                {(cfg.approvers || []).map((ap, idx) => (
+                                    <div key={idx} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                        <span style={{ fontSize: 12, color: "#64748b", minWidth: 60 }}>#{idx + 1}</span>
+                                        <div style={{ flex: 1 }}>
+                                            <WorkflowPersonSuggest
+                                                layout="cost"
+                                                showRole={false}
+                                                contacts={contacts}
+                                                value={{ role: "", name: ap.name || "", email: ap.email || "" }}
+                                                onChange={(v) => updateApprover(env, idx, { name: v.name, email: v.email })}
+                                            />
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="cc-btn cc-btn-danger"
+                                            onClick={() => removeApprover(env, idx)}
+                                            title="Remove approver"
+                                        ><Trash2 size={12} /></button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* ── Save / Reset ─────────────────────────────────────── */}
+                    <div className="cc-actions" style={{ marginTop: 20 }}>
                         <button
                             type="button"
                             className="cc-btn cc-btn-primary"

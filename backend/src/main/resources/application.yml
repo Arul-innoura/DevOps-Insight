@@ -71,16 +71,26 @@ app:
   trivy:
     path: ${TRIVY_PATH:trivy}
     timeout: ${TRIVY_TIMEOUT:120}
+  aws:
+    access-key: ${AWS_ACCESS_KEY_ID:}
+    secret-key: ${AWS_SECRET_ACCESS_KEY:}
+    default-region: ${AWS_DEFAULT_REGION:}
+
   prometheus:
     # Per-environment Prometheus query endpoints. Live cost engine fans out
     # across whichever envs are populated. Empty values are skipped silently.
     enabled: ${PROMETHEUS_ENABLED:true}
     endpoints:
       qa:   ${PROMETHEUS_QA_URL:https://qametrics.encipherhealth.com/api/v1/query}
-      dev:  ${PROMETHEUS_DEV_URL:}
+      dev:  ${PROMETHEUS_DEV_URL:https://devmetrics.encipherhealth.com/api/v1/query}
       stage: ${PROMETHEUS_STAGE_URL:}
       prod: ${PROMETHEUS_PROD_URL:}
-    poll-seconds: ${PROMETHEUS_POLL_SECONDS:60}
+    # Per-environment cloud provider: azure (default) or aws
+    cloud-providers:
+      dev: aws
+    # Phase-1 (Prometheus scrape) runs at T=0s, Phase-2 (price calc + DB write) runs at T=30s.
+    # Total UI refresh cycle = 60 s. poll-seconds kept for reference only.
+    poll-seconds: 60
     discovery-minutes: ${PROMETHEUS_DISCOVERY_MINUTES:10}
     request-timeout-seconds: ${PROMETHEUS_REQUEST_TIMEOUT:15}
     # Default Azure region used to price discovered SKUs when the node label

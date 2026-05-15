@@ -84,5 +84,10 @@ public class ClusterCostTimeseriesPoint {
         private Double memoryUsedGb;
         private Double memoryRequestGb;
         private Integer podCount;
+        /** Per-component cost breakdown for stacked charts. */
+        private Double computeHourlyUsd;
+        private Double memoryHourlyUsd;
+        private Double storageHourlyUsd;
+        private Double networkHourlyUsd;
     }
 }

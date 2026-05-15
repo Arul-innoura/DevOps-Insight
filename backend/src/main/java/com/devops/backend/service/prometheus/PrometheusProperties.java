@@ -43,6 +43,14 @@ public class PrometheusProperties {
     private double egressInternetFraction = 0.05;
 
     /**
+     * Per-environment cloud provider: "azure" (default) or "aws".
+     * Example YAML:
+     *   app.prometheus.cloud-providers.dev: aws
+     *   app.prometheus.cloud-providers.qa:  azure
+     */
+    private Map<String, String> cloudProviders = new HashMap<>();
+
+    /**
      * Fixed cost extras — items the engine cannot directly observe via Prom
      * (Key Vault, Storage Accounts, MongoDB Atlas clusters, Jenkins VMs, …)
      * but that should be included in the "Fixed cost" inventory view.

@@ -5,6 +5,7 @@ import org.springframework.data.mongodb.repository.MongoRepository;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 public interface ClusterCostTimeseriesRepository
         extends MongoRepository<ClusterCostTimeseriesPoint, String> {
@@ -15,4 +16,7 @@ public interface ClusterCostTimeseriesRepository
 
     /** Most-recent N points for one env, newest first. */
     List<ClusterCostTimeseriesPoint> findTop500ByEnvOrderByCapturedAtDesc(String env);
+
+    /** Single latest point for one env — used as DB fallback for live snapshot. */
+    Optional<ClusterCostTimeseriesPoint> findTopByEnvOrderByCapturedAtDesc(String env);
 }

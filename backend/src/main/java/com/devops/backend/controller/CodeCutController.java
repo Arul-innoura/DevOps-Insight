@@ -142,6 +142,15 @@ public class CodeCutController {
         return ResponseEntity.ok(codeCutService.cancelPending(id, extractEmail(jwt)));
     }
 
+    /** Reset a FAILED / PARTIAL / CANCELLED request back to READY_TO_BUILD so it can be re-triggered. */
+    @PostMapping("/{id}/retry")
+    @PreAuthorize("hasAnyAuthority('APPROLE_User','APPROLE_DevOps','APPROLE_Admin')")
+    public ResponseEntity<CodeCutRequest> retry(
+            @PathVariable String id,
+            @AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok(codeCutService.retry(id, extractEmail(jwt)));
+    }
+
     @PostMapping("/executions/{executionId}/cancel")
     @PreAuthorize("hasAnyAuthority('APPROLE_User','APPROLE_DevOps','APPROLE_Admin')")
     public ResponseEntity<BuildExecution> cancelBuild(

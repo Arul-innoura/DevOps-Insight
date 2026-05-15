@@ -53,6 +53,51 @@ public class EmailConsumerService {
     @Value("${app.email.enabled:false}")
     private boolean emailEnabled;
 
+    @Value("${spring.mail.host:}")
+    private String mailHost;
+
+    @Value("${spring.mail.username:}")
+    private String mailUsername;
+
+    /**
+     * Returns a host-specific hint for how to resolve the 535 5.7.3 auth failure.
+     * Different SMTP providers fail in different ways — generic Exchange advice
+     * is wrong (and misleading) when the configured host is Azure Communication
+     * Services or SendGrid etc.
+     */
+    private String authFailureHint() {
+        String host = mailHost == null ? "" : mailHost.toLowerCase();
+        if (host.contains("azurecomm")) {
+            return "Configured host is Azure Communication Services. Check: "
+                + "(1) MAIL_USERNAME format is <acs-resource-name>.<entra-app-id>.<tenant-id> "
+                + "(see ACS → Email → Connect → SMTP); "
+                + "(2) MAIL_PASSWORD is the Entra app client secret, not the resource access key; "
+                + "(3) the MAIL_FROM domain (" + safeDomain(fromEmail) + ") is verified in the ACS resource.";
+        }
+        if (host.contains("office365") || host.contains("outlook")) {
+            return "Configured host is Exchange Online. Go to Exchange Admin Center → "
+                + "Users → mailbox (" + mailUsername + ") → Mail flow settings → "
+                + "Authenticated SMTP → enable. Also confirm modern auth / basic auth status "
+                + "matches what your tenant allows.";
+        }
+        if (host.contains("sendgrid")) {
+            return "Configured host is SendGrid. MAIL_USERNAME must literally be 'apikey' "
+                + "and MAIL_PASSWORD must be a valid API key with Mail Send scope.";
+        }
+        if (host.contains("gmail") || host.contains("googlemail")) {
+            return "Configured host is Gmail. Use an App Password (Account → Security → "
+                + "2-Step Verification → App passwords), not your regular Google password.";
+        }
+        return "Check MAIL_HOST / MAIL_USERNAME / MAIL_PASSWORD against the SMTP provider's "
+            + "credential format. The 535 5.7.3 response means the server rejected the credentials.";
+    }
+
+    private static String safeDomain(String email) {
+        if (email == null) return "<unset>";
+        int at = email.indexOf('@');
+        return at >= 0 ? email.substring(at + 1) : email;
+    }
+
     @Scheduled(fixedDelay = 3000)
     public void pollEmailQueue() {
         try {
@@ -108,9 +153,8 @@ public class EmailConsumerService {
         long elapsed = System.currentTimeMillis() - circuitOpenedAt.get();
         if (elapsed < AUTH_BACKOFF_MS) {
             long retryInSec = (AUTH_BACKOFF_MS - elapsed) / 1000;
-            log.warn("[Email] SMTP auth circuit open — skipping delivery. Auto-retry in {}s. "
-                    + "Fix: enable SMTP AUTH for the mailbox in Exchange Admin Center, "
-                    + "or update MAIL_HOST/MAIL_USERNAME/MAIL_PASSWORD in application config.", retryInSec);
+            log.warn("[Email] SMTP auth circuit open — skipping delivery. Auto-retry in {}s. Fix: {}",
+                    retryInSec, authFailureHint());
             return true;
         }
         // Backoff expired — reset and allow one retry attempt
@@ -134,11 +178,10 @@ public class EmailConsumerService {
         } else {
             circuitOpenedAt.set(System.currentTimeMillis());
             log.error("[Email] SMTP authentication failed {} times in a row. Circuit opened for {} min. "
-                    + "Root cause: {} — "
-                    + "To fix for Exchange Online: go to Exchange Admin Center → Users → mailbox → "
-                    + "Mail flow settings → Authenticated SMTP → enable. "
-                    + "Then restart the app or wait {} min for auto-retry.",
-                    failures, AUTH_BACKOFF_MS / 60000, e.getMessage(), AUTH_BACKOFF_MS / 60000);
+                    + "Root cause: {}. Host={} User={}. Hint: {}. "
+                    + "Update credentials and restart the app, or wait {} min for auto-retry.",
+                    failures, AUTH_BACKOFF_MS / 60000, e.getMessage(),
+                    mailHost, mailUsername, authFailureHint(), AUTH_BACKOFF_MS / 60000);
         }
     }
 

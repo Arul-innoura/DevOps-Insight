@@ -8,9 +8,11 @@ import {
 } from "lucide-react";
 import "./LiveBuildView.css";
 import {
-    getExecution, cancelExecution, EXECUTION_STATUS, TASK_STATUS, TASK_STATUS_COLOR
+    getExecution, cancelExecution, retryCodeCut,
+    EXECUTION_STATUS, TASK_STATUS, TASK_STATUS_COLOR
 } from "../services/codeCutService";
 import { useBuildLive } from "../services/useBuildLive";
+import BuildCaptchaModal from "../components/BuildCaptchaModal";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -176,6 +178,8 @@ export default function LiveBuildView() {
     const [error, setError] = useState(null);
     const [expandedSet, setExpandedSet] = useState(() => new Set());
     const [cancelling, setCancelling] = useState(false);
+    const [retrying, setRetrying] = useState(false);
+    const [retryCaptchaOpen, setRetryCaptchaOpen] = useState(false);
     const [, forceTick] = useState(0); // re-render once a second for ticking ETA
 
     const { execution, logs, connected, setExecution } = useBuildLive(executionId, initialExec);
@@ -258,6 +262,28 @@ export default function LiveBuildView() {
         }
     };
 
+    const handleRetry = async () => {
+        if (!execution?.codeCutRequestId || retrying) return;
+        setRetrying(true);
+        setError(null);
+        try {
+            await retryCodeCut(execution.codeCutRequestId);
+            setRetryCaptchaOpen(true);
+        } catch (e) {
+            setError(e.message || "Retry failed");
+        } finally {
+            setRetrying(false);
+        }
+    };
+
+    const onRetryTriggered = (newExec) => {
+        setRetryCaptchaOpen(false);
+        if (newExec?.id) {
+            // Navigate to the new execution's live view.
+            window.location.assign(`/build/${newExec.id}`);
+        }
+    };
+
     const copyId = () => {
         if (!executionId) return;
         navigator.clipboard?.writeText(executionId).catch(() => {});
@@ -333,6 +359,20 @@ export default function LiveBuildView() {
                             disabled={cancelling}
                         >
                             <XCircle size={14} /> {cancelling ? "Cancelling…" : "Cancel build"}
+                        </button>
+                    )}
+                    {(execution?.status === EXECUTION_STATUS.FAILED
+                        || execution?.status === EXECUTION_STATUS.PARTIAL
+                        || execution?.status === EXECUTION_STATUS.CANCELLED) && execution?.codeCutRequestId && (
+                        <button
+                            type="button"
+                            className="lb-cancel-btn"
+                            style={{ background: "rgba(16, 185, 129, 0.18)", borderColor: "rgba(16, 185, 129, 0.5)", color: "#10b981" }}
+                            onClick={handleRetry}
+                            disabled={retrying}
+                            title="Reset this request and trigger a new build"
+                        >
+                            <RefreshCw size={14} className={retrying ? "lb-spin" : ""} /> {retrying ? "Resetting…" : "Retry build"}
                         </button>
                     )}
                 </div>
@@ -416,6 +456,15 @@ export default function LiveBuildView() {
                     </section>
                 ))}
             </main>
+
+            {retryCaptchaOpen && execution?.codeCutRequestId && (
+                <BuildCaptchaModal
+                    codeCutId={execution.codeCutRequestId}
+                    projectName={execution.projectName}
+                    onClose={() => setRetryCaptchaOpen(false)}
+                    onTriggered={onRetryTriggered}
+                />
+            )}
         </div>
     );
 }

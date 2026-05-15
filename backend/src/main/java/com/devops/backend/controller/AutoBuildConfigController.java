@@ -46,20 +46,25 @@ public class AutoBuildConfigController {
     }
 
     /**
-     * Lightweight read — returns only the per-environment enabled flag.
-     * No Jenkins credentials exposed. Accessible to all authenticated roles so
-     * regular users can check whether the Trigger Build button should be active.
+     * Lightweight read — returns per-environment enabled flag plus the number
+     * of approvers configured for that env. No Jenkins credentials exposed.
+     * Accessible to all authenticated roles so regular users can check whether
+     * the Trigger Build button should be active and how many approvals gate it.
      *
-     * <p>Response shape: {@code { "QA": true, "PROD": false, … }}
+     * <p>Response shape: {@code { "QA": { "enabled": true, "requiredApprovals": 1 }, … }}
      */
     @GetMapping("/status")
     @PreAuthorize("hasAnyAuthority('APPROLE_User','APPROLE_DevOps','APPROLE_Admin')")
-    public ResponseEntity<Map<String, Boolean>> status(@PathVariable String projectId) {
-        Map<String, Boolean> result = new HashMap<>();
+    public ResponseEntity<Map<String, Map<String, Object>>> status(@PathVariable String projectId) {
+        Map<String, Map<String, Object>> result = new HashMap<>();
         workflowRepo.findByProjectId(projectId).ifPresent(settings -> {
             if (settings.getAutoBuildConfig() != null) {
-                settings.getAutoBuildConfig().forEach((env, cfg) ->
-                        result.put(env, Boolean.TRUE.equals(cfg.getEnabled())));
+                settings.getAutoBuildConfig().forEach((env, cfg) -> {
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("enabled", Boolean.TRUE.equals(cfg.getEnabled()));
+                    row.put("requiredApprovals", cfg.getApprovers() == null ? 0 : cfg.getApprovers().size());
+                    result.put(env, row);
+                });
             }
         });
         return ResponseEntity.ok(result);
@@ -120,23 +125,24 @@ public class AutoBuildConfigController {
         return ResponseEntity.noContent().build();
     }
 
-    /** Test Jenkins connection (admin "Test" button). */
+    /** Test Jenkins connection (admin "Test" button). Accepts optional ?environment= to use env-level saved token. */
     @PostMapping("/jenkins/test")
     @PreAuthorize("hasAuthority('APPROLE_Admin')")
     public ResponseEntity<Map<String, Object>> testConnection(
             @PathVariable String projectId,
+            @RequestParam(required = false) String environment,
             @RequestBody(required = false) JenkinsConnection body,
             @AuthenticationPrincipal Jwt jwt) {
         ProjectWorkflowSettings settings = workflowService.getOrCreate(projectId, extractName(jwt));
         JenkinsConnection conn = (body != null && body.getJenkinsUrl() != null && !body.getJenkinsUrl().isBlank())
-                ? body : settings.getJenkinsConnection();
+                ? body : resolveJenkinsConnection(settings, environment);
         if (conn == null) {
             return ResponseEntity.badRequest().body(Map.of("ok", false, "message", "No Jenkins connection configured"));
         }
-        // If the client posted no token (just URL/user) reuse the saved one.
+        // Preserve saved token if client sent back the redacted placeholder or nothing.
         if (conn.getJenkinsApiToken() == null || REDACTED.equals(conn.getJenkinsApiToken())
                 || conn.getJenkinsApiToken().isBlank()) {
-            JenkinsConnection saved = settings.getJenkinsConnection();
+            JenkinsConnection saved = resolveJenkinsConnection(settings, environment);
             if (saved != null) conn.setJenkinsApiToken(saved.getJenkinsApiToken());
         }
         JenkinsClient.ConnectionCheck check = jenkinsClient.testConnection(conn);
@@ -145,10 +151,30 @@ public class AutoBuildConfigController {
         resp.put("version", check.getVersion());
         resp.put("message", check.getMessage());
         if (check.isOk()) {
-            settings.getJenkinsConnection().setVerified(true);
+            // Mark verified on whichever level owns this connection.
+            if (environment != null && settings.getAutoBuildConfig() != null
+                    && settings.getAutoBuildConfig().containsKey(environment)) {
+                JenkinsConnection envConn = settings.getAutoBuildConfig().get(environment).getJenkinsConnection();
+                if (envConn != null) envConn.setVerified(true);
+            } else if (settings.getJenkinsConnection() != null) {
+                settings.getJenkinsConnection().setVerified(true);
+            }
             workflowRepo.save(settings);
         }
         return ResponseEntity.ok(resp);
+    }
+
+    /** Resolve the effective Jenkins connection — env-level first, project-level as fallback. */
+    private JenkinsConnection resolveJenkinsConnection(ProjectWorkflowSettings settings, String environment) {
+        if (environment != null && settings.getAutoBuildConfig() != null) {
+            EnvironmentAutoBuildConfig envCfg = settings.getAutoBuildConfig().get(environment);
+            if (envCfg != null && envCfg.getJenkinsConnection() != null
+                    && envCfg.getJenkinsConnection().getJenkinsUrl() != null
+                    && !envCfg.getJenkinsConnection().getJenkinsUrl().isBlank()) {
+                return envCfg.getJenkinsConnection();
+            }
+        }
+        return settings.getJenkinsConnection();
     }
 
     private static final String REDACTED = "__REDACTED__";

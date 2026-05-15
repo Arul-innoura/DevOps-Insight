@@ -89,6 +89,10 @@ export const triggerBuild = (id, captcha) =>
 export const cancelCodeCut = (id) =>
     apiRequest(`/code-cut/${enc(id)}/cancel`, { method: "POST" });
 
+/** Reset a failed / partial / cancelled request back to READY_TO_BUILD. */
+export const retryCodeCut = (id) =>
+    apiRequest(`/code-cut/${enc(id)}/retry`, { method: "POST" });
+
 export const cancelExecution = (executionId) =>
     apiRequest(`/code-cut/executions/${enc(executionId)}/cancel`, { method: "POST" });
 

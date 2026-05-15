@@ -19,6 +19,12 @@ import java.util.List;
 @AllArgsConstructor
 public class EnvironmentAutoBuildConfig {
 
+    /**
+     * Jenkins connection specific to this environment.
+     * When set, takes precedence over any project-level Jenkins connection.
+     */
+    private JenkinsConnection jenkinsConnection;
+
     /** Master toggle — when false the auto-build flow is hidden everywhere. */
     @Builder.Default
     private Boolean enabled = Boolean.FALSE;
@@ -66,12 +72,12 @@ public class EnvironmentAutoBuildConfig {
     private Boolean useParameters = Boolean.TRUE;
 
     /**
-     * Require dual approval (Lead + Manager) before trigger button appears.
-     * Approvers are resolved from the project's existing workflow approval levels.
-     * Defaults to true per product requirement.
+     * Approvers who must sign off before a build can be triggered for this environment.
+     * Index 0 = lead approver, index 1 = manager approver.
+     * An empty list means no approval is required (trigger is available immediately).
      */
     @Builder.Default
-    private Boolean requireDualApproval = Boolean.TRUE;
+    private List<BuildApprover> approvers = new ArrayList<>();
 
     /** Per-service build plan (defines Jenkins jobs + dependency order). */
     @Builder.Default

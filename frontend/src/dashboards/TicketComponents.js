@@ -1482,6 +1482,7 @@ export const TicketDetailsModal = ({
 
     // ── Code Cut auto-build ──
     const [autoBuildEnabled, setAutoBuildEnabled] = useState(false);
+    const [requiredApprovals, setRequiredApprovals] = useState(2);
     const [codeCutReq, setCodeCutReq] = useState(null);
     const [showCaptcha, setShowCaptcha] = useState(false);
     const [triggerBuildLoading, setTriggerBuildLoading] = useState(false);
@@ -1522,6 +1523,7 @@ export const TicketDetailsModal = ({
     useEffect(() => {
         if (!ticket?.id || ticket.requestType !== 'Code Cut') {
             setAutoBuildEnabled(false);
+            setRequiredApprovals(0);
             setCodeCutReq(null);
             return;
         }
@@ -1532,9 +1534,20 @@ export const TicketDetailsModal = ({
                 const env = ticket.environmentLabel || ticket.environment;
                 if (!projectId || !env) return;
 
-                // Check auto-build enabled (lightweight endpoint — works for all roles)
+                // Lightweight status — also gives us required-approval count for this env.
+                // Supports both new shape {enabled, requiredApprovals} and legacy boolean.
                 const statusMap = await getAutoBuildStatus(projectId).catch(() => null);
-                if (!cancelled) setAutoBuildEnabled(statusMap?.[env] === true);
+                const row = statusMap?.[env];
+                const enabled = (typeof row === 'object' && row !== null)
+                    ? row.enabled === true
+                    : row === true;
+                const req = (typeof row === 'object' && row !== null && Number.isFinite(row.requiredApprovals))
+                    ? row.requiredApprovals
+                    : 0;
+                if (!cancelled) {
+                    setAutoBuildEnabled(enabled);
+                    setRequiredApprovals(req);
+                }
 
                 // Re-fetch CodeCutRequest so build status is fresh (e.g. BUILDING → COMPLETED)
                 const existing = await getByTicket(ticket.id).catch(() => null);
@@ -2161,7 +2174,10 @@ export const TicketDetailsModal = ({
                             const approvedCount = currentlyApproved
                                 ? Math.max(timelineCount, 1)
                                 : timelineCount;
-                            const canTrigger  = approvedCount >= 2;
+                            // Required approvals come from the env's auto-build config (admin-configured).
+                            // 0 means no approvals needed — trigger is always available.
+                            const requiredCount = Math.max(0, requiredApprovals || 0);
+                            const canTrigger  = approvedCount >= requiredCount;
                             const isBuilding  = codeCutReq?.status === 'BUILDING';
                             const isDone      = codeCutReq?.status === 'COMPLETED';
                             const isFailed    = ['FAILED', 'PARTIAL'].includes(codeCutReq?.status);
@@ -2218,26 +2234,28 @@ export const TicketDetailsModal = ({
                                         </div>
                                     )}
 
-                                    {/* Approval progress indicator */}
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                                        {[0, 1].map(i => (
-                                            <div key={i} style={{
-                                                display: 'flex', alignItems: 'center', gap: 6,
-                                                padding: '4px 10px', borderRadius: 999, fontSize: '0.78rem', fontWeight: 600,
-                                                background: approvedCount > i ? '#f0fdf4' : '#f8fafc',
-                                                border: `1px solid ${approvedCount > i ? '#bbf7d0' : '#e2e8f0'}`,
-                                                color: approvedCount > i ? '#15803d' : '#94a3b8'
-                                            }}>
-                                                {approvedCount > i
-                                                    ? <CheckCircle size={12} />
-                                                    : <Clock size={12} />}
-                                                Approval {i + 1}
-                                            </div>
-                                        ))}
-                                        <span style={{ color: '#94a3b8', fontSize: '0.78rem' }}>
-                                            {approvedCount}/2 done
-                                        </span>
-                                    </div>
+                                    {/* Approval progress indicator — count comes from auto-build env config */}
+                                    {requiredCount > 0 && (
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                                            {Array.from({ length: requiredCount }).map((_, i) => (
+                                                <div key={i} style={{
+                                                    display: 'flex', alignItems: 'center', gap: 6,
+                                                    padding: '4px 10px', borderRadius: 999, fontSize: '0.78rem', fontWeight: 600,
+                                                    background: approvedCount > i ? '#f0fdf4' : '#f8fafc',
+                                                    border: `1px solid ${approvedCount > i ? '#bbf7d0' : '#e2e8f0'}`,
+                                                    color: approvedCount > i ? '#15803d' : '#94a3b8'
+                                                }}>
+                                                    {approvedCount > i
+                                                        ? <CheckCircle size={12} />
+                                                        : <Clock size={12} />}
+                                                    Approval {i + 1}
+                                                </div>
+                                            ))}
+                                            <span style={{ color: '#94a3b8', fontSize: '0.78rem' }}>
+                                                {Math.min(approvedCount, requiredCount)}/{requiredCount} done
+                                            </span>
+                                        </div>
+                                    )}
 
                                     {/* Trigger Build button — visible when idle/failed/cancelled */}
                                     {showTrigger && (
@@ -2273,8 +2291,10 @@ export const TicketDetailsModal = ({
                                     {/* Hint below button */}
                                     <p className="jdm-hint-text" style={{ marginTop: 8 }}>
                                         {canTrigger
-                                            ? 'Both approvals confirmed — verify with a captcha to start the Jenkins pipeline.'
-                                            : `Minimum 2 approvals required to trigger the build (${approvedCount}/2 done).`}
+                                            ? (requiredCount === 0
+                                                ? 'No approvals required for this environment — verify with a captcha to start the Jenkins pipeline.'
+                                                : `${requiredCount === 1 ? 'Approval' : 'All approvals'} confirmed — verify with a captcha to start the Jenkins pipeline.`)
+                                            : `Minimum ${requiredCount} ${requiredCount === 1 ? 'approval' : 'approvals'} required to trigger the build (${Math.min(approvedCount, requiredCount)}/${requiredCount} done).`}
                                     </p>
                                 </div>
                             );
@@ -2812,7 +2832,7 @@ const OtherQueriesForm = ({ formData, onChange }) => (
 const CodeCutForm = ({ formData, onChange }) => (
     <>
         <FormField label="Branch Name" required>
-            <input 
+            <input
                 type="text"
                 value={formData.branchName || ''}
                 onChange={e => onChange({ ...formData, branchName: e.target.value })}
@@ -2820,8 +2840,16 @@ const CodeCutForm = ({ formData, onChange }) => (
                 required
             />
         </FormField>
+        <FormField label="Commit ID (optional)">
+            <input
+                type="text"
+                value={formData.commitId || ''}
+                onChange={e => onChange({ ...formData, commitId: e.target.value })}
+                placeholder="Leave blank for HEAD"
+            />
+        </FormField>
         <FormField label="Release Version" required>
-            <input 
+            <input
                 type="text"
                 value={formData.releaseVersion || ''}
                 onChange={e => onChange({ ...formData, releaseVersion: e.target.value })}
@@ -2830,7 +2858,7 @@ const CodeCutForm = ({ formData, onChange }) => (
             />
         </FormField>
         <FormField label="Reason" required>
-            <textarea 
+            <textarea
                 value={formData.reason || ''}
                 onChange={e => onChange({ ...formData, reason: e.target.value })}
                 placeholder="Reason for code cut"

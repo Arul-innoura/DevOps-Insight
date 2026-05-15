@@ -113,30 +113,30 @@ function ProductCard({ p, isDark }) {
 
     return (
         <div style={{
-            border:       `1.5px solid ${p.running ? tok.cardUpBorder : tok.cardDownBorder}`,
-            borderLeft:   `4px solid ${p.running ? "#22c55e" : "#ef4444"}`,
-            borderRadius: 10,
+            border:       `1px solid ${p.running ? tok.cardUpBorder : tok.cardDownBorder}`,
+            borderLeft:   `3px solid ${p.running ? "#22c55e" : "#ef4444"}`,
+            borderRadius: 8,
             background:   p.running ? tok.cardUpBg : tok.cardDownBg,
-            padding:      "12px 14px",
+            padding:      "7px 9px",
             display:      "flex",
             flexDirection: "column",
-            gap:          8,
+            gap:          5,
         }}>
             {/* name + status badge */}
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{
-                    width: 9, height: 9, borderRadius: "50%", flexShrink: 0,
+                    width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
                     background: p.running ? "#22c55e" : "#ef4444",
-                    boxShadow:  p.running ? "0 0 0 3px rgba(34,197,94,0.25)" : "none",
+                    boxShadow:  p.running ? "0 0 0 2px rgba(34,197,94,0.22)" : "none",
                 }} />
                 <span style={{
-                    fontWeight: 700, fontSize: 13, color: "var(--text-main)",
+                    fontWeight: 700, fontSize: 12, color: "var(--text-main)",
                     flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                 }}>
                     {p.name}
                 </span>
                 <span style={{
-                    fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 20,
+                    fontSize: 9, fontWeight: 700, padding: "1px 6px", borderRadius: 20,
                     background: p.running
                         ? (isDark ? "rgba(52,211,153,0.15)" : "#dcfce7")
                         : (isDark ? "rgba(248,113,113,0.15)" : "#fee2e2"),
@@ -149,11 +149,11 @@ function ProductCard({ p, isDark }) {
 
             {/* namespace pills */}
             {p.namespaces.length > 0 && (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
                     {p.namespaces.map(ns => (
                         <span key={ns} style={{
-                            fontSize: 10, padding: "2px 7px",
-                            background: tok.pillBg, borderRadius: 5,
+                            fontSize: 9, padding: "1px 5px",
+                            background: tok.pillBg, borderRadius: 4,
                             color: tok.pillColor, fontFamily: "monospace",
                             border: `1px solid ${tok.pillBorder}`,
                         }}>
@@ -164,38 +164,38 @@ function ProductCard({ p, isDark }) {
             )}
 
             {/* resource specs row */}
-            <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
-                <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, whiteSpace: "nowrap" }}>
-                    <Cpu size={11} style={{ color: "#f97316" }} />
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, whiteSpace: "nowrap" }}>
+                    <Cpu size={10} style={{ color: "#f97316" }} />
                     <strong style={{ color: "#f97316" }}>{fmtN(p.cpuReq, 2)}c</strong>
-                    <span style={{ color: "var(--text-muted)", fontSize: 11 }}>cpu req</span>
+                    <span style={{ color: "var(--text-muted)", fontSize: 10 }}>cpu req</span>
                 </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, whiteSpace: "nowrap" }}>
-                    <Database size={11} style={{ color: "#818cf8" }} />
+                <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, whiteSpace: "nowrap" }}>
+                    <Database size={10} style={{ color: "#818cf8" }} />
                     <strong style={{ color: isDark ? "#a5b4fc" : "#6366f1" }}>{fmtN(p.memReq, 1)} GB</strong>
-                    <span style={{ color: "var(--text-muted)", fontSize: 11 }}>mem req</span>
+                    <span style={{ color: "var(--text-muted)", fontSize: 10 }}>mem req</span>
                 </span>
-                <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, whiteSpace: "nowrap" }}>
-                    <Layers size={11} style={{ color: "#0ea5e9" }} />
+                <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, whiteSpace: "nowrap" }}>
+                    <Layers size={10} style={{ color: "#0ea5e9" }} />
                     <strong style={{ color: p.running ? (isDark ? "#38bdf8" : "#0369a1") : "var(--text-muted)" }}>
                         {p.runningPods}/{p.totalPods}
                     </strong>
-                    <span style={{ color: "var(--text-muted)", fontSize: 11 }}>pods</span>
+                    <span style={{ color: "var(--text-muted)", fontSize: 10 }}>pods</span>
                 </span>
             </div>
 
             {/* CPU utilisation bar */}
             {p.cpuReq > 0 && (
                 <div>
-                    <div style={{ height: 5, background: tok.barTrack, borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ height: 4, background: tok.barTrack, borderRadius: 2, overflow: "hidden" }}>
                         <div style={{
-                            height: "100%", borderRadius: 3,
+                            height: "100%", borderRadius: 2,
                             width: `${cpuPct.toFixed(1)}%`,
                             background: barColor(cpuPct),
                             transition: "width .3s",
                         }} />
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "var(--text-muted)", marginTop: 3 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: "var(--text-muted)", marginTop: 2, lineHeight: 1.25 }}>
                         <span>
                             cpu {fmtN(p.cpuUsed, 2)}c used
                             {p.memReq > 0 && <> · mem {fmtN(p.memUsed, 1)}/{fmtN(p.memReq, 1)} GB</>}
@@ -208,15 +208,15 @@ function ProductCard({ p, isDark }) {
             {/* mem bar (only if no cpu bar) */}
             {p.cpuReq === 0 && p.memReq > 0 && (
                 <div>
-                    <div style={{ height: 5, background: tok.barTrack, borderRadius: 3, overflow: "hidden" }}>
+                    <div style={{ height: 4, background: tok.barTrack, borderRadius: 2, overflow: "hidden" }}>
                         <div style={{
-                            height: "100%", borderRadius: 3,
+                            height: "100%", borderRadius: 2,
                             width: `${memPct.toFixed(1)}%`,
                             background: barColor(memPct),
                             transition: "width .3s",
                         }} />
                     </div>
-                    <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 3, textAlign: "right" }}>
+                    <div style={{ fontSize: 9, color: "var(--text-muted)", marginTop: 2, textAlign: "right", lineHeight: 1.25 }}>
                         {fmtN(p.memUsed, 1)}/{fmtN(p.memReq, 1)} GB · {memPct.toFixed(0)}%
                     </div>
                 </div>
@@ -479,8 +479,8 @@ export default function UserInfraPanel() {
                         />
                         <div style={{
                             display: "grid",
-                            gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))",
-                            gap: 10,
+                            gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                            gap: 7,
                         }}>
                             {upList.map(p => <ProductCard key={p.name} p={p} isDark={isDark} />)}
                         </div>
@@ -498,8 +498,8 @@ export default function UserInfraPanel() {
                         />
                         <div style={{
                             display: "grid",
-                            gridTemplateColumns: "repeat(auto-fill, minmax(270px, 1fr))",
-                            gap: 10,
+                            gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
+                            gap: 7,
                         }}>
                             {downList.map(p => <ProductCard key={p.name} p={p} isDark={isDark} />)}
                         </div>

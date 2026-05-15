@@ -411,7 +411,7 @@ export default function ClusterCostDashboard({ embedded = false }) {
                 <div className="ccd-header-left">
                     <Activity size={18} className="ccd-header-icon" />
                     <strong className="ccd-header-title">Live Cluster Cost</strong>
-                    <span className="ccd-header-sub">Prometheus · Azure Retail Pricing · auto-refresh 60 s</span>
+                    <span className="ccd-header-sub">Prometheus · Live Cloud Pricing · auto-refresh 60 s</span>
                     {refreshing && <span className="ccd-badge updating">Updating…</span>}
                     {!refreshing && isStale && <span className="ccd-badge stale">Stale data</span>}
                 </div>

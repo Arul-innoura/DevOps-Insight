@@ -111,6 +111,7 @@ export default function CodeCutCenter({
                     defaultProjectName={projectName}
                     defaultEnvironment={defaultEnvironment}
                     fallbackEnvironments={environments}
+                    pastRequests={requests.REQUESTER || []}
                     onCreated={(created) => {
                         setRequests((prev) => ({ ...prev, REQUESTER: [created, ...(prev.REQUESTER || [])] }));
                     }}
@@ -138,7 +139,7 @@ export default function CodeCutCenter({
     );
 }
 
-function NewCodeCutForm({ projects, defaultProjectId, defaultProjectName, defaultEnvironment, fallbackEnvironments, onCreated }) {
+function NewCodeCutForm({ projects, defaultProjectId, defaultProjectName, defaultEnvironment, fallbackEnvironments, pastRequests = [], onCreated }) {
     const [projectId, setProjectId] = useState(defaultProjectId || projects[0]?.id || "");
     const [environment, setEnvironment] = useState(defaultEnvironment || "");
     const [branch, setBranch] = useState("main");
@@ -153,6 +154,18 @@ function NewCodeCutForm({ projects, defaultProjectId, defaultProjectName, defaul
         [projects, projectId, defaultProjectId, defaultProjectName, fallbackEnvironments]
     );
     const envOptions = project?.environments?.length ? project.environments : fallbackEnvironments;
+
+    // Branch suggestions from this user's recent code-cut requests (most recent first, deduped).
+    const branchSuggestions = useMemo(() => {
+        const seen = new Set();
+        const out = [];
+        for (const r of pastRequests) {
+            const b = r?.branchName?.trim();
+            if (b && !seen.has(b)) { seen.add(b); out.push(b); }
+        }
+        ["main", "master", "develop"].forEach((b) => { if (!seen.has(b)) { seen.add(b); out.push(b); } });
+        return out.slice(0, 20);
+    }, [pastRequests]);
 
     useEffect(() => {
         if (!environment && envOptions?.length) setEnvironment(envOptions[0]);
@@ -226,8 +239,13 @@ function NewCodeCutForm({ projects, defaultProjectId, defaultProjectName, defaul
                         onChange={(e) => setBranch(e.target.value)}
                         style={inputStyle}
                         placeholder="main"
+                        list="cc-branch-suggestions"
+                        autoComplete="off"
                         disabled={submitting}
                     />
+                    <datalist id="cc-branch-suggestions">
+                        {branchSuggestions.map((b) => <option key={b} value={b} />)}
+                    </datalist>
                 </label>
                 <label style={{ display: "flex", flexDirection: "column", fontSize: 12, fontWeight: 600 }}>
                     Commit (optional)

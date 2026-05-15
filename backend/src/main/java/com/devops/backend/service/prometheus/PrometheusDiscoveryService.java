@@ -179,6 +179,23 @@ public class PrometheusDiscoveryService {
                 if (!v.isBlank()) n.vmSize = v;
             }
         }
+        // ── Pass 4: EKS-specific node labels ─────────────────────────────────────
+        // Node group name — eks.amazonaws.com/nodegroup
+        for (var s : client.queryVector(env,
+                "kube_node_labels{label_eks_amazonaws_com_nodegroup!=\"\"}")) {
+            Node n = t.nodes.get(s.label("node"));
+            if (n == null) continue;
+            String ng = s.label("label_eks_amazonaws_com_nodegroup");
+            if (!ng.isBlank() && (n.agentPool == null || n.agentPool.isBlank())) n.agentPool = ng;
+        }
+        // Lifecycle label — node.kubernetes.io/lifecycle = "spot" for Spot instances
+        for (var s : client.queryVector(env,
+                "kube_node_labels{label_node_kubernetes_io_lifecycle!=\"\"}")) {
+            Node n = t.nodes.get(s.label("node"));
+            if (n == null) continue;
+            if ("spot".equalsIgnoreCase(s.label("label_node_kubernetes_io_lifecycle"))) n.spot = true;
+        }
+
         // Post-process: if kube_node_labels did not expose the agentPool / spot labels,
         // derive them from the AKS VMSS node naming convention:
         //   aks-{agentpoolname}-{7char-hash}-vmss{6char-instanceid}
@@ -195,6 +212,25 @@ public class PrometheusDiscoveryService {
             if (!n.spot && n.agentPool != null
                     && n.agentPool.toLowerCase(java.util.Locale.ROOT).contains("spot")) {
                 n.spot = true;
+            }
+        }
+
+        // ----- Namespace discovery -----
+        // Query kube_namespace_status_phase to get ALL active namespaces in the cluster,
+        // including those with no running pods (replicas=0, all Pending, etc.).
+        // This prevents namespaces from disappearing from the cost view when scaled down.
+        for (var s : client.queryVector(env, "kube_namespace_status_phase{phase=\"Active\"}")) {
+            if (s.value() < 0.5) continue;
+            String ns = s.label("namespace");
+            if (ns == null || ns.isBlank() || isSystemNs(ns)) continue;
+            t.knownNamespaces.add(ns);
+        }
+        // Fallback: if kube_namespace_status_phase is not available, derive from kube_pod_info
+        if (t.knownNamespaces.isEmpty()) {
+            for (var s : client.queryVector(env, "count by (namespace) (kube_pod_info)")) {
+                String ns = s.label("namespace");
+                if (ns == null || ns.isBlank() || isSystemNs(ns)) continue;
+                t.knownNamespaces.add(ns);
             }
         }
 
@@ -240,6 +276,8 @@ public class PrometheusDiscoveryService {
                 p.images.add(image);
                 Matcher m = ACR_HOST.matcher(image);
                 if (m.find()) t.acrHosts.add(m.group(1));
+                Matcher me = ECR_HOST.matcher(image);
+                if (me.find()) t.ecrHosts.add(me.group(1));
             }
         }
         // Container restarts
@@ -343,8 +381,8 @@ public class PrometheusDiscoveryService {
                 "sum(rate(node_network_transmit_bytes_total{device!~\"lo|veth.*|cali.*|tunl.*|docker.*|flannel.*|cilium.*|azure.*\"}[5m]))");
         if (!tx.isEmpty()) t.networkTransmitBytesPerSec = tx.get(0).value();
 
-        log.debug("Prometheus discovery {} -> nodes={} pods={} pvcs={} acrHosts={}",
-                env, t.nodes.size(), t.pods.size(), t.pvcs.size(), t.acrHosts);
+        log.debug("Prometheus discovery {} -> nodes={} pods={} pvcs={} acrHosts={} ecrHosts={}",
+                env, t.nodes.size(), t.pods.size(), t.pvcs.size(), t.acrHosts, t.ecrHosts);
         return t;
     }
 
@@ -365,6 +403,7 @@ public class PrometheusDiscoveryService {
     }
 
     private static final Pattern ACR_HOST = Pattern.compile("([a-z0-9]+\\.azurecr\\.io)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ECR_HOST = Pattern.compile("(\\d+\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com)", Pattern.CASE_INSENSITIVE);
 
     private static String firstNonBlank(String... vs) {
         for (String v : vs) if (v != null && !v.isBlank()) return v;
@@ -380,16 +419,22 @@ public class PrometheusDiscoveryService {
         @lombok.Builder.Default private Map<String, Pod> pods = new HashMap<>();
         @lombok.Builder.Default private Map<String, Pvc> pvcs = new HashMap<>();
         @lombok.Builder.Default private Set<String> acrHosts = new HashSet<>();
+        @lombok.Builder.Default private Set<String> ecrHosts = new HashSet<>();
         @lombok.Builder.Default private int loadBalancerCount = 0;
         @lombok.Builder.Default private int publicIpCount = 0;
         @lombok.Builder.Default private Map<String, Integer> loadBalancerByNamespace = new HashMap<>();
         @lombok.Builder.Default private Map<String, Integer> ingressCountByNamespace = new HashMap<>();
         @lombok.Builder.Default private Map<String, HorizontalAutoscaler> hpas = new HashMap<>();
         @lombok.Builder.Default private double networkTransmitBytesPerSec = 0d;
+        /** All non-system namespaces known to exist in the cluster, including those with no running pods. */
+        @lombok.Builder.Default private Set<String> knownNamespaces = new HashSet<>();
 
         public Set<String> namespaces() {
             Set<String> out = new TreeSet<>();
             for (Pod p : pods.values()) out.add(p.namespace);
+            // Include namespaces discovered from kube_namespace_status_phase even when they
+            // have no running pods (e.g. deployments scaled to 0, Pending pods only, etc.)
+            out.addAll(knownNamespaces);
             return out;
         }
 

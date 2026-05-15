@@ -34,7 +34,8 @@ import {
     ChevronLeft,
     ChevronRight,
     Plus,
-    Layers
+    Layers,
+    CircleDollarSign
 } from "lucide-react";
 import { 
     StatusBadge, 
@@ -102,7 +103,7 @@ import { getMyProfile } from "../../services/profileService";
 import { ThemePickerRow } from "../../components/ThemePickerRow";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
-const ADMIN_SIDEBAR_NAV_DEFAULTS = { operations: true, configuration: true, account: true };
+const ADMIN_SIDEBAR_NAV_DEFAULTS = { operations: true, operational: true, configuration: true, account: true };
 
 // Status color mapping for timeline visualization
 const TIMELINE_STATUS_COLORS = {
@@ -1527,6 +1528,24 @@ export const AdminDashboard = () => {
 
                     <div className="sb-group">
                         <NavSectionToggle
+                            open={navGroups.operational}
+                            onToggle={() => setNavGroups(g => ({ ...g, operational: !g.operational }))}
+                            label="Operational"
+                        />
+                        {navGroups.operational && (
+                            <div className="sb-group-items">
+                                <a href="#" className={`sb-item ${viewMode === 'liveCost' ? 'active' : ''}`}
+                                   onClick={(e) => { e.preventDefault(); setViewMode('liveCost'); }}
+                                   title="Live cluster cost from Prometheus, priced via Azure Retail">
+                                    <span className="sb-item-icon"><CircleDollarSign size={15} /></span>
+                                    <span className="sb-item-text">Cost Management</span>
+                                </a>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="sb-group">
+                        <NavSectionToggle
                             open={navGroups.configuration}
                             onToggle={() => setNavGroups(g => ({ ...g, configuration: !g.configuration }))}
                             label="Configuration"
@@ -1546,7 +1565,7 @@ export const AdminDashboard = () => {
                                 <a href="#" className={`sb-item ${viewMode === 'rota' ? 'active' : ''}`}
                                    onClick={(e) => { e.preventDefault(); setViewMode('rota'); }}>
                                     <span className="sb-item-icon"><RotateCcw size={15} /></span>
-                                    <span className="sb-item-text">On-Call Schedule</span>
+                                    <span className="sb-item-text">Rota management</span>
                                 </a>
                                 <a href="#" className={`sb-item ${viewMode === 'statusTimeline' ? 'active' : ''}`}
                                    onClick={(e) => { e.preventDefault(); setViewMode('statusTimeline'); }}>
@@ -1562,12 +1581,6 @@ export const AdminDashboard = () => {
                                    onClick={(e) => { e.preventDefault(); setViewMode('cloudServices'); }}>
                                     <span className="sb-item-icon"><Layers size={15} /></span>
                                     <span className="sb-item-text">Cloud Services</span>
-                                </a>
-                                <a href="#" className={`sb-item ${viewMode === 'liveCost' ? 'active' : ''}`}
-                                   onClick={(e) => { e.preventDefault(); setViewMode('liveCost'); }}
-                                   title="Auto-discovered live cost from Prometheus, priced live via Azure Retail">
-                                    <span className="sb-item-icon"><Activity size={15} /></span>
-                                    <span className="sb-item-text">Live Cluster Cost</span>
                                 </a>
                             </div>
                         )}
@@ -1650,7 +1663,7 @@ export const AdminDashboard = () => {
                                     {viewMode === 'rota' && 'Schedule'}
                                     {viewMode === 'activityLogs' && 'Audit Trail'}
                                     {viewMode === 'cloudServices' && 'Cloud Services'}
-                                    {viewMode === 'liveCost' && 'Live Cluster Cost'}
+                                    {viewMode === 'liveCost' && 'Cost Management'}
                                     {viewMode === 'profile' && 'Account'}
                                     {viewMode === 'settings' && 'Preferences'}
                                 </span>
@@ -1667,6 +1680,7 @@ export const AdminDashboard = () => {
                                 {viewMode === 'rota' && 'On-Call Schedule'}
                                 {viewMode === 'statusTimeline' && 'Team Activity Timeline'}
                                 {viewMode === 'activityLogs' && 'Activity Logs / Audit Trail'}
+                                {viewMode === 'liveCost' && 'Cost Management'}
                                 {viewMode === 'profile' && 'My Account'}
                                 {viewMode === 'settings' && 'Preferences'}
                             </h1>
@@ -1678,6 +1692,11 @@ export const AdminDashboard = () => {
                             {viewMode === 'deletedTickets' && (
                                 <p className="header-subtitle">
                                     Soft-deleted tickets are read-only here. Restore a ticket to return it to active queues.
+                                </p>
+                            )}
+                            {viewMode === 'liveCost' && (
+                                <p className="header-subtitle">
+                                    Live cluster spend from Prometheus, priced with Azure Retail rates.
                                 </p>
                             )}
                         </div>

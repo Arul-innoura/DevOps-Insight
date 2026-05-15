@@ -2,11 +2,11 @@ import React, { useState } from "react";
 import {
     GitBranch, GitCommit, Clock, User as UserIcon,
     CheckCircle2, XCircle, ShieldCheck, Zap, AlertTriangle, ExternalLink,
-    PlayCircle
+    PlayCircle, RefreshCw
 } from "lucide-react";
 import {
     APPROVAL_STATE, CODE_CUT_STATUS, STATUS_LABEL, STATUS_COLOR,
-    approveCodeCut, rejectCodeCut, cancelCodeCut
+    approveCodeCut, rejectCodeCut, cancelCodeCut, retryCodeCut
 } from "../services/codeCutService";
 import BuildCaptchaModal from "./BuildCaptchaModal";
 
@@ -32,11 +32,21 @@ export default function CodeCutRequestCard({ request, viewerRole = "REQUESTER", 
     const isPendingApprovals = status === CODE_CUT_STATUS.PENDING_APPROVALS;
     const isReady = status === CODE_CUT_STATUS.READY_TO_BUILD;
     const isBuilding = status === CODE_CUT_STATUS.BUILDING;
+    const isRetryable = status === CODE_CUT_STATUS.FAILED
+        || status === CODE_CUT_STATUS.PARTIAL
+        || status === CODE_CUT_STATUS.CANCELLED;
+    // An approver "slot" is only real when an email was configured by the admin.
+    // If no manager was configured, the backend auto-approves that slot — the UI
+    // should treat it as not present (no chip, no approve button).
+    const hasLead = !!request.leadApproverEmail;
+    const hasManager = !!request.managerApproverEmail;
     const showApproveAsLead = (viewerRole === "LEAD" || viewerRole === "ADMIN")
         && isPendingApprovals
+        && hasLead
         && request.leadApprovalState === APPROVAL_STATE.PENDING;
     const showApproveAsManager = (viewerRole === "MANAGER" || viewerRole === "ADMIN")
         && isPendingApprovals
+        && hasManager
         && request.managerApprovalState === APPROVAL_STATE.PENDING;
     const showTrigger = isReady && (viewerRole === "REQUESTER" || viewerRole === "ADMIN" || viewerRole === "LEAD" || viewerRole === "MANAGER");
     const showOpenLive = (isBuilding
@@ -78,6 +88,21 @@ export default function CodeCutRequestCard({ request, viewerRole = "REQUESTER", 
         }
     };
 
+    const retry = async () => {
+        setBusy(true);
+        setError(null);
+        try {
+            const result = await retryCodeCut(request.id);
+            onChange?.(result);
+            // Request is now READY_TO_BUILD — open captcha so user can re-trigger immediately.
+            setCaptchaOpen(true);
+        } catch (e) {
+            setError(e.message || "Retry failed");
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const openLive = () => {
         if (!request.currentBuildExecutionId) return;
         const url = `${window.location.origin}/build/${request.currentBuildExecutionId}`;
@@ -85,27 +110,34 @@ export default function CodeCutRequestCard({ request, viewerRole = "REQUESTER", 
     };
 
     return (
-        <div className="cc-card">
-            <div className="cc-card-head">
-                <h4 className="cc-card-title">
+        <div className="cc-card" style={{ marginBottom: 12 }}>
+            <div className="cc-card-head" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <h4 className="cc-card-title" style={{ margin: 0, fontSize: 14 }}>
                     {request.projectName} <span style={{ color: "#94a3b8" }}>/</span> {request.environment}
                 </h4>
-                <span className="cc-status-pill" style={{ background: statusColor }}>
+                <span className="cc-status-pill" style={{ background: statusColor, color: "#fff", padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600, letterSpacing: 0.3 }}>
                     {STATUS_LABEL[status] || status}
                 </span>
             </div>
-            <div className="cc-meta">
-                <span><GitBranch size={12} /> {request.branchName}</span>
-                <span><GitCommit size={12} /> {request.commitId || "(latest HEAD)"}</span>
-                <span><UserIcon size={12} /> {request.requestedByName}</span>
+            <div className="cc-meta" style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 8, fontSize: 12, color: "#64748b", alignItems: "center" }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><GitBranch size={12} /> {request.branchName}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><GitCommit size={12} /> {request.commitId || "(latest HEAD)"}</span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><UserIcon size={12} /> {request.requestedByName}</span>
                 {request.createdAt && (
-                    <span><Clock size={12} /> {new Date(request.createdAt).toLocaleString()}</span>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={12} /> {new Date(request.createdAt).toLocaleString()}</span>
                 )}
             </div>
 
             <div className="cc-approval-row">
-                <ApprovalChip role="Lead" name={request.leadApproverName || request.leadApproverEmail} state={request.leadApprovalState} />
-                <ApprovalChip role="Manager" name={request.managerApproverName || request.managerApproverEmail} state={request.managerApprovalState} />
+                {hasLead && (
+                    <ApprovalChip role={hasManager ? "Lead" : "Approver"} name={request.leadApproverName || request.leadApproverEmail} state={request.leadApprovalState} />
+                )}
+                {hasManager && (
+                    <ApprovalChip role="Manager" name={request.managerApproverName || request.managerApproverEmail} state={request.managerApprovalState} />
+                )}
+                {!hasLead && !hasManager && (
+                    <span style={{ fontSize: 12, color: "#94a3b8" }}>No approvals required for this environment.</span>
+                )}
             </div>
 
             {request.requesterNote && (
@@ -124,7 +156,7 @@ export default function CodeCutRequestCard({ request, viewerRole = "REQUESTER", 
                 </div>
             )}
 
-            <div className="cc-actions">
+            <div className="cc-actions" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12, alignItems: "center" }}>
                 {showApproveAsLead && (
                     <>
                         <button
@@ -172,6 +204,15 @@ export default function CodeCutRequestCard({ request, viewerRole = "REQUESTER", 
                         className="cc-btn cc-btn-secondary"
                         onClick={openLive}
                     ><ExternalLink size={13} /> Open live view</button>
+                )}
+                {isRetryable && (viewerRole === "REQUESTER" || viewerRole === "ADMIN") && (
+                    <button
+                        type="button"
+                        className="cc-btn cc-btn-trigger"
+                        onClick={retry}
+                        disabled={busy}
+                        title="Reset to ready-to-build and trigger a new build"
+                    ><RefreshCw size={13} /> Retry build</button>
                 )}
                 {(viewerRole === "REQUESTER" || viewerRole === "ADMIN")
                     && (status === CODE_CUT_STATUS.PENDING_APPROVALS

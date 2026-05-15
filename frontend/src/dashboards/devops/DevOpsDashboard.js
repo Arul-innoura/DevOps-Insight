@@ -38,7 +38,8 @@ import {
     XCircle,
     Send,
     ArrowRightCircle,
-    LayoutDashboard
+    LayoutDashboard,
+    CircleDollarSign
 } from "lucide-react";
 import TicketComponentsPkg, {
     StatusBadge,
@@ -102,7 +103,7 @@ import { LoadingScreen } from "../../components/LoadingScreen";
 import { signOutRedirectToLogin } from "../../auth/logoutHelper";
 const TicketCard = TicketComponentsPkg.TicketCard;
 
-const DEVOPS_SIDEBAR_NAV_DEFAULTS = { team: true, account: true };
+const DEVOPS_SIDEBAR_NAV_DEFAULTS = { team: true, operational: true, account: true };
 
 // Status visual configuration
 const STATUS_CONFIG = {
@@ -1260,28 +1261,39 @@ export const DevOpsDashboard = () => {
                         <NavSectionToggle
                             open={navGroups.team}
                             onToggle={() => setNavGroups(g => ({ ...g, team: !g.team }))}
-                            label="Team"
+                            label="Team work"
                         />
                         {navGroups.team && (
                             <div className="sb-group-items">
                                 <a href="#" className={`sb-item ${activeSection === 'standup' ? 'active' : ''}`}
                                    onClick={(e) => { e.preventDefault(); handleSectionChange('standup'); }}>
                                     <span className="sb-item-icon"><StickyNote size={15} /></span>
-                                    <span className="sb-item-text">Daily Sync</span>
+                                    <span className="sb-item-text">Team standup</span>
                                 </a>
                                 <a href="#" className={`sb-item ${activeSection === 'rota' ? 'active' : ''}`}
                                    onClick={(e) => { e.preventDefault(); handleSectionChange('rota'); }}>
                                     <span className="sb-item-icon"><RotateCcw size={15} /></span>
-                                    <span className="sb-item-text">On-Call Schedule</span>
+                                    <span className="sb-item-text">Rota management</span>
                                 </a>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="sb-group">
+                        <NavSectionToggle
+                            open={navGroups.operational}
+                            onToggle={() => setNavGroups(g => ({ ...g, operational: !g.operational }))}
+                            label="Operational"
+                        />
+                        {navGroups.operational && (
+                            <div className="sb-group-items">
                                 <a href="#" className={`sb-item ${activeSection === 'liveCost' ? 'active' : ''}`}
                                    onClick={(e) => { e.preventDefault(); handleSectionChange('liveCost'); markNewSeen('liveCost'); }}
-                                   title="Auto-discovered live cluster cost from Prometheus (DevOps + Admin)">
-                                    <span className="sb-item-icon"><Activity size={15} /></span>
-                                    <span className="sb-item-text">Live Cluster Cost</span>
+                                   title="Live cluster cost from Prometheus — priced via Azure Retail">
+                                    <span className="sb-item-icon"><CircleDollarSign size={15} /></span>
+                                    <span className="sb-item-text">Cost Management</span>
                                     {!newSeen.liveCost && <span className="sb-new-badge">New</span>}
                                 </a>
-
                             </div>
                         )}
                     </div>
@@ -1419,7 +1431,7 @@ export const DevOpsDashboard = () => {
                                     {activeSection === 'requests' && requestTab === 'active' && 'Active'}
                                     {activeSection === 'requests' && requestTab === 'history' && 'Completed'}
                                     {activeSection === 'requests' && requestTab === 'closed' && 'Closed'}
-                                    {activeSection === 'liveCost' && 'Live Cluster Cost'}
+                                    {activeSection === 'liveCost' && 'Cost Management'}
                                     {activeSection === 'profile' && 'Profile'}
                                     {activeSection === 'standup' && 'Standup'}
                                     {activeSection === 'rota' && 'Rota'}
@@ -1432,7 +1444,7 @@ export const DevOpsDashboard = () => {
                                 {activeSection === 'requests' && requestTab === 'active' && 'Active Requests'}
                                 {activeSection === 'requests' && requestTab === 'history' && 'Completed Tickets'}
                                 {activeSection === 'requests' && requestTab === 'closed' && 'Closed Tickets'}
-                                {activeSection === 'liveCost' && 'Live Cluster Cost — auto-discovered from Prometheus'}
+                                {activeSection === 'liveCost' && 'Cost Management — live cluster spend from Prometheus'}
                                 {activeSection === 'profile' && 'My Profile'}
                                 {activeSection === 'standup' && 'Daily Standup Notes'}
                                 {activeSection === 'rota' && 'Night Shift Rota'}

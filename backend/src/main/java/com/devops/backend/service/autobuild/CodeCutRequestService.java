@@ -2,11 +2,9 @@ package com.devops.backend.service.autobuild;
 
 import com.devops.backend.model.ProjectWorkflowSettings;
 import com.devops.backend.model.Ticket;
+import com.devops.backend.model.autobuild.BuildApprover;
 import com.devops.backend.model.autobuild.CodeCutRequest;
 import com.devops.backend.model.autobuild.EnvironmentAutoBuildConfig;
-import com.devops.backend.model.workflow.ApprovalLevelConfig;
-import com.devops.backend.model.workflow.WorkflowApprover;
-import com.devops.backend.model.workflow.WorkflowConfiguration;
 import com.devops.backend.repository.CodeCutRequestRepository;
 import com.devops.backend.repository.ProjectWorkflowSettingsRepository;
 import com.devops.backend.repository.TicketRepository;
@@ -53,10 +51,17 @@ public class CodeCutRequestService {
             throw new IllegalArgumentException("Branch name is required");
         }
 
-        // Resolve lead + manager from the project's existing workflow approval levels
-        // so admins don't have to configure them twice.
-        WorkflowApprover lead    = resolveApprover(settings, req.getEnvironment(), "lead",    0);
-        WorkflowApprover manager = resolveApprover(settings, req.getEnvironment(), "manager", 1);
+        // Resolve approvers from the environment's auto-build config.
+        // Index 0 = lead, index 1 = manager. Missing slots are auto-approved.
+        List<BuildApprover> configuredApprovers = envCfg.getApprovers() != null ? envCfg.getApprovers() : List.of();
+        BuildApprover lead    = configuredApprovers.size() > 0 ? configuredApprovers.get(0) : null;
+        BuildApprover manager = configuredApprovers.size() > 1 ? configuredApprovers.get(1) : null;
+
+        boolean noApprovers = configuredApprovers.isEmpty();
+        CodeCutRequest.ApprovalState leadState    = (lead    != null) ? CodeCutRequest.ApprovalState.PENDING : CodeCutRequest.ApprovalState.APPROVED;
+        CodeCutRequest.ApprovalState managerState = (manager != null) ? CodeCutRequest.ApprovalState.PENDING : CodeCutRequest.ApprovalState.APPROVED;
+        CodeCutRequest.CodeCutStatus  initStatus  = noApprovers ? CodeCutRequest.CodeCutStatus.READY_TO_BUILD
+                                                                : CodeCutRequest.CodeCutStatus.PENDING_APPROVALS;
 
         Instant now = Instant.now();
         String threadId = emailService.generateThreadId(java.util.UUID.randomUUID().toString());
@@ -70,13 +75,13 @@ public class CodeCutRequestService {
                 .requesterNote(req.getRequesterNote())
                 .requestedByName(req.getRequestedByName())
                 .requestedByEmail(req.getRequestedByEmail())
-                .leadApproverName(lead != null ? lead.getName() : null)
-                .leadApproverEmail(lead != null ? lead.getEmail() : null)
-                .leadApprovalState(CodeCutRequest.ApprovalState.PENDING)
-                .managerApproverName(manager != null ? manager.getName() : null)
+                .leadApproverName(lead    != null ? lead.getName()    : null)
+                .leadApproverEmail(lead   != null ? lead.getEmail()   : null)
+                .leadApprovalState(leadState)
+                .managerApproverName(manager  != null ? manager.getName()  : null)
                 .managerApproverEmail(manager != null ? manager.getEmail() : null)
-                .managerApprovalState(CodeCutRequest.ApprovalState.PENDING)
-                .status(CodeCutRequest.CodeCutStatus.PENDING_APPROVALS)
+                .managerApprovalState(managerState)
+                .status(initStatus)
                 .createdAt(now)
                 .updatedAt(now)
                 .emailThreadMessageId(threadId)
@@ -169,6 +174,32 @@ public class CodeCutRequestService {
         cc.setCaptchaVerifiedAt(Instant.now());
         cc.setCaptchaVerifiedBy(actorEmail);
         return repo.save(cc);
+    }
+
+    /**
+     * Reset a terminal-state request back to READY_TO_BUILD so the requester can
+     * re-trigger the build (e.g. after a FAILED / PARTIAL / CANCELLED execution).
+     * Approval decisions are preserved — only the captcha + execution pointer are reset.
+     */
+    public CodeCutRequest retry(String requestId, String actorEmail) {
+        CodeCutRequest cc = repo.findById(requestId)
+                .orElseThrow(() -> new IllegalArgumentException("Code cut request not found: " + requestId));
+        CodeCutRequest.CodeCutStatus s = cc.getStatus();
+        if (s != CodeCutRequest.CodeCutStatus.FAILED
+                && s != CodeCutRequest.CodeCutStatus.PARTIAL
+                && s != CodeCutRequest.CodeCutStatus.CANCELLED) {
+            throw new IllegalStateException("Only failed / partial / cancelled requests can be retried (current: " + s + ")");
+        }
+        cc.setStatus(CodeCutRequest.CodeCutStatus.READY_TO_BUILD);
+        cc.setCaptchaChallenge(null);
+        cc.setCaptchaIssuedAt(null);
+        cc.setCaptchaVerifiedAt(null);
+        cc.setCaptchaVerifiedBy(null);
+        cc.setCurrentBuildExecutionId(null);
+        cc.setUpdatedAt(Instant.now());
+        cc = repo.save(cc);
+        broadcaster.emitCodeCutUpdated(cc);
+        return cc;
     }
 
     /**
@@ -311,55 +342,6 @@ public class CodeCutRequestService {
     public java.util.List<CodeCutRequest> listPendingForManager(String email) {
         return repo.findByManagerApproverEmailIgnoreCaseAndStatusOrderByCreatedAtDesc(
                 email, CodeCutRequest.CodeCutStatus.PENDING_APPROVALS);
-    }
-
-    /**
-     * Find a WorkflowApprover from the project's configured approval levels.
-     *
-     * <p>Strategy:
-     * <ol>
-     *   <li>Check the environment-specific workflow configuration first.</li>
-     *   <li>Fall back to the default workflow configuration.</li>
-     *   <li>Within the approval levels, look for an approver whose {@code role}
-     *       contains {@code roleKeyword} (case-insensitive); otherwise fall back
-     *       to the first approver at {@code fallbackLevelIndex}.</li>
-     * </ol>
-     */
-    private WorkflowApprover resolveApprover(ProjectWorkflowSettings settings,
-                                              String environment,
-                                              String roleKeyword,
-                                              int fallbackLevelIndex) {
-        WorkflowConfiguration cfg = null;
-        if (settings.getEnvironmentConfigurations() != null) {
-            cfg = settings.getEnvironmentConfigurations().get(environment);
-        }
-        if (cfg == null) {
-            cfg = settings.getDefaultConfiguration();
-        }
-        if (cfg == null || cfg.getApprovalLevels() == null || cfg.getApprovalLevels().isEmpty()) {
-            return null;
-        }
-
-        List<ApprovalLevelConfig> levels = cfg.getApprovalLevels();
-
-        // Try to find by role keyword across all levels.
-        for (ApprovalLevelConfig level : levels) {
-            if (level.getApprovers() == null) continue;
-            for (WorkflowApprover a : level.getApprovers()) {
-                if (a.getRole() != null && a.getRole().toLowerCase().contains(roleKeyword)) {
-                    return a;
-                }
-            }
-        }
-
-        // Fall back to first approver at the given level index.
-        if (fallbackLevelIndex < levels.size()) {
-            List<WorkflowApprover> approvers = levels.get(fallbackLevelIndex).getApprovers();
-            if (approvers != null && !approvers.isEmpty()) {
-                return approvers.get(0);
-            }
-        }
-        return null;
     }
 
     @lombok.Data

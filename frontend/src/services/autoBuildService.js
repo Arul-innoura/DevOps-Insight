@@ -29,12 +29,12 @@ export const saveJenkinsConnection = (projectId, connection) =>
         body: JSON.stringify(connection)
     });
 
-/** Test connectivity to Jenkins (admin "Test Connection" button). */
-export const testJenkinsConnection = (projectId, connection) =>
-    apiRequest(`/projects/${enc(projectId)}/auto-build/jenkins/test`, {
-        method: "POST",
-        body: JSON.stringify(connection || {})
-    });
+/** Test connectivity to Jenkins for a specific environment (admin "Test Connection" button). */
+export const testJenkinsConnection = (projectId, connection, environment) =>
+    apiRequest(
+        `/projects/${enc(projectId)}/auto-build/jenkins/test${environment ? `?environment=${enc(environment)}` : ""}`,
+        { method: "POST", body: JSON.stringify(connection || {}) }
+    );
 
 /** PUT per-environment auto-build config (toggle + service plan). */
 export const saveEnvAutoBuildConfig = (projectId, environment, body) =>
@@ -55,6 +55,7 @@ export const deleteEnvAutoBuildConfig = (projectId, environment) =>
  */
 export const DEFAULT_ENV_AUTO_BUILD_CONFIG = {
     enabled: false,
+    jenkinsConnection: { jenkinsUrl: "", jenkinsUser: "", jenkinsApiToken: "", crumbPath: "", verified: null },
     defaultBranch: "main",
     agentLabel: "any",
     defaultCommitId: "",
@@ -63,6 +64,6 @@ export const DEFAULT_ENV_AUTO_BUILD_CONFIG = {
     gitCredentialsId: "",
     jenkinsFolder: "",
     retryAttempts: 3,
-    requireDualApproval: true,
+    approvers: [],
     services: []
 };

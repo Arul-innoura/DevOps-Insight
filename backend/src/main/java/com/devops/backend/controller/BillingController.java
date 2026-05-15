@@ -180,19 +180,24 @@ public class BillingController {
 
             // Average the per-namespace lines inside this bucket so per-project
             // charts can compare like-for-like across buckets.
-            // [hourlySum, count, cpuUsedSum, cpuReqSum, memUsedSum, memReqSum]
+            // [hourlySum, count, cpuUsedSum, cpuReqSum, memUsedSum, memReqSum, computeSum, memCostSum, storSum, netSum, podCountSum]
             Map<String, double[]> nsAcc = new HashMap<>();
             Map<String, String>   nsProj = new HashMap<>();
             for (ClusterCostTimeseriesPoint pt : bucket) {
                 if (pt.getNamespaces() == null) continue;
                 for (var nl : pt.getNamespaces()) {
-                    double[] acc = nsAcc.computeIfAbsent(nl.getNamespace(), k -> new double[]{0d, 0d, 0d, 0d, 0d, 0d});
-                    acc[0] += nl.getHourlyUsd() == null ? 0d : nl.getHourlyUsd();
-                    acc[1] += 1d;
-                    acc[2] += nl.getCpuUsedCores()    == null ? 0d : nl.getCpuUsedCores();
-                    acc[3] += nl.getCpuRequestCores() == null ? 0d : nl.getCpuRequestCores();
-                    acc[4] += nl.getMemoryUsedGb()    == null ? 0d : nl.getMemoryUsedGb();
-                    acc[5] += nl.getMemoryRequestGb() == null ? 0d : nl.getMemoryRequestGb();
+                    double[] acc = nsAcc.computeIfAbsent(nl.getNamespace(), k -> new double[]{0d, 0d, 0d, 0d, 0d, 0d, 0d, 0d, 0d, 0d, 0d});
+                    acc[0]  += nl.getHourlyUsd()        == null ? 0d : nl.getHourlyUsd();
+                    acc[1]  += 1d;
+                    acc[2]  += nl.getCpuUsedCores()     == null ? 0d : nl.getCpuUsedCores();
+                    acc[3]  += nl.getCpuRequestCores()  == null ? 0d : nl.getCpuRequestCores();
+                    acc[4]  += nl.getMemoryUsedGb()     == null ? 0d : nl.getMemoryUsedGb();
+                    acc[5]  += nl.getMemoryRequestGb()  == null ? 0d : nl.getMemoryRequestGb();
+                    acc[6]  += nl.getComputeHourlyUsd() == null ? 0d : nl.getComputeHourlyUsd();
+                    acc[7]  += nl.getMemoryHourlyUsd()  == null ? 0d : nl.getMemoryHourlyUsd();
+                    acc[8]  += nl.getStorageHourlyUsd() == null ? 0d : nl.getStorageHourlyUsd();
+                    acc[9]  += nl.getNetworkHourlyUsd() == null ? 0d : nl.getNetworkHourlyUsd();
+                    acc[10] += nl.getPodCount()         == null ? 0d : nl.getPodCount();
                     if (nl.getMatchedProjectName() != null) nsProj.put(nl.getNamespace(), nl.getMatchedProjectName());
                 }
             }
@@ -203,11 +208,16 @@ public class BillingController {
                 Map<String, Object> row = new HashMap<>();
                 row.put("namespace", ne.getKey());
                 row.put("matchedProjectName", nsProj.get(ne.getKey()));
-                row.put("hourlyUsd", v[0] / cnt);
-                row.put("cpuUsedCores", v[2] / cnt);
-                row.put("cpuRequestCores", v[3] / cnt);
-                row.put("memoryUsedGb", v[4] / cnt);
-                row.put("memoryRequestGb", v[5] / cnt);
+                row.put("hourlyUsd",        v[0]  / cnt);
+                row.put("cpuUsedCores",     v[2]  / cnt);
+                row.put("cpuRequestCores",  v[3]  / cnt);
+                row.put("memoryUsedGb",     v[4]  / cnt);
+                row.put("memoryRequestGb",  v[5]  / cnt);
+                row.put("computeHourlyUsd", v[6]  / cnt);
+                row.put("memoryHourlyUsd",  v[7]  / cnt);
+                row.put("storageHourlyUsd", v[8]  / cnt);
+                row.put("networkHourlyUsd", v[9]  / cnt);
+                row.put("podCount",         (int) Math.round(v[10] / cnt));
                 nsAvg.add(row);
             }
 
